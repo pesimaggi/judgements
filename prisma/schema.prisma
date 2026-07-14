@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// One normalized Icelandic court judgment.
+model Document {
+  id           String    @id @default(cuid())
+  source       String    // "haestirettur" | "landsrettur" | "heradsdomar"
+  court        String    // display name, e.g. "Hæstiréttur Íslands"
+  caseNumber   String?   @map("case_number")
+  caseName     String?   @map("case_name")
+  title        String
+  date         DateTime?
+  year         Int?
+  language     String    @default("is")
+  parties      String?
+  subjectTags  String[]  @map("subject_tags")
+  officialUrl  String    @map("official_url")
+  pdfUrl       String?   @map("pdf_url")
+  htmlUrl      String?   @map("html_url")
+  fullText     String    @map("full_text")
+  textHash     String    @map("text_hash")
+  isSample     Boolean   @default(false) @map("is_sample") // seed/mock docs are flagged, never passed off as real
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@unique([source, officialUrl])
+  @@index([source])
+  @@index([caseNumber])
+  @@index([date])
+  @@index([year])
+}
+
+/// Registered court sources (fixed list of three).
+model Source {
+  id              String    @id @default(cuid())
+  key             String    @unique // "haestirettur" | "landsrettur" | "heradsdomar"
+  name            String
+  officialBaseUrl String    @map("official_base_url")
+  enabled         Boolean   @default(true)
+  lastIngestedAt  DateTime? @map("last_ingested_at")
+}
+
+/// One ingestion run, powering the ingestion status page.
+model IngestionRun {
+  id          String    @id @default(cuid())
+  sourceKey   String    @map("source_key")
+  startedAt   DateTime  @default(now()) @map("started_at")
+  finishedAt  DateTime? @map("finished_at")
+  status      String    @default("running") // running | success | failed
+  indexed     Int       @default(0)
+  skipped     Int       @default(0)
+  errors      Int       @default(0)
+  errorSample String?   @map("error_sample")
+
+  @@index([sourceKey, startedAt])
+}
