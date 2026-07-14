@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 
+// Hits the database on every request; must not be statically prerendered at build time.
+export const dynamic = "force-dynamic";
+
 /** Ingestion status per court: last runs, doc counts, errors. */
 export async function GET() {
   const sources = await prisma.source.findMany({ orderBy: { name: "asc" } });
