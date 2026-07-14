@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: logbrunnur
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+
+  # Optional — only if SEARCH_PROVIDER=meilisearch
+  meilisearch:
+    image: getmeili/meilisearch:v1.9
+    environment:
+      MEILI_MASTER_KEY: masterKey
+    ports: ["7700:7700"]
+    volumes: [meilidata:/meili_data]
+
+volumes:
+  pgdata:
+  meilidata:
