@@ -8,8 +8,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "postinstall": "prisma generate",
     "db:push": "prisma db push",
-    "db:setup-search": "psql \"$DATABASE_URL\" -f prisma/sql/setup-search.sql",
+    "db:setup-search": "tsx prisma/setup-search.ts",
+    "db:deploy": "prisma db push --accept-data-loss && tsx prisma/setup-search.ts",
     "db:seed": "tsx prisma/seed.ts",
     "ingest": "tsx src/ingestion/run.ts"
   },
@@ -18,11 +20,13 @@
     "cheerio": "^1.0.0",
     "meilisearch": "^0.41.0",
     "next": "^14.2.5",
+    "pg": "^8.12.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
+    "@types/pg": "^8.11.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.19",
