@@ -105,6 +105,24 @@ Each run records indexed/skipped/error counts in `IngestionRun`, visible at `/ad
 
 **Status:** island.is is an open-source monorepo (github.com/island-is/island.is, MIT licence, run by Digital Iceland) with a real public GraphQL API behind the site — that part is verified. The exact verdict query name was not confirmed from this environment; the `--dry-run` introspection step exists specifically to close that gap without guessing at a schema.
 
+## Deploying to Railway
+
+1. Deploy the repo as a Railway service (New Project → Deploy from GitHub repo) and add a PostgreSQL database in the same project.
+2. On the app service, go to **Variables** → **Add Reference Variable** → select the Postgres service's `DATABASE_URL`.
+3. Go to **Settings** → **Deploy** → **Pre-Deploy Command** and set it to:
+   ```
+   npm run db:deploy
+   ```
+   This runs `prisma db push` (creates/updates tables from `schema.prisma`) followed by the search setup script (`pg_trgm`/`unaccent` extensions, the full-text search function, and the trigram indexes) — both against the linked `DATABASE_URL`, with no `psql` binary required.
+4. Deploy. `npm install` will also run `prisma generate` automatically (via `postinstall`) before `next build`, so the Prisma Client exists at build time.
+5. Optional: seed sample data once via the Railway CLI so you have something to search immediately:
+   ```
+   railway run npm run db:seed
+   ```
+   `db:seed` is idempotent (it upserts by key), so re-running it is harmless.
+
+Note: this repo uses `prisma db push` rather than `prisma migrate`, so there's no `prisma/migrations` folder — `npm run db:deploy` (not `prisma migrate deploy`) is the correct pre-deploy command here. If you later want real migration history for a production database, run `npx prisma migrate dev --name init` locally once, commit the generated `prisma/migrations` folder, and switch the pre-deploy command to `npx prisma migrate deploy && npm run db:setup-search`.
+
 ## Legal note
 
 This tool searches and links to public judgments. It always displays the official island.is URL, does not present itself as an official publisher, and displays on every page: *"This is an unofficial research tool. Always verify text against the official source."*
