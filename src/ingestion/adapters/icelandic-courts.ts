@@ -84,6 +84,19 @@ function findKey(o: unknown, key: string): string | null {
   return null;
 }
 
+/** Recursively finds the first object whose __typename matches, anywhere in a nested object. */
+function findByTypename(o: unknown, typename: string): Record<string, unknown> | null {
+  if (o && typeof o === "object") {
+    const rec = o as Record<string, unknown>;
+    if (rec.__typename === typename) return rec;
+    for (const v of Object.values(rec)) {
+      const r = findByTypename(v, typename);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+
 /** Fetches a case's detail page and extracts the judgment's full text from its embedded PDF. */
 async function fetchVerdictText(ctx: IngestContext, officialUrl: string): Promise<string> {
   const html = await ctx.fetchText(officialUrl);
@@ -96,7 +109,15 @@ async function fetchVerdictText(ctx: IngestContext, officialUrl: string): Promis
   const nextData = JSON.parse(nextDataRaw);
   const pdfBase64 = findKey(nextData, "pdfString");
   if (!pdfBase64) {
-    ctx.log(`  __NEXT_DATA__ found (${nextDataRaw.length} chars) but no pdfString key in it`);
+    const item = findByTypename(nextData, "WebVerdictByIdItem");
+    if (item) {
+      const fields = Object.entries(item)
+        .map(([k, v]) => typeof v === "string" ? `${k}: ${v.length} chars, "${v.slice(0, 80)}"` : `${k}: ${typeof v}`)
+        .join(" | ");
+      ctx.log(`  no pdfString; WebVerdictByIdItem fields: ${fields}`);
+    } else {
+      ctx.log(`  no pdfString and no WebVerdictByIdItem found (__NEXT_DATA__ ${nextDataRaw.length} chars)`);
+    }
     return "";
   }
   const { text } = await pdfParse(Buffer.from(pdfBase64, "base64"));
