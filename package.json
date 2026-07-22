@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "Unofficial legal research search across Icelandic, EEA and EU sources",
+  "engines": {
+    "node": ">=20.18.1"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
