@@ -117,6 +117,10 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
     const court = process.env.INGEST_COURT ? [process.env.INGEST_COURT] : [];
     ctx.log(`Court filter: ${court.length ? court.join(", ") : "(none — all courts)"}`);
 
+    let noCourtMatch = 0;
+    let noPdf = 0;
+    let unchanged = 0;
+
     let page = startPage;
     const lastPage = startPage + maxPages - 1;
     while (page <= lastPage) {
@@ -146,15 +150,18 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
       }
       if (items.length === 0) break;
       ctx.log(`Page ${page}: ${items.length} cases`);
+      if (items[0]) {
+        ctx.log(`  first: ${items[0].caseNumber} — ${items[0].court} — ${items[0].verdictDate}`);
+      }
 
       for (const it of items) {
         try {
           const sourceKey = courtToSourceKey(it.court ?? "");
-          if (!sourceKey) { stats.skipped++; continue; }
+          if (!sourceKey) { stats.skipped++; noCourtMatch++; continue; }
 
           const officialUrl = `https://island.is/domar/${it.id}`;
           const fullText = await fetchVerdictText(ctx, officialUrl);
-          if (!fullText) { stats.skipped++; continue; }
+          if (!fullText) { stats.skipped++; noPdf++; continue; }
 
           const result = await ctx.save({
             source: sourceKey,
@@ -169,14 +176,16 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
             officialUrl,
             fullText,
           });
-          result === "indexed" ? stats.indexed++ : stats.skipped++;
+          if (result === "indexed") { stats.indexed++; } else { stats.skipped++; unchanged++; }
         } catch (e) {
           stats.errors++;
           stats.errorSample = stats.errorSample ?? String(e);
+          ctx.log(`  error on ${it.caseNumber ?? it.id}: ${String(e).slice(0, 200)}`);
         }
       }
       page++;
     }
+    ctx.log(`Skip breakdown: no-court-match=${noCourtMatch}, no-pdf-found=${noPdf}, unchanged=${unchanged}`);
     return stats;
   },
 };
