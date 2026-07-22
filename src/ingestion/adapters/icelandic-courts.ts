@@ -115,6 +115,12 @@ async function fetchVerdictText(ctx: IngestContext, officialUrl: string): Promis
         .map(([k, v]) => typeof v === "string" ? `${k}: ${v.length} chars, "${v.slice(0, 80)}"` : `${k}: ${typeof v}`)
         .join(" | ");
       ctx.log(`  no pdfString; WebVerdictByIdItem fields: ${fields}`);
+      for (const key of ["richText", "pdfString"]) {
+        const v = (item as Record<string, unknown>)[key];
+        if (v && typeof v === "object") {
+          ctx.log(`  ${key} shape: ${JSON.stringify(v).slice(0, 1500)}`);
+        }
+      }
     } else {
       ctx.log(`  no pdfString and no WebVerdictByIdItem found (__NEXT_DATA__ ${nextDataRaw.length} chars)`);
     }
