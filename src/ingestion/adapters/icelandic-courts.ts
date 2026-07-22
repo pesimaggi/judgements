@@ -52,7 +52,10 @@ async function gql(query: string, variables: Record<string, unknown> = {}) {
     },
     body: JSON.stringify({ query, variables }),
   });
-  if (!res.ok) throw new Error(`GraphQL HTTP ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`GraphQL HTTP ${res.status}: ${body.slice(0, 500)}`);
+  }
   const json = await res.json();
   if (json.errors) throw new Error(`GraphQL errors: ${JSON.stringify(json.errors).slice(0, 500)}`);
   return json.data;
