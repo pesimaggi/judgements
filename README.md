@@ -109,13 +109,9 @@ Each run records indexed/skipped/error counts in `IngestionRun`, visible at `/ad
 
 1. Deploy the repo as a Railway service (New Project → Deploy from GitHub repo) and add a PostgreSQL database in the same project.
 2. On the app service, go to **Variables** → **Add Reference Variable** → select the Postgres service's `DATABASE_URL`.
-3. The repo's `railway.json` already sets the **Pre-Deploy Command** to `npm run db:deploy`, so this runs automatically on every deploy — no dashboard step required. It runs `prisma db push` (creates/updates tables from `schema.prisma`) followed by the search setup script (`pg_trgm`/`unaccent` extensions, the full-text search function, and the trigram indexes) — both against the linked `DATABASE_URL`, with no `psql` binary required. (If you'd rather manage it from the dashboard instead, remove `deploy.preDeployCommand` from `railway.json` and set the same command under **Settings** → **Deploy** → **Pre-Deploy Command**.)
+3. The repo's `railway.json` already sets the **Pre-Deploy Command** to `npm run db:deploy && npm run db:seed`, so this runs automatically on every deploy — entirely from the Railway website, no CLI required. It runs `prisma db push` (creates/updates tables from `schema.prisma`), the search setup script (`pg_trgm`/`unaccent` extensions, the full-text search function, and the trigram indexes), then seeds the four `[SAMPLE]` judgments — all against the linked `DATABASE_URL`, with no `psql` binary required. `db:seed` upserts by key, so re-running it on every deploy is harmless and never duplicates data. (If you'd rather manage this from the dashboard instead, remove `deploy.preDeployCommand` from `railway.json` and set the same command under **Settings** → **Deploy** → **Pre-Deploy Command**.)
 4. Deploy. `npm install` will also run `prisma generate` automatically (via `postinstall`) before `next build`, so the Prisma Client exists at build time.
-5. Optional: seed sample data once via the Railway CLI so you have something to search immediately:
-   ```
-   railway run npm run db:seed
-   ```
-   `db:seed` is idempotent (it upserts by key), so re-running it is harmless.
+5. To pull in real judgments instead of/alongside the samples, you'll need the Railway CLI for the one-off ingestion commands (see "Running ingestion" below) — that step can't be done from the website alone since it requires reading command output interactively.
 
 Note: this repo uses `prisma db push` rather than `prisma migrate`, so there's no `prisma/migrations` folder — `npm run db:deploy` (not `prisma migrate deploy`) is the correct pre-deploy command here. If you later want real migration history for a production database, run `npx prisma migrate dev --name init` locally once, commit the generated `prisma/migrations` folder, and switch the pre-deploy command to `npx prisma migrate deploy && npm run db:setup-search`.
 
