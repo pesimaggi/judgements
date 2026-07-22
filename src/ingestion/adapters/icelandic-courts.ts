@@ -1,43 +1,45 @@
+import { load } from "cheerio";
+import pdfParse from "pdf-parse";
 import type { IngestionAdapter, IngestContext, IngestStats } from "../adapter";
 
 /**
  * Icelandic courts adapter — island.is/domar (Hæstiréttur, Landsréttur, Héraðsdómar).
  *
- * VERIFIED: island.is is an open-source monorepo (github.com/island-is/island.is,
- * MIT licence, run by Digital Iceland) and exposes a unified GraphQL API that
- * the judgment search UI on https://island.is/domar is built on. This is the
- * structured access path — prefer it over HTML scraping.
+ * VERIFIED against live traffic (introspection is disabled in production on
+ * this API, so the schema was reconstructed from the browser's own network
+ * requests instead of guessed):
  *
- * To avoid hardcoding operation/field names that may drift, this adapter is
- * introspection-first:
+ *  - List: the `webVerdicts(input: WebVerdictsInput)` query, captured from
+ *    island.is/domar's own search request. Confirmed to return the full
+ *    archive (43k+ items) when `searchTerm` is left empty, paginated 20/page.
+ *  - Full text: the case detail page (island.is/domar/{id}) is server-rendered
+ *    and has no separate GraphQL call for the document body. Instead the
+ *    page embeds the judgment as a base64-encoded PDF (`pdfString`, under a
+ *    `WebVerdictByIdItem`-typed object) inside its Next.js `__NEXT_DATA__`
+ *    payload, rendered client-side via pdf.js. We fetch that page directly
+ *    and extract the PDF text ourselves rather than scraping the rendered
+ *    pdf.js text layer (which loses reading order).
  *
- *   npm run ingest -- --adapter=icelandic-courts --dry-run
- *     → runs a GraphQL introspection query against GRAPHQL_ENDPOINT and
- *       prints every Query field whose name matches /verdict|domar|dómur/i,
- *       with its arguments and return type. Use that output to fill in
- *       VERDICT_LIST_QUERY / VERDICT_ITEM_QUERY below, then run for real.
- *
- * Cross-check field names against the monorepo (search the repo for
- * "verdict") before a full sync. Respect the API: keep INGEST_DELAY_MS
- * conservative and identify yourself via INGEST_USER_AGENT.
+ * The archive is large (43k+ judgments); INGEST_MAX_PAGES bounds how much a
+ * single run pulls (20 items/page) and INGEST_START_PAGE offsets where it
+ * starts — run repeatedly with an advancing start page to backfill the rest
+ * rather than raising INGEST_MAX_PAGES to cover everything in one pass.
  */
 
 const GRAPHQL_ENDPOINT = process.env.ISLAND_IS_GRAPHQL ?? "https://island.is/api/graphql";
 
-// Fill these in from the introspection output (dry-run). Left empty on
-// purpose — we do not fabricate field names.
-const VERDICT_LIST_QUERY = process.env.ISLAND_IS_VERDICT_LIST_QUERY ?? "";
-const VERDICT_ITEM_QUERY = process.env.ISLAND_IS_VERDICT_ITEM_QUERY ?? "";
-
-const INTROSPECTION = `
-  query IntrospectQueries {
-    __schema {
-      queryType {
-        fields {
-          name
-          args { name type { name kind ofType { name } } }
-          type { name kind ofType { name } }
-        }
+const LIST_QUERY = `
+  query GetVerdicts($input: WebVerdictsInput!) {
+    webVerdicts(input: $input) {
+      total
+      items {
+        id
+        title
+        court
+        caseNumber
+        verdictDate
+        keywords
+        presentings
       }
     }
   }
@@ -61,6 +63,32 @@ async function gql(query: string, variables: Record<string, unknown> = {}) {
   return json.data;
 }
 
+/** Recursively finds the first string value stored under `key`, anywhere in a nested object. */
+function findKey(o: unknown, key: string): string | null {
+  if (o && typeof o === "object") {
+    const rec = o as Record<string, unknown>;
+    if (typeof rec[key] === "string") return rec[key] as string;
+    for (const v of Object.values(rec)) {
+      const r = findKey(v, key);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+
+/** Fetches a case's detail page and extracts the judgment's full text from its embedded PDF. */
+async function fetchVerdictText(ctx: IngestContext, officialUrl: string): Promise<string> {
+  const html = await ctx.fetchText(officialUrl);
+  const $ = load(html);
+  const nextDataRaw = $("#__NEXT_DATA__").html();
+  if (!nextDataRaw) return "";
+  const nextData = JSON.parse(nextDataRaw);
+  const pdfBase64 = findKey(nextData, "pdfString");
+  if (!pdfBase64) return "";
+  const { text } = await pdfParse(Buffer.from(pdfBase64, "base64"));
+  return text.replace(/\s{2,}/g, " ").trim();
+}
+
 /** Maps island.is court names onto our per-court source keys. */
 export function courtToSourceKey(court: string): string | null {
   const c = court.toLowerCase();
@@ -72,87 +100,63 @@ export function courtToSourceKey(court: string): string | null {
 
 export const icelandicCourtsAdapter: IngestionAdapter = {
   key: "icelandic-courts",
-  name: "Icelandic courts (island.is/domar, GraphQL)",
+  name: "Icelandic courts (island.is/domar, GraphQL + embedded PDF)",
 
   async run(ctx: IngestContext): Promise<IngestStats> {
     const stats: IngestStats = { indexed: 0, skipped: 0, errors: 0 };
-
-    // Step 1 — discovery. Always available; this is what --dry-run is for.
-    if (!VERDICT_LIST_QUERY) {
-      ctx.log(`No verdict list query configured. Introspecting ${GRAPHQL_ENDPOINT} ...`);
-      const data = await gql(INTROSPECTION);
-      const fields: any[] = data.__schema.queryType.fields;
-      const candidates = fields.filter((f) => /verdict|domar|dómur|domur/i.test(f.name));
-      if (candidates.length === 0) {
-        ctx.log("No verdict-like Query fields found. Inspect the schema manually (e.g. GraphQL playground or the island.is repo).");
-      }
-      for (const f of candidates) {
-        const args = f.args.map((a: any) => `${a.name}: ${a.type.name ?? a.type.ofType?.name ?? a.type.kind}`).join(", ");
-        ctx.log(`Candidate query: ${f.name}(${args}) → ${f.type.name ?? f.type.ofType?.name ?? f.type.kind}`);
-      }
-      ctx.log("Set ISLAND_IS_VERDICT_LIST_QUERY / ISLAND_IS_VERDICT_ITEM_QUERY (or edit this adapter) using the candidates above, then re-run.");
-      return stats; // discovery run: nothing indexed, nothing fabricated
-    }
-
-    // Step 2 — real ingestion once the queries are configured.
-    // Expected shape (adjust mapping to the actual schema you configured):
-    // list query returns items with: id, court, caseNumber, title/caseName,
-    // verdictDate, presidentJudge/parties, keywords; item query returns the
-    // full text (rich text / html) for one id.
-    let page = 1;
+    const startPage = Number(process.env.INGEST_START_PAGE ?? 1);
     const maxPages = Number(process.env.INGEST_MAX_PAGES ?? 5);
-    while (page <= maxPages) {
+
+    let page = startPage;
+    const lastPage = startPage + maxPages - 1;
+    while (page <= lastPage) {
       let items: any[] = [];
       try {
-        const data = await gql(VERDICT_LIST_QUERY, { page });
-        // The first array found in the response is treated as the item list.
-        const firstArray = (function find(o: any): any[] | null {
-          if (Array.isArray(o)) return o;
-          if (o && typeof o === "object") {
-            for (const v of Object.values(o)) { const r = find(v); if (r) return r; }
-          }
-          return null;
-        })(data);
-        items = firstArray ?? [];
+        const data = await gql(LIST_QUERY, {
+          input: {
+            page,
+            searchTerm: "",
+            court: [],
+            caseNumber: "",
+            keywords: null,
+            caseCategories: null,
+            caseTypes: null,
+            laws: null,
+            dateFrom: null,
+            dateTo: null,
+            caseContact: "",
+          },
+        });
+        items = data?.webVerdicts?.items ?? [];
       } catch (e) {
         stats.errors++;
         stats.errorSample = String(e);
         break;
       }
       if (items.length === 0) break;
+      ctx.log(`Page ${page}: ${items.length} cases`);
 
       for (const it of items) {
         try {
           const sourceKey = courtToSourceKey(it.court ?? "");
           if (!sourceKey) { stats.skipped++; continue; }
-          let fullText: string = it.verdictHtml ?? it.text ?? "";
-          if (!fullText && VERDICT_ITEM_QUERY && it.id) {
-            const detail = await gql(VERDICT_ITEM_QUERY, { id: it.id });
-            fullText = JSON.stringify(detail).length > 0
-              ? (function findString(o: any): string {
-                  if (typeof o === "string" && o.length > 500) return o;
-                  if (o && typeof o === "object") {
-                    for (const v of Object.values(o)) { const r = findString(v); if (r) return r; }
-                  }
-                  return "";
-                })(detail)
-              : "";
-          }
+
+          const officialUrl = `https://island.is/domar/${it.id}`;
+          const fullText = await fetchVerdictText(ctx, officialUrl);
           if (!fullText) { stats.skipped++; continue; }
 
-          const date = it.verdictDate ? new Date(it.verdictDate) : undefined;
           const result = await ctx.save({
             source: sourceKey,
             court: it.court,
             caseNumber: it.caseNumber ?? undefined,
-            caseName: it.title ?? it.caseName ?? undefined,
+            caseName: it.title ?? undefined,
             title: it.title ?? it.caseNumber ?? "Dómur",
-            date,
+            date: it.verdictDate ? new Date(it.verdictDate) : undefined,
             language: "is",
-            parties: it.parties ?? undefined,
+            parties: it.title ?? undefined,
             subjectTags: it.keywords ?? [],
-            officialUrl: it.id ? `https://island.is/domar/${it.id}` : "https://island.is/domar",
-            fullText: fullText.replace(/<[^>]+>/g, " ").replace(/\s{2,}/g, " ").trim(),
+            officialUrl,
+            fullText,
           });
           result === "indexed" ? stats.indexed++ : stats.skipped++;
         } catch (e) {
