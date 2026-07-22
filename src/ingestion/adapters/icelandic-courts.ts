@@ -13,12 +13,17 @@ import type { IngestionAdapter, IngestContext, IngestStats } from "../adapter";
  *    island.is/domar's own search request. Confirmed to return the full
  *    archive (43k+ items) when `searchTerm` is left empty, paginated 20/page.
  *  - Full text: the case detail page (island.is/domar/{id}) is server-rendered
- *    and has no separate GraphQL call for the document body. Instead the
- *    page embeds the judgment as a base64-encoded PDF (`pdfString`, under a
- *    `WebVerdictByIdItem`-typed object) inside its Next.js `__NEXT_DATA__`
- *    payload, rendered client-side via pdf.js. We fetch that page directly
- *    and extract the PDF text ourselves rather than scraping the rendered
- *    pdf.js text layer (which loses reading order).
+ *    and has no separate GraphQL call for the document body — it's embedded in
+ *    the page's own Next.js `__NEXT_DATA__` payload, under a
+ *    `WebVerdictByIdItem`-typed object, in one of two shapes depending on how
+ *    old the case is:
+ *      - Older cases: a base64-encoded PDF (`pdfString`), rendered
+ *        client-side via pdf.js. We extract the PDF text ourselves rather
+ *        than scraping the rendered pdf.js text layer (loses reading order).
+ *      - Newer cases (island.is appears to have migrated off scanned PDFs at
+ *        some point): a Contentful-style rich-text document tree (`richText`
+ *        — `{ document: { content: [{ nodeType, content, value, ... }] } }`),
+ *        walked recursively to plain text.
  *
  * The archive is large (43k+ judgments); INGEST_MAX_PAGES bounds how much a
  * single run pulls (20 items/page) and INGEST_START_PAGE offsets where it
@@ -71,19 +76,6 @@ async function gql(query: string, variables: Record<string, unknown> = {}) {
   return json.data;
 }
 
-/** Recursively finds the first string value stored under `key`, anywhere in a nested object. */
-function findKey(o: unknown, key: string): string | null {
-  if (o && typeof o === "object") {
-    const rec = o as Record<string, unknown>;
-    if (typeof rec[key] === "string") return rec[key] as string;
-    for (const v of Object.values(rec)) {
-      const r = findKey(v, key);
-      if (r) return r;
-    }
-  }
-  return null;
-}
-
 /** Recursively finds the first object whose __typename matches, anywhere in a nested object. */
 function findByTypename(o: unknown, typename: string): Record<string, unknown> | null {
   if (o && typeof o === "object") {
@@ -97,7 +89,27 @@ function findByTypename(o: unknown, typename: string): Record<string, unknown> |
   return null;
 }
 
-/** Fetches a case's detail page and extracts the judgment's full text from its embedded PDF. */
+/** Block-level node types in a Contentful-style rich-text tree; a newline follows each. */
+const RICH_TEXT_BLOCK_TYPES = new Set([
+  "document", "paragraph", "heading-1", "heading-2", "heading-3", "heading-4", "heading-5", "heading-6",
+  "blockquote", "list-item", "unordered-list", "ordered-list", "hr", "table", "table-row", "table-cell",
+]);
+
+/** Recursively walks a Contentful-style rich-text document tree to plain text. */
+function extractRichText(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  const rec = node as Record<string, unknown>;
+  if (rec.nodeType === "text" && typeof rec.value === "string") return rec.value;
+  const content = Array.isArray(rec.content) ? rec.content : [];
+  const inner = content.map(extractRichText).join("");
+  return RICH_TEXT_BLOCK_TYPES.has(rec.nodeType as string) ? `${inner}\n` : inner;
+}
+
+/**
+ * Fetches a case's detail page and extracts the judgment's full text — from
+ * an embedded PDF (older, scanned cases) or a Contentful-style rich-text
+ * document (newer cases, authored directly rather than scanned).
+ */
 async function fetchVerdictText(ctx: IngestContext, officialUrl: string): Promise<string> {
   const html = await ctx.fetchText(officialUrl);
   const $ = load(html);
@@ -107,27 +119,25 @@ async function fetchVerdictText(ctx: IngestContext, officialUrl: string): Promis
     return "";
   }
   const nextData = JSON.parse(nextDataRaw);
-  const pdfBase64 = findKey(nextData, "pdfString");
-  if (!pdfBase64) {
-    const item = findByTypename(nextData, "WebVerdictByIdItem");
-    if (item) {
-      const fields = Object.entries(item)
-        .map(([k, v]) => typeof v === "string" ? `${k}: ${v.length} chars, "${v.slice(0, 80)}"` : `${k}: ${typeof v}`)
-        .join(" | ");
-      ctx.log(`  no pdfString; WebVerdictByIdItem fields: ${fields}`);
-      for (const key of ["richText", "pdfString"]) {
-        const v = (item as Record<string, unknown>)[key];
-        if (v && typeof v === "object") {
-          ctx.log(`  ${key} shape: ${JSON.stringify(v).slice(0, 1500)}`);
-        }
-      }
-    } else {
-      ctx.log(`  no pdfString and no WebVerdictByIdItem found (__NEXT_DATA__ ${nextDataRaw.length} chars)`);
-    }
+  const item = findByTypename(nextData, "WebVerdictByIdItem");
+  if (!item) {
+    ctx.log(`  no WebVerdictByIdItem found (__NEXT_DATA__ ${nextDataRaw.length} chars)`);
     return "";
   }
-  const { text } = await pdfParse(Buffer.from(pdfBase64, "base64"));
-  return text.replace(/\s{2,}/g, " ").trim();
+
+  if (typeof item.pdfString === "string" && item.pdfString.length > 0) {
+    const { text } = await pdfParse(Buffer.from(item.pdfString, "base64"));
+    return text.replace(/\s{2,}/g, " ").trim();
+  }
+
+  const richText = item.richText as Record<string, unknown> | undefined;
+  if (richText && typeof richText === "object") {
+    const text = extractRichText(richText.document).replace(/\n{2,}/g, "\n").trim();
+    if (text) return text;
+  }
+
+  ctx.log(`  neither pdfString nor richText yielded text (fields: ${Object.keys(item).join(", ")})`);
+  return "";
 }
 
 /** Maps island.is court names onto our per-court source keys. */
