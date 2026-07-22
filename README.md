@@ -109,11 +109,7 @@ Each run records indexed/skipped/error counts in `IngestionRun`, visible at `/ad
 
 1. Deploy the repo as a Railway service (New Project → Deploy from GitHub repo) and add a PostgreSQL database in the same project.
 2. On the app service, go to **Variables** → **Add Reference Variable** → select the Postgres service's `DATABASE_URL`.
-3. Go to **Settings** → **Deploy** → **Pre-Deploy Command** and set it to:
-   ```
-   npm run db:deploy
-   ```
-   This runs `prisma db push` (creates/updates tables from `schema.prisma`) followed by the search setup script (`pg_trgm`/`unaccent` extensions, the full-text search function, and the trigram indexes) — both against the linked `DATABASE_URL`, with no `psql` binary required.
+3. The repo's `railway.json` already sets the **Pre-Deploy Command** to `npm run db:deploy`, so this runs automatically on every deploy — no dashboard step required. It runs `prisma db push` (creates/updates tables from `schema.prisma`) followed by the search setup script (`pg_trgm`/`unaccent` extensions, the full-text search function, and the trigram indexes) — both against the linked `DATABASE_URL`, with no `psql` binary required. (If you'd rather manage it from the dashboard instead, remove `deploy.preDeployCommand` from `railway.json` and set the same command under **Settings** → **Deploy** → **Pre-Deploy Command**.)
 4. Deploy. `npm install` will also run `prisma generate` automatically (via `postinstall`) before `next build`, so the Prisma Client exists at build time.
 5. Optional: seed sample data once via the Railway CLI so you have something to search immediately:
    ```
