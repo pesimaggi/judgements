@@ -83,27 +83,16 @@ Every judgment is normalized into one shape (`src/lib/types.ts`), preserving the
 ## Running ingestion
 
 ```bash
-# Step 1: discover the real GraphQL query names (writes nothing)
-npm run ingest -- --adapter=icelandic-courts --dry-run
-```
-
-This introspects `https://island.is/api/graphql` and prints every `Query` field whose name matches `verdict|domar|dómur` along with its arguments and return type. There is no hardcoded query — the adapter refuses to guess.
-
-Once you've identified the real query, configure it and re-run:
-
-```bash
-# .env
-ISLAND_IS_VERDICT_LIST_QUERY="query Verdicts($page: Int) { ... }"
-ISLAND_IS_VERDICT_ITEM_QUERY="query Verdict($id: ID!) { ... }"   # optional, if list doesn't include full text
-```
-
-```bash
 npm run ingest -- --adapter=icelandic-courts
+# or, to bound how much a single run pulls (20 cases/page):
+INGEST_MAX_PAGES=2 npm run ingest -- --adapter=icelandic-courts
 ```
 
 Each run records indexed/skipped/error counts in `IngestionRun`, visible at `/admin/ingestion`. Politeness settings (`INGEST_DELAY_MS`, `INGEST_USER_AGENT`) live in `.env`.
 
-**Status:** island.is is an open-source monorepo (github.com/island-is/island.is, MIT licence, run by Digital Iceland) with a real public GraphQL API behind the site — that part is verified. The exact verdict query name was not confirmed from this environment; the `--dry-run` introspection step exists specifically to close that gap without guessing at a schema.
+**How it works:** island.is's public GraphQL API (`https://island.is/api/graphql`) has introspection disabled in production, so the schema couldn't be discovered by asking the API itself. Instead it was reconstructed from island.is/domar's own live search requests: the list comes from the `webVerdicts` query (confirmed to return the full archive — 40k+ judgments — when searched with an empty term, 20 per page). The case detail pages have no separate API call for the full text; each judgment is embedded as a base64-encoded PDF inside the page's own `__NEXT_DATA__` payload and rendered client-side with pdf.js, so the adapter fetches the detail page directly and extracts the PDF text itself (`pdf-parse`) rather than needing another query.
+
+**Scale note:** the full archive is 40k+ judgments — far more than a single run (or a Railway pre-deploy step) should attempt at once. Ingest in bounded batches via `INGEST_MAX_PAGES`, increasing the page offset over repeated runs, rather than raising the cap to cover everything in one pass.
 
 ## Deploying to Railway
 
