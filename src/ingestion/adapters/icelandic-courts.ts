@@ -89,10 +89,16 @@ async function fetchVerdictText(ctx: IngestContext, officialUrl: string): Promis
   const html = await ctx.fetchText(officialUrl);
   const $ = load(html);
   const nextDataRaw = $("#__NEXT_DATA__").html();
-  if (!nextDataRaw) return "";
+  if (!nextDataRaw) {
+    ctx.log(`  no __NEXT_DATA__ found (html length ${html.length})`);
+    return "";
+  }
   const nextData = JSON.parse(nextDataRaw);
   const pdfBase64 = findKey(nextData, "pdfString");
-  if (!pdfBase64) return "";
+  if (!pdfBase64) {
+    ctx.log(`  __NEXT_DATA__ found (${nextDataRaw.length} chars) but no pdfString key in it`);
+    return "";
+  }
   const { text } = await pdfParse(Buffer.from(pdfBase64, "base64"));
   return text.replace(/\s{2,}/g, " ").trim();
 }
@@ -112,10 +118,22 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
 
   async run(ctx: IngestContext): Promise<IngestStats> {
     const stats: IngestStats = { indexed: 0, skipped: 0, errors: 0 };
+
+    // Diagnostic mode: fetch one known case directly, bypassing search/pagination.
+    if (process.env.INGEST_TEST_ID) {
+      const officialUrl = `https://island.is/domar/${process.env.INGEST_TEST_ID}`;
+      ctx.log(`Diagnostic fetch: ${officialUrl}`);
+      const fullText = await fetchVerdictText(ctx, officialUrl);
+      ctx.log(`Result: ${fullText ? `${fullText.length} chars extracted` : "empty — no text found"}`);
+      if (fullText) ctx.log(`  preview: ${fullText.slice(0, 300)}`);
+      return stats;
+    }
+
     const startPage = Number(process.env.INGEST_START_PAGE ?? 1);
     const maxPages = Number(process.env.INGEST_MAX_PAGES ?? 5);
     const court = process.env.INGEST_COURT ? [process.env.INGEST_COURT] : [];
-    ctx.log(`Court filter: ${court.length ? court.join(", ") : "(none — all courts)"}`);
+    const searchTerm = process.env.INGEST_SEARCH_TERM ?? "";
+    ctx.log(`Court filter: ${court.length ? court.join(", ") : "(none — all courts)"}${searchTerm ? `, searchTerm=${searchTerm}` : ""}`);
 
     let noCourtMatch = 0;
     let noPdf = 0;
@@ -129,7 +147,7 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
         const data = await gql(LIST_QUERY, {
           input: {
             page,
-            searchTerm: "",
+            searchTerm,
             court,
             caseNumber: "",
             keywords: null,
