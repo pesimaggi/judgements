@@ -24,6 +24,14 @@ import type { IngestionAdapter, IngestContext, IngestStats } from "../adapter";
  * single run pulls (20 items/page) and INGEST_START_PAGE offsets where it
  * starts — run repeatedly with an advancing start page to backfill the rest
  * rather than raising INGEST_MAX_PAGES to cover everything in one pass.
+ *
+ * INGEST_COURT filters to one court at a time (server-side, via the API's
+ * own `input.court` field — confirmed value: exactly "Hæstiréttur",
+ * "Landsréttur", or a "Héraðsdómur ..." string, matching the `court` field
+ * on each result). Results are date-sorted across all courts combined, so
+ * without this filter a priority order (Hæstiréttur, then Landsréttur, then
+ * the district courts) would mean scanning most of the archive just to
+ * collect the Supreme Court's cases out of the mix.
  */
 
 const GRAPHQL_ENDPOINT = process.env.ISLAND_IS_GRAPHQL ?? "https://island.is/api/graphql";
@@ -106,6 +114,8 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
     const stats: IngestStats = { indexed: 0, skipped: 0, errors: 0 };
     const startPage = Number(process.env.INGEST_START_PAGE ?? 1);
     const maxPages = Number(process.env.INGEST_MAX_PAGES ?? 5);
+    const court = process.env.INGEST_COURT ? [process.env.INGEST_COURT] : [];
+    ctx.log(`Court filter: ${court.length ? court.join(", ") : "(none — all courts)"}`);
 
     let page = startPage;
     const lastPage = startPage + maxPages - 1;
@@ -116,7 +126,7 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
           input: {
             page,
             searchTerm: "",
-            court: [],
+            court,
             caseNumber: "",
             keywords: null,
             caseCategories: null,
@@ -128,6 +138,7 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
           },
         });
         items = data?.webVerdicts?.items ?? [];
+        if (page === startPage) ctx.log(`Total matching: ${data?.webVerdicts?.total ?? "unknown"}`);
       } catch (e) {
         stats.errors++;
         stats.errorSample = String(e);
