@@ -188,6 +188,16 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
     let noPdf = 0;
     let unchanged = 0;
 
+    // Persisted after every page (not just once at the end) so a run killed
+    // partway through — a platform timeout, a restart — resumes close to
+    // where it stopped instead of redoing the whole batch next time.
+    const saveCursor = (nextPage: number) =>
+      prisma.ingestCursor.upsert({
+        where: { key: courtEnv },
+        create: { key: courtEnv, nextPage },
+        update: { nextPage },
+      });
+
     let page = startPage;
     const lastPage = startPage + maxPages - 1;
     while (page <= lastPage) {
@@ -251,12 +261,9 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
         }
       }
       page++;
+      await saveCursor(page);
     }
-    await prisma.ingestCursor.upsert({
-      where: { key: courtEnv },
-      create: { key: courtEnv, nextPage: page },
-      update: { nextPage: page },
-    });
+    await saveCursor(page);
     ctx.log(`Cursor saved: next run for "${courtEnv || "(unfiltered)"}" resumes at page ${page}`);
     ctx.log(`Skip breakdown: no-court-match=${noCourtMatch}, no-pdf-found=${noPdf}, unchanged=${unchanged}`);
     return stats;
