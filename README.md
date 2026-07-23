@@ -84,23 +84,40 @@ Every judgment is normalized into one shape (`src/lib/types.ts`), preserving the
 
 ```bash
 npm run ingest -- --adapter=icelandic-courts
-# or, to bound how much a single run pulls (20 cases/page):
+# or, to bound how much a single run pulls (10 cases/page):
 INGEST_MAX_PAGES=2 npm run ingest -- --adapter=icelandic-courts
+# or filter to one court at a time (exact values: "Hæstiréttur", "Landsréttur", a "Héraðsdómur ..." string):
+INGEST_COURT=Hæstiréttur npm run ingest -- --adapter=icelandic-courts
 ```
 
 Each run records indexed/skipped/error counts in `IngestionRun`, visible at `/admin/ingestion`. Politeness settings (`INGEST_DELAY_MS`, `INGEST_USER_AGENT`) live in `.env`.
 
-**How it works:** island.is's public GraphQL API (`https://island.is/api/graphql`) has introspection disabled in production, so the schema couldn't be discovered by asking the API itself. Instead it was reconstructed from island.is/domar's own live search requests: the list comes from the `webVerdicts` query (confirmed to return the full archive — 40k+ judgments — when searched with an empty term, 20 per page). The case detail pages have no separate API call for the full text; each judgment is embedded as a base64-encoded PDF inside the page's own `__NEXT_DATA__` payload and rendered client-side with pdf.js, so the adapter fetches the detail page directly and extracts the PDF text itself (`pdf-parse`) rather than needing another query.
+**How it works:** island.is's public GraphQL API (`https://island.is/api/graphql`) has introspection disabled in production, so the schema couldn't be discovered by asking the API itself. Instead it was reconstructed from island.is/domar's own live search requests: the list comes from the `webVerdicts` query (confirmed to return the full archive — 40k+ judgments — when searched with an empty term, 10 per page). The case detail pages have no separate API call for the full text; each judgment is embedded either as a base64-encoded PDF (older, scanned cases) or a Contentful-style rich-text document (newer cases) inside the page's own `__NEXT_DATA__` payload, so the adapter fetches the detail page directly and extracts the text itself (`pdf-parse`, or a rich-text tree walk) rather than needing another query.
 
-**Scale note:** the full archive is 40k+ judgments — far more than a single run (or a Railway pre-deploy step) should attempt at once. Ingest in bounded batches via `INGEST_MAX_PAGES`, increasing the page offset over repeated runs, rather than raising the cap to cover everything in one pass.
+**Scale note:** the full archive is 40k+ judgments — far more than a single run should attempt at once. `INGEST_MAX_PAGES` bounds how much a run pulls; the adapter persists a resume cursor per court filter (the `IngestCursor` table) after every page, so repeated runs — including a scheduled job that knows nothing about previous runs — automatically continue from wherever the last one left off, no manually-advancing page offset required.
 
 ## Deploying to Railway
 
+This repo runs as **two Railway services** from the same GitHub repo: the always-on website, and a scheduled job that backfills the judgment archive in the background.
+
+### Website service
+
 1. Deploy the repo as a Railway service (New Project → Deploy from GitHub repo) and add a PostgreSQL database in the same project.
 2. On the app service, go to **Variables** → **Add Reference Variable** → select the Postgres service's `DATABASE_URL`.
-3. The repo's `railway.json` already sets the **Pre-Deploy Command** to `npm run db:deploy && npm run db:seed`, so this runs automatically on every deploy — entirely from the Railway website, no CLI required. It runs `prisma db push` (creates/updates tables from `schema.prisma`), the search setup script (`pg_trgm`/`unaccent` extensions, the full-text search function, and the trigram indexes), then seeds the four `[SAMPLE]` judgments — all against the linked `DATABASE_URL`, with no `psql` binary required. `db:seed` upserts by key, so re-running it on every deploy is harmless and never duplicates data. (If you'd rather manage this from the dashboard instead, remove `deploy.preDeployCommand` from `railway.json` and set the same command under **Settings** → **Deploy** → **Pre-Deploy Command**.)
+3. The repo's `railway.json` already sets the **Pre-Deploy Command** to `npm run db:deploy`, so this runs automatically on every deploy — entirely from the Railway website, no CLI required. It runs `prisma db push` (creates/updates tables from `schema.prisma`) and the search setup script (`pg_trgm`/`unaccent` extensions, the full-text search function, and the trigram indexes) against the linked `DATABASE_URL`, with no `psql` binary required. (If you'd rather manage this from the dashboard instead, remove `deploy.preDeployCommand` from `railway.json` and set the same command under **Settings** → **Deploy** → **Pre-Deploy Command**.)
 4. Deploy. `npm install` will also run `prisma generate` automatically (via `postinstall`) before `next build`, so the Prisma Client exists at build time.
-5. To pull in real judgments instead of/alongside the samples, you'll need the Railway CLI for the one-off ingestion commands (see "Running ingestion" below) — that step can't be done from the website alone since it requires reading command output interactively.
+
+### Ingestion service (scheduled backfill)
+
+Ingestion used to run as part of the website's pre-deploy step, but a 200-page batch takes ~50 minutes — turning every ordinary code deploy into a long wait, and risking the site briefly going down for an unrelated reason. It's now a separate service that runs on a timer instead:
+
+1. In the same Railway project, **New Service** → **GitHub Repo** → select this same repo.
+2. In that service's **Settings** → **Config-as-code**, set the **Config File Path** to `railway.ingest.json` (instead of the default `railway.json`) — this is what makes it a distinct scheduled job rather than another copy of the website.
+3. Give it the same `DATABASE_URL` reference variable as the website service (and `SEARCH_PROVIDER`/Meilisearch variables too, if you're using Meilisearch instead of the default Postgres full-text search).
+4. `railway.ingest.json` sets `deploy.cronSchedule` to `0 */2 * * *` (every 2 hours, UTC) and a start command that runs an unfiltered `icelandic-courts` ingest batch (200 pages ≈ 2000 cases per run). Railway spins up a container on that schedule, runs the batch to completion, then stops it until the next firing — no always-on dyno needed for this service.
+5. No manual redeploys needed after this: each firing picks up from the `IngestCursor` table automatically. Progress is visible at `/admin/ingestion` on the website.
+
+Adjust `INGEST_MAX_PAGES` or the cron expression in `railway.ingest.json` to change the batch size or frequency — e.g. a longer interval if 200 pages doesn't reliably finish within it, or a shorter one for faster backfill once you've confirmed a batch's real runtime.
 
 Note: this repo uses `prisma db push` rather than `prisma migrate`, so there's no `prisma/migrations` folder — `npm run db:deploy` (not `prisma migrate deploy`) is the correct pre-deploy command here. If you later want real migration history for a production database, run `npx prisma migrate dev --name init` locally once, commit the generated `prisma/migrations` folder, and switch the pre-deploy command to `npx prisma migrate deploy && npm run db:setup-search`.
 
