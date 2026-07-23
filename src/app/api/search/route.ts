@@ -26,7 +26,8 @@ export async function POST(req: Request) {
   const provider = getSearchProvider();
 
   try {
-    const r = await provider.search({ ...body, sources });
+    const tag = typeof body.tag === "string" && body.tag.trim() ? body.tag.trim() : undefined;
+    const r = await provider.search({ ...body, sources, tag });
     return NextResponse.json({
       total: r.total,
       page: body.page ?? 1,

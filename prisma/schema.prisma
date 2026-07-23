@@ -44,6 +44,9 @@ model Source {
   officialBaseUrl String    @map("official_base_url")
   enabled         Boolean   @default(true)
   lastIngestedAt  DateTime? @map("last_ingested_at")
+  /// Total judgments known to exist at the official source, for the ingestion
+  /// progress bar. Refreshed opportunistically by the ingestion adapter.
+  totalAvailable  Int?      @map("total_available")
 }
 
 /// Resume point for a paginated backfill, keyed by the court filter value

@@ -20,7 +20,7 @@ export class MeilisearchProvider implements SearchProvider {
   async ensureIndex() {
     const index = this.client.index(INDEX);
     await index.updateSettings({
-      filterableAttributes: ["source", "year", "dateTimestamp"],
+      filterableAttributes: ["source", "year", "dateTimestamp", "subjectTags"],
       sortableAttributes: ["dateTimestamp"],
       searchableAttributes: ["title", "caseName", "caseNumber", "parties", "fullText"],
     });
@@ -35,6 +35,7 @@ export class MeilisearchProvider implements SearchProvider {
     if (req.dateFrom) filter.push(`dateTimestamp >= ${new Date(req.dateFrom).getTime()}`);
     if (req.dateTo) filter.push(`dateTimestamp <= ${new Date(req.dateTo).getTime()}`);
     if (req.year) filter.push(`year = ${req.year}`);
+    if (req.tag) filter.push(`subjectTags = ${JSON.stringify(req.tag)}`);
 
     const page = Math.max(1, req.page ?? 1);
     const pageSize = Math.min(50, Math.max(1, req.pageSize ?? 20));
