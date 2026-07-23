@@ -25,6 +25,7 @@ export class PostgresSearchProvider implements SearchProvider {
     if (req.dateFrom) filters.push(Prisma.sql`d.date >= ${new Date(req.dateFrom)}`);
     if (req.dateTo) filters.push(Prisma.sql`d.date <= ${new Date(req.dateTo)}`);
     if (req.year) filters.push(Prisma.sql`d.year = ${req.year}`);
+    if (req.tag) filters.push(Prisma.sql`d.subject_tags @> ARRAY[${req.tag}]::text[]`);
 
     // Match condition: FTS, plus fuzzy metadata matching, plus case-number match.
     const matchParts: Prisma.Sql[] = [];

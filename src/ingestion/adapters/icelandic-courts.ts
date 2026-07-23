@@ -155,12 +155,53 @@ export function courtToSourceKey(court: string): string | null {
   return null;
 }
 
+/**
+ * Refreshes Source.totalAvailable for all three courts, powering the
+ * front-page ingestion progress bar. Héraðsdómar has no single court-name
+ * filter (it's dozens of individual district courts), so its total is
+ * derived as the grand total minus the other two, rather than queried
+ * directly. Best-effort: failures are logged and swallowed so a totals
+ * hiccup never fails the ingestion run itself.
+ */
+export async function syncAvailableTotals(ctx: IngestContext): Promise<void> {
+  try {
+    const totalFor = async (court: string[]) => {
+      const data = await gql(LIST_QUERY, {
+        input: {
+          page: 1, searchTerm: "", court, caseNumber: "", keywords: null,
+          caseCategories: null, caseTypes: null, laws: null, dateFrom: null,
+          dateTo: null, caseContact: "",
+        },
+      });
+      return Number(data?.webVerdicts?.total ?? 0);
+    };
+
+    const [all, haestirettur, landsrettur] = await Promise.all([
+      totalFor([]),
+      totalFor(["Hæstiréttur"]),
+      totalFor(["Landsréttur"]),
+    ]);
+    const heradsdomar = Math.max(0, all - haestirettur - landsrettur);
+
+    await Promise.all([
+      prisma.source.updateMany({ where: { key: "haestirettur" }, data: { totalAvailable: haestirettur } }),
+      prisma.source.updateMany({ where: { key: "landsrettur" }, data: { totalAvailable: landsrettur } }),
+      prisma.source.updateMany({ where: { key: "heradsdomar" }, data: { totalAvailable: heradsdomar } }),
+    ]);
+    ctx.log(`Totals synced: haestirettur=${haestirettur} landsrettur=${landsrettur} heradsdomar=${heradsdomar} (all=${all})`);
+  } catch (e) {
+    ctx.log(`Totals sync failed (non-fatal): ${String(e).slice(0, 200)}`);
+  }
+}
+
 export const icelandicCourtsAdapter: IngestionAdapter = {
   key: "icelandic-courts",
   name: "Icelandic courts (island.is/domar, GraphQL + embedded PDF)",
 
   async run(ctx: IngestContext): Promise<IngestStats> {
     const stats: IngestStats = { indexed: 0, skipped: 0, errors: 0 };
+
+    await syncAvailableTotals(ctx);
 
     // Diagnostic mode: fetch one known case directly, bypassing search/pagination.
     if (process.env.INGEST_TEST_ID) {

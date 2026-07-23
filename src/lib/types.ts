@@ -25,6 +25,7 @@ export interface SearchRequest {
   dateFrom?: string; // ISO date
   dateTo?: string;
   year?: number;
+  tag?: string; // filter to documents whose subjectTags include this exact tag
   sort?: "relevance" | "newest" | "oldest";
   page?: number;
   pageSize?: number;

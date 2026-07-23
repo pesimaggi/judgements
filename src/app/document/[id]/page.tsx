@@ -67,7 +67,14 @@ export default function DocumentPage() {
         {doc.subjectTags?.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {doc.subjectTags.map((t: string) => (
-              <span key={t} className="rounded-full bg-paper px-2 py-0.5 text-xs text-inkSoft">{t}</span>
+              <Link
+                key={t}
+                href={`/?tag=${encodeURIComponent(t)}`}
+                className="rounded-full bg-paper px-2 py-0.5 text-xs text-inkSoft hover:bg-line hover:text-ink"
+                title={`Show other cases tagged "${t}"`}
+              >
+                {t}
+              </Link>
             ))}
           </div>
         )}
