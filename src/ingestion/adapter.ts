@@ -35,18 +35,31 @@ const USER_AGENT =
 
 let lastFetch = 0;
 
+const RETRY_BASE_MS = Number(process.env.INGEST_RETRY_BASE_MS ?? 3000);
+const MAX_RETRIES = 3;
+
 /**
  * Rate-limited fetch. One request at a time, min INGEST_DELAY_MS between
  * requests, honest User-Agent. Before enabling any adapter against a live
  * site, check its robots.txt and terms of use — see README "Adding a source".
+ *
+ * Retries a few times with backoff on 5xx (observed to be transient — a
+ * case page can 503 once and succeed seconds later, likely a rarely-cached
+ * page being rendered on demand upstream); 4xx (e.g. a genuine 404) fails
+ * immediately since retrying won't change the outcome.
  */
 export async function politeFetchText(url: string): Promise<string> {
-  const wait = lastFetch + DELAY_MS - Date.now();
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  lastFetch = Date.now();
-  const res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return res.text();
+  for (let attempt = 0; ; attempt++) {
+    const wait = lastFetch + DELAY_MS - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastFetch = Date.now();
+    const res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
+    if (res.ok) return res.text();
+    if (res.status < 500 || attempt >= MAX_RETRIES) {
+      throw new Error(`HTTP ${res.status} for ${url}`);
+    }
+    await new Promise((r) => setTimeout(r, RETRY_BASE_MS * 2 ** attempt));
+  }
 }
 
 export function hashText(text: string): string {
