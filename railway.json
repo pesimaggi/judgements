@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "preDeployCommand": "npm run db:deploy && INGEST_COURT=Hæstiréttur INGEST_START_PAGE=1 INGEST_MAX_PAGES=20 npm run ingest -- --adapter=icelandic-courts",
+    "preDeployCommand": "npm run db:deploy && INGEST_COURT=Hæstiréttur INGEST_MAX_PAGES=40 npm run ingest -- --adapter=icelandic-courts",
     "startCommand": "npm start",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10

@@ -46,6 +46,18 @@ model Source {
   lastIngestedAt  DateTime? @map("last_ingested_at")
 }
 
+/// Resume point for a paginated backfill, keyed by the court filter value
+/// used ("Hæstiréttur", "Landsréttur", "" for the unfiltered combined feed).
+/// Lets a run pick up where the last one left off without needing the next
+/// start page hand-computed and passed in via INGEST_START_PAGE each time.
+model IngestCursor {
+  key       String   @id
+  nextPage  Int      @default(1) @map("next_page")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("ingest_cursors")
+}
+
 /// One ingestion run, powering the ingestion status page.
 model IngestionRun {
   id          String    @id @default(cuid())

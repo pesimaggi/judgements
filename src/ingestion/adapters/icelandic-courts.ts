@@ -1,5 +1,6 @@
 import { load } from "cheerio";
 import pdfParse from "pdf-parse";
+import { prisma } from "@/lib/db";
 import type { IngestionAdapter, IngestContext, IngestStats } from "../adapter";
 
 /**
@@ -11,7 +12,8 @@ import type { IngestionAdapter, IngestContext, IngestStats } from "../adapter";
  *
  *  - List: the `webVerdicts(input: WebVerdictsInput)` query, captured from
  *    island.is/domar's own search request. Confirmed to return the full
- *    archive (43k+ items) when `searchTerm` is left empty, paginated 20/page.
+ *    archive (43k+ items) when `searchTerm` is left empty, paginated 10/page
+ *    (despite what an earlier version of this comment assumed).
  *  - Full text: the case detail page (island.is/domar/{id}) is server-rendered
  *    and has no separate GraphQL call for the document body — it's embedded in
  *    the page's own Next.js `__NEXT_DATA__` payload, under a
@@ -25,10 +27,14 @@ import type { IngestionAdapter, IngestContext, IngestStats } from "../adapter";
  *        — `{ document: { content: [{ nodeType, content, value, ... }] } }`),
  *        walked recursively to plain text.
  *
- * The archive is large (43k+ judgments); INGEST_MAX_PAGES bounds how much a
- * single run pulls (20 items/page) and INGEST_START_PAGE offsets where it
- * starts — run repeatedly with an advancing start page to backfill the rest
- * rather than raising INGEST_MAX_PAGES to cover everything in one pass.
+ * The archive is large (43k+ judgments; ~12.2k for Hæstiréttur alone);
+ * INGEST_MAX_PAGES bounds how much a single run pulls. Each run picks up
+ * where the last one for the same INGEST_COURT value left off — the next
+ * page is persisted in IngestCursor (keyed by that filter value) after every
+ * run, so repeated runs (e.g. clicking "Redeploy" on Railway) backfill the
+ * rest incrementally without needing INGEST_START_PAGE hand-computed each
+ * time. Pass INGEST_START_PAGE explicitly to override the resume point for a
+ * one-off run.
  *
  * INGEST_COURT filters to one court at a time (server-side, via the API's
  * own `input.court` field — confirmed value: exactly "Hæstiréttur",
@@ -166,11 +172,17 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
       return stats;
     }
 
-    const startPage = Number(process.env.INGEST_START_PAGE ?? 1);
     const maxPages = Number(process.env.INGEST_MAX_PAGES ?? 5);
-    const court = process.env.INGEST_COURT ? [process.env.INGEST_COURT] : [];
+    const courtEnv = process.env.INGEST_COURT ?? "";
+    const court = courtEnv ? [courtEnv] : [];
     const searchTerm = process.env.INGEST_SEARCH_TERM ?? "";
     ctx.log(`Court filter: ${court.length ? court.join(", ") : "(none — all courts)"}${searchTerm ? `, searchTerm=${searchTerm}` : ""}`);
+
+    // Resume from wherever the last run for this exact filter left off, unless
+    // INGEST_START_PAGE explicitly overrides it (e.g. for a one-off re-check).
+    const cursor = await prisma.ingestCursor.findUnique({ where: { key: courtEnv } });
+    const startPage = Number(process.env.INGEST_START_PAGE ?? cursor?.nextPage ?? 1);
+    ctx.log(`Starting at page ${startPage}${process.env.INGEST_START_PAGE ? " (explicit override)" : cursor ? " (resumed)" : ""}`);
 
     let noCourtMatch = 0;
     let noPdf = 0;
@@ -240,6 +252,12 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
       }
       page++;
     }
+    await prisma.ingestCursor.upsert({
+      where: { key: courtEnv },
+      create: { key: courtEnv, nextPage: page },
+      update: { nextPage: page },
+    });
+    ctx.log(`Cursor saved: next run for "${courtEnv || "(unfiltered)"}" resumes at page ${page}`);
     ctx.log(`Skip breakdown: no-court-match=${noCourtMatch}, no-pdf-found=${noPdf}, unchanged=${unchanged}`);
     return stats;
   },
