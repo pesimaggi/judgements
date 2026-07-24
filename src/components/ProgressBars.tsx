@@ -14,14 +14,17 @@ interface ProgressData {
 }
 
 function Bar({ label, ingested, total }: { label: string; ingested: number; total: number | null }) {
-  const pct = total ? Math.min(100, (ingested / total) * 100) : null;
+  // A total of 0 (or less) is never a real "nothing available" — it means the
+  // total is unknown, same as null. Treating 0 as known produced "3800 / 0".
+  const knownTotal = total != null && total > 0 ? total : null;
+  const pct = knownTotal ? Math.min(100, (ingested / knownTotal) * 100) : null;
   return (
     <div>
       <div className="flex items-baseline justify-between gap-2 text-xs">
         <span className="font-medium text-ink">{label}</span>
         <span className="whitespace-nowrap text-inkSoft">
           {ingested.toLocaleString("is-IS")}
-          {total != null && <> / {total.toLocaleString("is-IS")}</>}
+          {knownTotal != null && <> / {knownTotal.toLocaleString("is-IS")}</>}
           {pct != null && <> · {pct.toFixed(1)}%</>}
         </span>
       </div>

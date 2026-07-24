@@ -164,34 +164,50 @@ export function courtToSourceKey(court: string): string | null {
  * hiccup never fails the ingestion run itself.
  */
 export async function syncAvailableTotals(ctx: IngestContext): Promise<void> {
-  try {
-    const totalFor = async (court: string[]) => {
-      const data = await gql(LIST_QUERY, {
-        input: {
-          page: 1, searchTerm: "", court, caseNumber: "", keywords: null,
-          caseCategories: null, caseTypes: null, laws: null, dateFrom: null,
-          dateTo: null, caseContact: "",
-        },
-      });
-      return Number(data?.webVerdicts?.total ?? 0);
-    };
+  // A missing/null webVerdicts.total (e.g. a transient hiccup on the live
+  // API for one specific court filter) must not be coerced into 0 — that
+  // would overwrite a real total with a bogus one and make the progress
+  // bar read "3800 ingested / 0 available". Throw instead, so only courts
+  // whose fetch actually returned a real number get updated.
+  const totalFor = async (court: string[]): Promise<number> => {
+    const data = await gql(LIST_QUERY, {
+      input: {
+        page: 1, searchTerm: "", court, caseNumber: "", keywords: null,
+        caseCategories: null, caseTypes: null, laws: null, dateFrom: null,
+        dateTo: null, caseContact: "",
+      },
+    });
+    const total = data?.webVerdicts?.total;
+    if (typeof total !== "number" || total <= 0) {
+      throw new Error(`webVerdicts.total missing or non-positive for court=${JSON.stringify(court)}: ${JSON.stringify(total)}`);
+    }
+    return total;
+  };
 
-    const [all, haestirettur, landsrettur] = await Promise.all([
-      totalFor([]),
-      totalFor(["Hæstiréttur"]),
-      totalFor(["Landsréttur"]),
-    ]);
-    const heradsdomar = Math.max(0, all - haestirettur - landsrettur);
+  const [allR, haestiretturR, landsretturR] = await Promise.allSettled([
+    totalFor([]),
+    totalFor(["Hæstiréttur"]),
+    totalFor(["Landsréttur"]),
+  ]);
 
-    await Promise.all([
-      prisma.source.updateMany({ where: { key: "haestirettur" }, data: { totalAvailable: haestirettur } }),
-      prisma.source.updateMany({ where: { key: "landsrettur" }, data: { totalAvailable: landsrettur } }),
-      prisma.source.updateMany({ where: { key: "heradsdomar" }, data: { totalAvailable: heradsdomar } }),
-    ]);
-    ctx.log(`Totals synced: haestirettur=${haestirettur} landsrettur=${landsrettur} heradsdomar=${heradsdomar} (all=${all})`);
-  } catch (e) {
-    ctx.log(`Totals sync failed (non-fatal): ${String(e).slice(0, 200)}`);
+  const updates: Promise<unknown>[] = [];
+  if (haestiretturR.status === "fulfilled") {
+    updates.push(prisma.source.updateMany({ where: { key: "haestirettur" }, data: { totalAvailable: haestiretturR.value } }));
   }
+  if (landsretturR.status === "fulfilled") {
+    updates.push(prisma.source.updateMany({ where: { key: "landsrettur" }, data: { totalAvailable: landsretturR.value } }));
+  }
+  // Héraðsdómar's total is derived from the other two, so it's only trustworthy
+  // when all three fetches succeeded — a partial failure must not persist it.
+  if (allR.status === "fulfilled" && haestiretturR.status === "fulfilled" && landsretturR.status === "fulfilled") {
+    const heradsdomar = Math.max(0, allR.value - haestiretturR.value - landsretturR.value);
+    updates.push(prisma.source.updateMany({ where: { key: "heradsdomar" }, data: { totalAvailable: heradsdomar } }));
+  }
+  await Promise.all(updates);
+
+  const describe = (label: string, r: PromiseSettledResult<number>) =>
+    `${label}=${r.status === "fulfilled" ? r.value : `FAILED (${String(r.reason).slice(0, 120)})`}`;
+  ctx.log(`Totals sync: ${describe("all", allR)} ${describe("haestirettur", haestiretturR)} ${describe("landsrettur", landsretturR)}`);
 }
 
 export const icelandicCourtsAdapter: IngestionAdapter = {
@@ -201,7 +217,7 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
   async run(ctx: IngestContext): Promise<IngestStats> {
     const stats: IngestStats = { indexed: 0, skipped: 0, errors: 0 };
 
-    await syncAvailableTotals(ctx);
+    await syncAvailableTotals(ctx).catch((e) => ctx.log(`Totals sync failed (non-fatal): ${String(e).slice(0, 200)}`));
 
     // Diagnostic mode: fetch one known case directly, bypassing search/pagination.
     if (process.env.INGEST_TEST_ID) {

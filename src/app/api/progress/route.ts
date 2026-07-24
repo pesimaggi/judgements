@@ -13,7 +13,10 @@ export async function GET() {
     key: s.key,
     name: s.name,
     ingested: counts.find((c) => c.source === s.key)?._count._all ?? 0,
-    total: s.totalAvailable,
+    // A totalAvailable of 0 (or less) is a bogus/never-synced value, not a
+    // real "nothing available" — treat it the same as unset so the UI never
+    // renders e.g. "3800 ingested / 0 available".
+    total: s.totalAvailable != null && s.totalAvailable > 0 ? s.totalAvailable : null,
   }));
 
   const ingested = courts.reduce((sum, c) => sum + c.ingested, 0);
