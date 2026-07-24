@@ -27,26 +27,47 @@ export class PostgresSearchProvider implements SearchProvider {
     if (req.year) filters.push(Prisma.sql`d.year = ${req.year}`);
     if (req.tag) filters.push(Prisma.sql`d.subject_tags @> ARRAY[${req.tag}]::text[]`);
 
-    // Match condition: FTS, plus fuzzy metadata matching, plus case-number match.
-    const matchParts: Prisma.Sql[] = [];
+    // Indexed match conditions: FTS (GIN) + case-number match/fuzzy (trigram
+    // index on case_number itself). Both are cheap and index-backed.
+    const indexedMatchParts: Prisma.Sql[] = [];
     if (parsed.websearch) {
-      matchParts.push(Prisma.sql`
+      indexedMatchParts.push(Prisma.sql`
         document_search_vector(d.title, d.case_name, d.case_number, d.parties, d.full_text)
           @@ websearch_to_tsquery('simple', ${parsed.websearch})
       `);
-      // Fuzzy fallback on metadata for Icelandic spelling variants (pg_trgm).
-      matchParts.push(Prisma.sql`similarity(coalesce(d.title,'') || ' ' || coalesce(d.case_name,''), ${parsed.raw}) > 0.35`);
     }
     for (const cn of parsed.caseNumbers) {
-      matchParts.push(Prisma.sql`d.case_number ILIKE ${cn}`);
-      matchParts.push(Prisma.sql`similarity(coalesce(d.case_number,''), ${cn}) > 0.5`);
-    }
-    if (matchParts.length === 0) {
-      // Empty query with filters only: allow browsing within selected courts.
-      matchParts.push(Prisma.sql`TRUE`);
+      indexedMatchParts.push(Prisma.sql`d.case_number ILIKE ${cn}`);
+      indexedMatchParts.push(Prisma.sql`similarity(coalesce(d.case_number,''), ${cn}) > 0.5`);
     }
 
-    const where = Prisma.sql`(${Prisma.join(matchParts, " OR ")}) AND ${Prisma.join(filters, " AND ")}`;
+    const filterSql = Prisma.join(filters, " AND ");
+
+    let matchParts: Prisma.Sql[];
+    if (indexedMatchParts.length === 0) {
+      // Empty query with filters only: allow browsing within selected courts.
+      matchParts = [Prisma.sql`TRUE`];
+    } else {
+      matchParts = indexedMatchParts;
+      // Fuzzy metadata fallback (Icelandic spelling variants) compares
+      // title||case_name as one string, which no index covers, so it forces
+      // a full table scan. Only pay for it when the indexed match found
+      // nothing — the common case (a real hit) stays index-only and fast.
+      const existsRows = await prisma.$queryRaw<{ found: boolean }[]>(Prisma.sql`
+        SELECT EXISTS (
+          SELECT 1 FROM "Document" d
+          WHERE (${Prisma.join(indexedMatchParts, " OR ")}) AND ${filterSql}
+        ) AS found
+      `);
+      if (!existsRows[0]?.found) {
+        matchParts = [
+          ...indexedMatchParts,
+          Prisma.sql`similarity(coalesce(d.title,'') || ' ' || coalesce(d.case_name,''), ${parsed.raw}) > 0.35`,
+        ];
+      }
+    }
+
+    const where = Prisma.sql`(${Prisma.join(matchParts, " OR ")}) AND ${filterSql}`;
 
     const order =
       req.sort === "newest"
