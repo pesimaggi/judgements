@@ -246,15 +246,117 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
     const searchTerm = process.env.INGEST_SEARCH_TERM ?? "";
     ctx.log(`Court filter: ${court.length ? court.join(", ") : "(none — all courts)"}${searchTerm ? `, searchTerm=${searchTerm}` : ""}`);
 
-    // Resume from wherever the last run for this exact filter left off, unless
-    // INGEST_START_PAGE explicitly overrides it (e.g. for a one-off re-check).
-    const cursor = await prisma.ingestCursor.findUnique({ where: { key: courtEnv } });
-    const startPage = Number(process.env.INGEST_START_PAGE ?? cursor?.nextPage ?? 1);
-    ctx.log(`Starting at page ${startPage}${process.env.INGEST_START_PAGE ? " (explicit override)" : cursor ? " (resumed)" : ""}`);
-
     let noCourtMatch = 0;
     let noPdf = 0;
     let unchanged = 0;
+
+    // Shared per-item handling for both the flat-paged and year-chunked loops
+    // below: bucket by court, fetch the verdict text, upsert it.
+    const processItems = async (items: any[]) => {
+      for (const it of items) {
+        try {
+          const sourceKey = courtToSourceKey(it.court ?? "");
+          if (!sourceKey) { stats.skipped++; noCourtMatch++; continue; }
+
+          const officialUrl = `https://island.is/domar/${it.id}`;
+          const fullText = await fetchVerdictText(ctx, officialUrl);
+          if (!fullText) { stats.skipped++; noPdf++; continue; }
+
+          const result = await ctx.save({
+            source: sourceKey,
+            court: it.court,
+            caseNumber: it.caseNumber ?? undefined,
+            caseName: it.title ?? undefined,
+            title: it.title ?? it.caseNumber ?? "Dómur",
+            date: it.verdictDate ? new Date(it.verdictDate) : undefined,
+            language: "is",
+            parties: it.title ?? undefined,
+            subjectTags: it.keywords ?? [],
+            officialUrl,
+            fullText,
+          });
+          if (result === "indexed") { stats.indexed++; } else { stats.skipped++; unchanged++; }
+        } catch (e) {
+          stats.errors++;
+          stats.errorSample = stats.errorSample ?? String(e);
+          ctx.log(`  error on ${it.caseNumber ?? it.id}: ${String(e).slice(0, 200)}`);
+        }
+      }
+    };
+
+    if (courtEnv === "") {
+      // Year-chunked sweep. island.is's search API appears to cap how deep a
+      // single query can paginate — page ~3081 (offset ~30,800) returned 0
+      // items despite reporting thousands still "matching", a classic
+      // symptom of a fixed max result-window on the backend (many search
+      // engines default to ~10k). Slicing by calendar year means each
+      // year's own pagination restarts at page 1, so no single query ever
+      // needs a deep offset — sidesteps the cap instead of hitting it.
+      const cursor = await prisma.ingestCursor.findUnique({ where: { key: courtEnv } });
+      // cursor.year is null for a cursor saved before year-chunking existed
+      // (its nextPage is a flat-scheme page number, e.g. the 3081 dead end —
+      // not meaningful here, so start this year fresh at page 1 instead).
+      const resuming = cursor?.year != null;
+      let year = Number(process.env.INGEST_YEAR ?? (resuming ? cursor!.year : new Date().getFullYear()));
+      let page = Number(process.env.INGEST_START_PAGE ?? (resuming ? cursor!.nextPage : 1));
+      const MIN_YEAR = 1900;
+      ctx.log(`Starting at year ${year}, page ${page}${resuming ? " (resumed)" : cursor ? " (previous flat-scheme cursor discarded)" : ""}`);
+
+      const saveCursor = (y: number, p: number) =>
+        prisma.ingestCursor.upsert({
+          where: { key: courtEnv },
+          create: { key: courtEnv, nextPage: p, year: y },
+          update: { nextPage: p, year: y },
+        });
+
+      let pagesBudget = maxPages;
+      while (pagesBudget > 0 && year >= MIN_YEAR) {
+        let items: any[] = [];
+        try {
+          const data = await gql(LIST_QUERY, {
+            input: {
+              page, searchTerm, court: null, caseNumber: "", keywords: null,
+              caseCategories: null, caseTypes: null, laws: null,
+              dateFrom: `${year}-01-01`, dateTo: `${year}-12-31`, caseContact: "",
+            },
+          });
+          items = data?.webVerdicts?.items ?? [];
+          if (page === 1) ctx.log(`Year ${year}: ${data?.webVerdicts?.total ?? "unknown"} matching`);
+        } catch (e) {
+          stats.errors++;
+          stats.errorSample = String(e);
+          break;
+        }
+
+        if (items.length === 0) {
+          // This year's exhausted (or had nothing to begin with) — move to
+          // the previous year rather than burning the page budget re-asking.
+          year--;
+          page = 1;
+          await saveCursor(year, page);
+          continue;
+        }
+
+        ctx.log(`Page ${page} (${year}): ${items.length} cases`);
+        if (items[0]) ctx.log(`  first: ${items[0].caseNumber} — ${items[0].court} — ${items[0].verdictDate}`);
+        await processItems(items);
+
+        page++;
+        pagesBudget--;
+        await saveCursor(year, page);
+      }
+      if (year < MIN_YEAR) ctx.log(`Reached the ${MIN_YEAR} cutoff — nothing earlier to check.`);
+      ctx.log(`Cursor saved: next run for "(unfiltered)" resumes at year ${year}, page ${page}`);
+      ctx.log(`Skip breakdown: no-court-match=${noCourtMatch}, no-pdf-found=${noPdf}, unchanged=${unchanged}`);
+      return stats;
+    }
+
+    // Court-filtered sweep: flat, ever-advancing page number. Small enough
+    // archives (Hæstiréttur topped out around page 1222) that the offset
+    // cap above has never been observed to bite here.
+    const cursor = await prisma.ingestCursor.findUnique({ where: { key: courtEnv } });
+    const startPage = Number(process.env.INGEST_START_PAGE ?? cursor?.nextPage ?? 1);
+    ctx.log(`Starting at page ${startPage}${process.env.INGEST_START_PAGE ? " (explicit override)" : cursor ? " (resumed)" : ""}`);
 
     // Persisted after every page (not just once at the end) so a run killed
     // partway through — a platform timeout, a restart — resumes close to
@@ -298,36 +400,7 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
       if (items[0]) {
         ctx.log(`  first: ${items[0].caseNumber} — ${items[0].court} — ${items[0].verdictDate}`);
       }
-
-      for (const it of items) {
-        try {
-          const sourceKey = courtToSourceKey(it.court ?? "");
-          if (!sourceKey) { stats.skipped++; noCourtMatch++; continue; }
-
-          const officialUrl = `https://island.is/domar/${it.id}`;
-          const fullText = await fetchVerdictText(ctx, officialUrl);
-          if (!fullText) { stats.skipped++; noPdf++; continue; }
-
-          const result = await ctx.save({
-            source: sourceKey,
-            court: it.court,
-            caseNumber: it.caseNumber ?? undefined,
-            caseName: it.title ?? undefined,
-            title: it.title ?? it.caseNumber ?? "Dómur",
-            date: it.verdictDate ? new Date(it.verdictDate) : undefined,
-            language: "is",
-            parties: it.title ?? undefined,
-            subjectTags: it.keywords ?? [],
-            officialUrl,
-            fullText,
-          });
-          if (result === "indexed") { stats.indexed++; } else { stats.skipped++; unchanged++; }
-        } catch (e) {
-          stats.errors++;
-          stats.errorSample = stats.errorSample ?? String(e);
-          ctx.log(`  error on ${it.caseNumber ?? it.id}: ${String(e).slice(0, 200)}`);
-        }
-      }
+      await processItems(items);
       page++;
       await saveCursor(page);
     }

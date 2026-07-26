@@ -56,6 +56,9 @@ model Source {
 model IngestCursor {
   key       String   @id
   nextPage  Int      @default(1) @map("next_page")
+  /// Current calendar year being swept, for the year-chunked unfiltered
+  /// backfill (null for court-filtered cursors, which stay flat-paged).
+  year      Int?
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("ingest_cursors")
