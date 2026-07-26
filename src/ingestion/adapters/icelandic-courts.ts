@@ -216,6 +216,30 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
       return stats;
     }
 
+    // Diagnostic mode: probe candidate exact court-name strings against the
+    // live API's own total, bypassing search/pagination. "Landsréttur" alone
+    // returns total=0 (confirmed against live data), so the exact string
+    // this API expects isn't what the original schema reconstruction assumed.
+    if (process.env.INGEST_COURT_DIAG) {
+      const candidates = [
+        "Landsréttur", "Landsréttur Íslands", "landsréttur", "LANDSRÉTTUR",
+        "Landsréttur ", " Landsréttur", "Landsréttur Ísland",
+      ];
+      for (const c of candidates) {
+        const data = await gql(LIST_QUERY, {
+          input: {
+            page: 1, searchTerm: "", court: [c], caseNumber: "", keywords: null,
+            caseCategories: null, caseTypes: null, laws: null, dateFrom: null,
+            dateTo: null, caseContact: "",
+          },
+        });
+        const total = data?.webVerdicts?.total ?? "?";
+        const firstCourt = data?.webVerdicts?.items?.[0]?.court ?? "(none)";
+        ctx.log(`  candidate "${c}": total=${total}, first item's court field="${firstCourt}"`);
+      }
+      return stats;
+    }
+
     const maxPages = Number(process.env.INGEST_MAX_PAGES ?? 5);
     const courtEnv = process.env.INGEST_COURT ?? "";
     const court = courtEnv ? [courtEnv] : [];
