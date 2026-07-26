@@ -164,11 +164,12 @@ export function courtToSourceKey(court: string): string | null {
  * hiccup never fails the ingestion run itself.
  */
 export async function syncAvailableTotals(ctx: IngestContext): Promise<void> {
-  // A missing/null webVerdicts.total (e.g. a transient hiccup on the live
-  // API for one specific court filter) must not be coerced into 0 — that
-  // would overwrite a real total with a bogus one and make the progress
-  // bar read "3800 ingested / 0 available". Throw instead, so only courts
-  // whose fetch actually returned a real number get updated.
+  // A missing/invalid webVerdicts.total must not be coerced into 0 — that
+  // would overwrite a real total with a bogus one and make the progress bar
+  // read "5000 ingested / 0 available". Throw instead, so only courts whose
+  // fetch actually returned a real number get updated. Coerce via Number()
+  // rather than requiring typeof === "number": nothing here guarantees the
+  // API serializes `total` as a JSON number rather than a numeric string.
   const totalFor = async (court: string[]): Promise<number> => {
     const data = await gql(LIST_QUERY, {
       input: {
@@ -177,37 +178,56 @@ export async function syncAvailableTotals(ctx: IngestContext): Promise<void> {
         dateTo: null, caseContact: "",
       },
     });
-    const total = data?.webVerdicts?.total;
-    if (typeof total !== "number" || total <= 0) {
-      throw new Error(`webVerdicts.total missing or non-positive for court=${JSON.stringify(court)}: ${JSON.stringify(total)}`);
+    const total = Number(data?.webVerdicts?.total);
+    if (!Number.isFinite(total) || total <= 0) {
+      throw new Error(`webVerdicts.total missing or non-positive for court=${JSON.stringify(court)}: ${JSON.stringify(data?.webVerdicts?.total)}`);
     }
     return total;
   };
 
-  const [allR, haestiretturR, landsretturR] = await Promise.allSettled([
-    totalFor([]),
-    totalFor(["Hæstiréttur"]),
-    totalFor(["Landsréttur"]),
-  ]);
+  // Sequential, not concurrent: every other call this adapter makes to
+  // island.is's GraphQL endpoint (the main paging loop below) awaits one
+  // request at a time. Firing 3 requests at once here was the one place
+  // that didn't, and is the likely reason Landsréttur's total kept coming
+  // back missing/invalid on every run while the others succeeded — a burst
+  // of simultaneous requests is exactly what a WAF/rate-limiter reacts to.
+  const results: Record<"all" | "haestirettur" | "landsrettur", number | unknown> = {
+    all: undefined, haestirettur: undefined, landsrettur: undefined,
+  };
+  const courtFilters: Array<["all" | "haestirettur" | "landsrettur", string[]]> = [
+    ["all", []], ["haestirettur", ["Hæstiréttur"]], ["landsrettur", ["Landsréttur"]],
+  ];
+  for (const [label, court] of courtFilters) {
+    try {
+      results[label] = await totalFor(court);
+    } catch (e) {
+      results[label] = e;
+    }
+    // Small pause between requests — avoids tripping a burst/rate limiter,
+    // consistent with this adapter's polite, one-request-at-a-time approach.
+    await new Promise((r) => setTimeout(r, 300));
+  }
 
   const updates: Promise<unknown>[] = [];
-  if (haestiretturR.status === "fulfilled") {
-    updates.push(prisma.source.updateMany({ where: { key: "haestirettur" }, data: { totalAvailable: haestiretturR.value } }));
+  if (typeof results.haestirettur === "number") {
+    updates.push(prisma.source.updateMany({ where: { key: "haestirettur" }, data: { totalAvailable: results.haestirettur } }));
   }
-  if (landsretturR.status === "fulfilled") {
-    updates.push(prisma.source.updateMany({ where: { key: "landsrettur" }, data: { totalAvailable: landsretturR.value } }));
+  if (typeof results.landsrettur === "number") {
+    updates.push(prisma.source.updateMany({ where: { key: "landsrettur" }, data: { totalAvailable: results.landsrettur } }));
   }
   // Héraðsdómar's total is derived from the other two, so it's only trustworthy
   // when all three fetches succeeded — a partial failure must not persist it.
-  if (allR.status === "fulfilled" && haestiretturR.status === "fulfilled" && landsretturR.status === "fulfilled") {
-    const heradsdomar = Math.max(0, allR.value - haestiretturR.value - landsretturR.value);
+  if (typeof results.all === "number" && typeof results.haestirettur === "number" && typeof results.landsrettur === "number") {
+    const heradsdomar = Math.max(0, results.all - results.haestirettur - results.landsrettur);
     updates.push(prisma.source.updateMany({ where: { key: "heradsdomar" }, data: { totalAvailable: heradsdomar } }));
   }
   await Promise.all(updates);
 
-  const describe = (label: string, r: PromiseSettledResult<number>) =>
-    `${label}=${r.status === "fulfilled" ? r.value : `FAILED (${String(r.reason).slice(0, 120)})`}`;
-  ctx.log(`Totals sync: ${describe("all", allR)} ${describe("haestirettur", haestiretturR)} ${describe("landsrettur", landsretturR)}`);
+  const describe = (label: "all" | "haestirettur" | "landsrettur") => {
+    const r = results[label];
+    return `${label}=${typeof r === "number" ? r : `FAILED (${String(r).slice(0, 150)})`}`;
+  };
+  ctx.log(`Totals sync: ${describe("all")} ${describe("haestirettur")} ${describe("landsrettur")}`);
 }
 
 export const icelandicCourtsAdapter: IngestionAdapter = {
