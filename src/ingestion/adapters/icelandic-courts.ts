@@ -39,10 +39,13 @@ import type { IngestionAdapter, IngestContext, IngestStats } from "../adapter";
  * INGEST_COURT filters to one court at a time (server-side, via the API's
  * own `input.court` field — confirmed value: exactly "Hæstiréttur",
  * "Landsréttur", or a "Héraðsdómur ..." string, matching the `court` field
- * on each result). Results are date-sorted across all courts combined, so
- * without this filter a priority order (Hæstiréttur, then Landsréttur, then
- * the district courts) would mean scanning most of the archive just to
- * collect the Supreme Court's cases out of the mix.
+ * on each result). Results are date-sorted across all courts combined.
+ *
+ * When INGEST_COURT is unset, `input.court` is sent as `null`, not `[]` —
+ * an empty array is apparently read as "match zero courts" by this API
+ * rather than "no filter" (found the hard way: a run with `court: []`
+ * came back with `total: 0` on every page). `null` is what actually
+ * yields the unfiltered, all-courts result set.
  */
 
 const GRAPHQL_ENDPOINT = process.env.ISLAND_IS_GRAPHQL ?? "https://island.is/api/graphql";
@@ -168,7 +171,7 @@ export async function syncAvailableTotals(ctx: IngestContext): Promise<void> {
     const totalFor = async (court: string[]) => {
       const data = await gql(LIST_QUERY, {
         input: {
-          page: 1, searchTerm: "", court, caseNumber: "", keywords: null,
+          page: 1, searchTerm: "", court: court.length ? court : null, caseNumber: "", keywords: null,
           caseCategories: null, caseTypes: null, laws: null, dateFrom: null,
           dateTo: null, caseContact: "",
         },
@@ -248,7 +251,7 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
           input: {
             page,
             searchTerm,
-            court,
+            court: court.length ? court : null,
             caseNumber: "",
             keywords: null,
             caseCategories: null,
