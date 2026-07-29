@@ -40,6 +40,23 @@ export function ResultCard({ hit, query }: { hit: SearchHit; query: string }) {
         </p>
       )}
 
+      {hit.summary && (
+        <details className="group mt-2">
+          <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-xs font-medium text-accent hover:underline [&::-webkit-details-marker]:hidden">
+            <span className="transition-transform group-open:rotate-90" aria-hidden="true">▸</span>
+            Útdráttur
+            <span className="font-normal text-inkSoft">(summary)</span>
+          </summary>
+          <div className="mt-2 border-l-2 border-line pl-3 font-serif text-[15px] leading-relaxed text-ink">
+            {hit.summary.split("\n\n").map((paragraph, i) => (
+              <p key={i} className="mb-2 last:mb-0">
+                {paragraph}
+              </p>
+            ))}
+          </div>
+        </details>
+      )}
+
       {hit.subjectTags.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {hit.subjectTags.map((t) => (

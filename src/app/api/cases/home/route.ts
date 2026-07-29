@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { extractSummary, SUMMARY_SCAN_CHARS } from "@/lib/judgment-text";
 import type { SearchHit } from "@/lib/types";
 
 // Hits the database on every request; must not be statically prerendered at build time.
@@ -18,7 +19,8 @@ const SNIPPET_CHARS = 240;
 const CARD_COLUMNS = Prisma.sql`
   d.id, d.source, d.court, d.case_number, d.case_name, d.title, d.date, d.year,
   d.subject_tags, d.official_url, d.pdf_url, d.is_sample,
-  left(d.full_text, ${SNIPPET_CHARS}::int) AS snippet
+  left(d.full_text, ${SNIPPET_CHARS}::int) AS snippet,
+  left(d.full_text, ${SUMMARY_SCAN_CHARS}::int) AS summary_source
 `;
 
 function toCard(r: any): SearchHit {
@@ -35,6 +37,7 @@ function toCard(r: any): SearchHit {
     officialUrl: r.official_url,
     pdfUrl: r.pdf_url,
     snippet: r.snippet ?? "",
+    summary: extractSummary(r.summary_source ?? ""),
     isSample: r.is_sample,
   };
 }

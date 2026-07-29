@@ -10,9 +10,15 @@ export interface IngestStats {
 }
 
 export interface IngestionAdapter {
-  /** Stable source key — must match a key in src/lib/sources.ts. */
+  /** Stable adapter name, e.g. "icelandic-courts". Not a source key. */
   key: string;
   name: string;
+  /**
+   * The source keys (src/lib/sources.ts) this adapter feeds. Used to stamp
+   * Source.lastIngestedAt after a run — an adapter can serve several sources,
+   * as the Icelandic one does for its three courts.
+   */
+  sourceKeys: string[];
   /**
    * Run one ingestion pass. Implementations should be incremental where the
    * source allows it (e.g. newest-first pages, stop when known docs appear).
@@ -25,6 +31,12 @@ export interface IngestContext {
   fetchText(url: string): Promise<string>;
   /** Upsert a normalized document; returns "indexed" or "skipped" (unchanged). */
   save(doc: NormalizedDocument): Promise<"indexed" | "skipped">;
+  /**
+   * Whether this document has already been stored. Lets an incremental run
+   * skip a case before paying for its detail-page fetch, which is the
+   * expensive, rate-limited part of ingestion.
+   */
+  isKnown(source: string, officialUrl: string): Promise<boolean>;
   log(msg: string): void;
 }
 
@@ -64,6 +76,14 @@ export async function politeFetchText(url: string): Promise<string> {
 
 export function hashText(text: string): string {
   return createHash("sha256").update(text).digest("hex");
+}
+
+export async function isDocumentKnown(source: string, officialUrl: string): Promise<boolean> {
+  const existing = await prisma.document.findUnique({
+    where: { source_officialUrl: { source, officialUrl } },
+    select: { id: true },
+  });
+  return existing !== null;
 }
 
 export async function saveDocument(doc: NormalizedDocument): Promise<"indexed" | "skipped"> {

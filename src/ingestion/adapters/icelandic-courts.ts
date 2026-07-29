@@ -50,6 +50,10 @@ import type { IngestionAdapter, IngestContext, IngestStats } from "../adapter";
  */
 
 const GRAPHQL_ENDPOINT = process.env.ISLAND_IS_GRAPHQL ?? "https://island.is/api/graphql";
+/** Base for case detail pages. Overridable alongside ISLAND_IS_GRAPHQL so the
+ *  adapter can be pointed at a stand-in during testing. */
+const SITE_BASE = process.env.ISLAND_IS_BASE ?? "https://island.is";
+const verdictUrl = (id: string) => `${SITE_BASE}/domar/${id}`;
 
 const LIST_QUERY = `
   query GetVerdicts($input: WebVerdictsInput!) {
@@ -205,6 +209,7 @@ export async function syncAvailableTotals(ctx: IngestContext): Promise<void> {
 export const icelandicCourtsAdapter: IngestionAdapter = {
   key: "icelandic-courts",
   name: "Icelandic courts (island.is/domar, GraphQL + embedded PDF)",
+  sourceKeys: ["haestirettur", "landsrettur", "heradsdomar"],
 
   async run(ctx: IngestContext): Promise<IngestStats> {
     const stats: IngestStats = { indexed: 0, skipped: 0, errors: 0 };
@@ -213,7 +218,7 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
 
     // Diagnostic mode: fetch one known case directly, bypassing search/pagination.
     if (process.env.INGEST_TEST_ID) {
-      const officialUrl = `https://island.is/domar/${process.env.INGEST_TEST_ID}`;
+      const officialUrl = verdictUrl(process.env.INGEST_TEST_ID);
       ctx.log(`Diagnostic fetch: ${officialUrl}`);
       const fullText = await fetchVerdictText(ctx, officialUrl);
       ctx.log(`Result: ${fullText ? `${fullText.length} chars extracted` : "empty — no text found"}`);
@@ -263,7 +268,7 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
           const sourceKey = courtToSourceKey(it.court ?? "");
           if (!sourceKey) { stats.skipped++; noCourtMatch++; continue; }
 
-          const officialUrl = `https://island.is/domar/${it.id}`;
+          const officialUrl = verdictUrl(it.id);
           const fullText = await fetchVerdictText(ctx, officialUrl);
           if (!fullText) { stats.skipped++; noPdf++; continue; }
 
@@ -288,6 +293,76 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
         }
       }
     };
+
+    // Incremental sweep (INGEST_MODE=recent): what the scheduled weekly run
+    // uses now that the archive is largely backfilled. Walks the newest-first
+    // feed and stops once it has seen a run of cases it already holds, so a
+    // normal week costs a handful of list queries rather than a full crawl.
+    //
+    // Deliberately different from the backfill sweeps in one way: a case
+    // that's already stored is skipped *before* its detail page is fetched.
+    // That fetch is the rate-limited, expensive part, and re-fetching it just
+    // to hash the text and find nothing changed is what made a "check for new
+    // cases" run cost as much as a backfill run. The trade-off is that an
+    // after-the-fact correction to a judgment already stored won't be picked
+    // up — set INGEST_RECHECK_KNOWN=1 (or run a backfill sweep) for that.
+    if (process.env.INGEST_MODE === "recent") {
+      const stopAfterKnown = Number(process.env.INGEST_STOP_AFTER_KNOWN ?? 40);
+      const recheckKnown = process.env.INGEST_RECHECK_KNOWN === "1";
+      ctx.log(
+        `Incremental sweep: up to ${maxPages} pages, stopping after ${stopAfterKnown} ` +
+          `consecutive already-stored cases${recheckKnown ? " (re-checking known cases)" : ""}`
+      );
+
+      let consecutiveKnown = 0;
+      let alreadyStored = 0;
+      let page = 1;
+
+      pages: while (page <= maxPages) {
+        let items: any[] = [];
+        try {
+          const data = await gql(LIST_QUERY, {
+            input: {
+              page, searchTerm, court: court.length ? court : null, caseNumber: "",
+              keywords: null, caseCategories: null, caseTypes: null, laws: null,
+              dateFrom: null, dateTo: null, caseContact: "",
+            },
+          });
+          items = data?.webVerdicts?.items ?? [];
+          if (page === 1) ctx.log(`Feed reports ${data?.webVerdicts?.total ?? "unknown"} cases in total`);
+        } catch (e) {
+          stats.errors++;
+          stats.errorSample = String(e);
+          break;
+        }
+        if (items.length === 0) break;
+        ctx.log(`Page ${page}: ${items.length} cases (newest: ${items[0]?.verdictDate ?? "?"})`);
+
+        for (const it of items) {
+          const sourceKey = courtToSourceKey(it.court ?? "");
+          // Not one of our three courts — neither new nor known, so it must
+          // not count towards the stop condition either way.
+          if (!sourceKey) { stats.skipped++; noCourtMatch++; continue; }
+
+          const officialUrl = verdictUrl(it.id);
+          if (!recheckKnown && (await ctx.isKnown(sourceKey, officialUrl))) {
+            stats.skipped++;
+            alreadyStored++;
+            if (++consecutiveKnown >= stopAfterKnown) {
+              ctx.log(`Reached ${stopAfterKnown} consecutive already-stored cases — caught up.`);
+              break pages;
+            }
+            continue;
+          }
+          consecutiveKnown = 0;
+          await processItems([it]);
+        }
+        page++;
+      }
+
+      ctx.log(`Skip breakdown: already-stored=${alreadyStored}, no-court-match=${noCourtMatch}, no-pdf-found=${noPdf}, unchanged=${unchanged}`);
+      return stats;
+    }
 
     if (courtEnv === "") {
       // Year-chunked sweep. island.is's search API appears to cap how deep a

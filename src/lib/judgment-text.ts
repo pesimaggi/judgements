@@ -26,6 +26,13 @@ export type JudgmentBlock =
 
 /** Any paragraph longer than this is assumed to have lost its breaks. */
 const BLOB_THRESHOLD = 900;
+/**
+ * Above this, a paragraph is checked for structure it may have swallowed —
+ * a heading or a numbered clause running into the text. Cheaper than
+ * BLOB_THRESHOLD because recovering a heading never damages real prose,
+ * whereas cutting a paragraph by length can.
+ */
+const STRUCTURE_THRESHOLD = 200;
 /** When re-splitting a blob by sentence, aim for paragraphs around this size. */
 const TARGET_PARAGRAPH = 600;
 
@@ -41,8 +48,17 @@ const HEADING_WORDS = [
   "Málskostnaður", "Áfrýjun", "Sönnunarfærsla", "Lagarök", "Ákæra",
 ];
 
+/**
+ * Optional tail on a heading: "Dómur Hæstaréttar", "Málsástæður og lagarök",
+ * "Kröfur aðila". Courts write these as one heading, so they are matched as
+ * one rather than leaving "Hæstaréttar." stranded as a paragraph.
+ */
+const HEADING_SUFFIX =
+  `(?:\\s+(?:Hæstaréttar|Landsréttar|Héraðsdóms|héraðsdóms|[${LOWER}]+dóms))?` +
+  `(?:\\s+(?:og|aðila|málsins)\\s+[${LOWER}]+)?`;
+
 const HEADING_RE = new RegExp(
-  `^(?:${HEADING_WORDS.join("|")})(?:\\s+(?:og|aðila|málsins)\\s+[${LOWER}]+)?\\s*:?$`,
+  `^(?:${HEADING_WORDS.join("|")})${HEADING_SUFFIX}\\s*[.:]?$`,
   "i"
 );
 
@@ -181,7 +197,7 @@ function splitSentences(text: string): string[] {
 // The word-end guard is a negative lookahead rather than \b: JavaScript's \b
 // is ASCII-only, so it does not fire after "Dómsorð" or "Niðurstaða".
 const INLINE_HEADING_RE = new RegExp(
-  `^(?:(?:[IVXL]{1,6}|\\d{1,3})[.)]\\s+)?(?:${HEADING_WORDS.join("|")})(?![${UPPER}${LOWER}]):?(?=\\s)`,
+  `^(?:(?:[IVXL]{1,6}|\\d{1,3})[.)]\\s+)?(?:${HEADING_WORDS.join("|")})(?![${UPPER}${LOWER}])${HEADING_SUFFIX}[.:]?(?=\\s)`,
   "i"
 );
 
@@ -191,6 +207,10 @@ const INLINE_HEADING_RE = new RegExp(
  * is a sentence that happens to start with a heading word, not a heading.
  */
 function peelHeading(sentence: string): [heading: string, rest: string] | null {
+  // Already a heading on its own ("Dómur Hæstaréttar.") — nothing to peel, and
+  // peeling would strip it down to just "Dómur".
+  if (HEADING_RE.test(sentence)) return null;
+
   const match = sentence.match(INLINE_HEADING_RE);
   if (!match) return null;
   const rest = sentence.slice(match[0].length);
@@ -201,8 +221,13 @@ function peelHeading(sentence: string): [heading: string, rest: string] | null {
 /**
  * Recovers paragraph breaks from a run-together blob — the shape every PDF
  * judgment ingested before `normalizeJudgmentText` existed is stored in.
+ *
+ * Structural breaks (headings, numbered clauses) are always recovered. Cutting
+ * a long structureless run into readable paragraphs is a guess, so it is only
+ * done for text long enough that the alternative is an unbroken page — see
+ * `chunkLongRuns`.
  */
-function splitBlob(text: string): string[] {
+function splitBlob(text: string, chunkLongRuns: boolean): string[] {
   const pieces: string[] = [];
   let buffer = "";
   const flush = () => {
@@ -213,16 +238,20 @@ function splitBlob(text: string): string[] {
   for (const sentence of splitSentences(text)) {
     const heading = peelHeading(sentence);
     const startsStructure =
-      heading !== null || LIST_MARKER_RE.test(sentence) || SECTION_MARKER_RE.test(sentence);
+      heading !== null ||
+      HEADING_RE.test(sentence) ||
+      LIST_MARKER_RE.test(sentence) ||
+      SECTION_MARKER_RE.test(sentence);
 
     // A new clause, section or heading ends the paragraph before it; failing
-    // that, paragraphs are simply capped at a readable length. The second half
-    // is a guess, but a far better read than one unbroken page of text.
-    if (startsStructure || buffer.length >= TARGET_PARAGRAPH) flush();
+    // that, paragraphs are capped at a readable length.
+    if (startsStructure || (chunkLongRuns && buffer.length >= TARGET_PARAGRAPH)) flush();
 
     if (heading) {
       pieces.push(heading[0]);
       buffer = heading[1];
+    } else if (HEADING_RE.test(sentence) || SECTION_MARKER_RE.test(sentence)) {
+      pieces.push(sentence); // a heading that is already a sentence of its own
     } else {
       buffer = buffer ? `${buffer} ${sentence}` : sentence;
     }
@@ -312,8 +341,55 @@ export function parseJudgmentText(raw: string): JudgmentBlock[] {
     if (!cleaned || PAGE_NUMBER_RE.test(cleaned)) continue;
 
     const pieces =
-      cleaned.length > BLOB_THRESHOLD ? splitBlob(stripPageMarkers(cleaned)) : [cleaned];
+      cleaned.length > STRUCTURE_THRESHOLD
+        ? splitBlob(stripPageMarkers(cleaned), cleaned.length > BLOB_THRESHOLD)
+        : [cleaned];
     for (const piece of pieces) blocks.push(classify(piece));
   }
   return blocks;
+}
+
+/**
+ * The heading a judgment's summary sits under. Hæstiréttur calls it
+ * "Útdráttur"; "Reifun" and "Ágrip" turn up as well.
+ */
+const SUMMARY_HEADING_RE = new RegExp(`^(?:Útdráttur|Reifun|Ágrip)\\s*:?$`, "i");
+
+/**
+ * How much of the document to look at. The summary is always at the very top,
+ * and parsing a whole judgment for every result card would be wasteful.
+ */
+export const SUMMARY_SCAN_CHARS = 12_000;
+
+/**
+ * Pulls out the judgment's own summary — the "Útdráttur" section courts write
+ * at the head of the document — so a result card can offer it without opening
+ * the full text. Returns null when the document has no such section, which is
+ * common outside Hæstiréttur.
+ *
+ * `raw` may be a prefix of the document (see SUMMARY_SCAN_CHARS). If the
+ * section runs past the end of that prefix, the trailing partial paragraph is
+ * dropped rather than shown cut off mid-sentence.
+ */
+export function extractSummary(raw: string): string | null {
+  if (!raw?.trim()) return null;
+
+  const truncated = raw.length >= SUMMARY_SCAN_CHARS;
+  const blocks = parseJudgmentText(raw.slice(0, SUMMARY_SCAN_CHARS));
+
+  const start = blocks.findIndex((b) => b.kind === "heading" && SUMMARY_HEADING_RE.test(b.text));
+  if (start === -1) return null;
+
+  const body: string[] = [];
+  let closed = false;
+  for (const block of blocks.slice(start + 1)) {
+    if (block.kind === "heading") { closed = true; break; }
+    body.push("marker" in block ? `${block.marker} ${block.text}` : block.text);
+  }
+  // No following heading inside the window: the last paragraph may have been
+  // cut by the prefix, so leave it out.
+  if (!closed && truncated) body.pop();
+
+  const summary = body.join("\n\n").trim();
+  return summary.length >= 40 ? summary : null;
 }

@@ -10,7 +10,7 @@
  */
 import { PrismaClient } from "@prisma/client";
 import { createHash } from "crypto";
-import { SOURCES } from "../src/lib/sources";
+import { ALL_SOURCES } from "../src/lib/sources";
 
 const prisma = new PrismaClient();
 const hash = (t: string) => createHash("sha256").update(t).digest("hex");
@@ -23,7 +23,7 @@ const sampleText = (extra: string) =>
   `Run the real ingestion adapter (npm run ingest -- --adapter=icelandic-courts) to replace this sample content.`;
 
 async function main() {
-  for (const s of SOURCES) {
+  for (const s of ALL_SOURCES) {
     await prisma.source.upsert({
       where: { key: s.key },
       update: { name: s.name, officialBaseUrl: s.officialBaseUrl },
@@ -86,7 +86,7 @@ async function main() {
     });
   }
 
-  console.log(`Seeded ${SOURCES.length} court sources and ${docs.length} sample judgments.`);
+  console.log(`Seeded ${ALL_SOURCES.length} court sources and ${docs.length} sample judgments.`);
 }
 
 main().finally(() => prisma.$disconnect());

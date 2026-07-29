@@ -1,6 +1,7 @@
 import { MeiliSearch } from "meilisearch";
 import type { SearchRequest, SearchHit } from "../types";
 import type { SearchProvider, ProviderResult } from "./provider";
+import { extractSummary, SUMMARY_SCAN_CHARS } from "../judgment-text";
 
 const INDEX = "documents";
 
@@ -68,6 +69,7 @@ export class MeilisearchProvider implements SearchProvider {
       officialUrl: h.officialUrl,
       pdfUrl: h.pdfUrl ?? null,
       snippet: h._formatted?.fullText ?? "",
+      summary: extractSummary((h.fullText ?? "").slice(0, SUMMARY_SCAN_CHARS)),
       isSample: h.isSample ?? false,
     }));
 
