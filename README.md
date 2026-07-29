@@ -8,11 +8,11 @@ This is a deliberately narrowed build: no ombudsman opinions, no administrative 
 
 ## What's in the MVP
 
-- **Search UI** — main search bar, left-side panel with the three courts as opt-in checkboxes, filters (date range, year, sort), result cards with highlighted snippets.
+- **Search UI** — main search bar, left-side panel with the three courts as opt-in checkboxes, filters (date range, year, sort), result cards with highlighted snippets, and paginated results (15 per page).
 - **Strict opt-in courts** — nothing is selected when the app opens, the Search button is disabled until at least one court is ticked, selected courts are shown as removable chips above the results, and the API itself returns `400 Select one or more courts to search.` if called without sources.
-- **Full document page** — structured metadata, full text with highlighted hits, search-within-document, copyable citation, official-source link, related cases via case-number citation extraction.
+- **Full document page** — structured metadata, the judgment typeset as readable prose (headings, paragraphs, numbered clauses, quoted passages) with highlighted hits, search-within-document, copyable citation, official-source link, related cases via case-number citation extraction.
 - **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`.
-- **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var.
+- **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
 - **One real ingestion adapter** — `icelandic-courts`, targeting island.is's public GraphQL API (`https://island.is/api/graphql`). It's **introspection-first**: run it with `--dry-run` and it queries the live schema and prints every verdict-related field it finds, so you configure real query names instead of guessing.
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
 
@@ -50,6 +50,22 @@ Meilisearch adds typo tolerance (good for Icelandic spelling variants) out of th
 
 Icelandic characters (á ð é í ó ú ý þ æ ö) are preserved exactly — the Postgres provider uses the `simple` text-search configuration plus `pg_trgm` trigram similarity for fuzzy matching of variants.
 
+Results are paginated 15 to a page. Counting stops at 10,000, so very broad queries report "10,000+" rather than paying for an exact count nobody reads.
+
+## How search stays fast
+
+`prisma/sql/setup-search.sql` adds a `search_vector` column to `Document`, kept current by a trigger, plus a GIN index on it. Relevance ranking (`ts_rank`) reads that stored vector; before it existed, ranking had to rebuild each document's vector from its full text on every query, which is what made broad searches slow. The other pieces:
+
+- the result count runs as its own capped query, in parallel with the page of rows, so it never pays for ranking;
+- `ts_headline` (snippet generation) runs *outside* the paginated subquery, so it only touches the rows actually returned;
+- the fuzzy fallback uses `pg_trgm`'s `%` operator, which the trigram indexes serve, instead of a `similarity()` call that forced a sequential scan — and it only runs when the indexed search found nothing.
+
+If you change `document_search_vector()`, stored vectors are not updated retroactively: run `UPDATE "Document" SET search_vector = NULL;` and then `npm run db:setup-search` to rebuild them.
+
+## How judgments are made readable
+
+island.is serves older cases as scanned PDFs and newer ones as a rich-text tree, and neither survives extraction as readable prose: PDF text arrives broken at the page's line width, rich text as one line per block with no spacing. `src/lib/judgment-text.ts` handles both — it reflows wrapped lines into paragraphs, rejoins words hyphenated across a line break, drops stranded page numbers, and recognises headings (`Dómsorð`, `Niðurstaða`, roman-numeral sections) and numbered clauses so the document page can typeset them. Judgments ingested before this existed are stored as one run-together blob; those are re-split at render time from sentence and section boundaries, so no re-ingestion is needed.
+
 ## Architecture
 
 ```
@@ -65,6 +81,7 @@ src/
   lib/
     sources.ts                   fixed registry: haestirettur, landsrettur, heradsdomar
     query-parser.ts              phrases / boolean / case-number detection
+    judgment-text.ts             reflows extracted text into readable blocks
     search/                      provider abstraction: postgres (default) + meilisearch
     citation.ts, highlight.ts
   ingestion/
@@ -74,7 +91,7 @@ src/
       icelandic-courts.ts        the one real adapter — GraphQL, introspection-first
 prisma/
   schema.prisma
-  sql/setup-search.sql           FTS function + GIN/trigram indexes
+  sql/setup-search.sql           FTS function, search_vector column + trigger, GIN/trigram indexes
   seed.ts                        courts + [SAMPLE] judgments
 ```
 
@@ -104,7 +121,7 @@ This repo runs as **two Railway services** from the same GitHub repo: the always
 
 1. Deploy the repo as a Railway service (New Project → Deploy from GitHub repo) and add a PostgreSQL database in the same project.
 2. On the app service, go to **Variables** → **Add Reference Variable** → select the Postgres service's `DATABASE_URL`.
-3. The repo's `railway.json` already sets the **Pre-Deploy Command** to `npm run db:deploy`, so this runs automatically on every deploy — entirely from the Railway website, no CLI required. It runs `prisma db push` (creates/updates tables from `schema.prisma`) and the search setup script (`pg_trgm`/`unaccent` extensions, the full-text search function, and the trigram indexes) against the linked `DATABASE_URL`, with no `psql` binary required. (If you'd rather manage this from the dashboard instead, remove `deploy.preDeployCommand` from `railway.json` and set the same command under **Settings** → **Deploy** → **Pre-Deploy Command**.)
+3. The repo's `railway.json` already sets the **Pre-Deploy Command** to `npm run db:deploy`, so this runs automatically on every deploy — entirely from the Railway website, no CLI required. It runs `prisma db push` (creates/updates tables from `schema.prisma`) and the search setup script (`pg_trgm`/`unaccent` extensions, the full-text search function, the `search_vector` column and its trigger, and the GIN/trigram indexes) against the linked `DATABASE_URL`, with no `psql` binary required. The first deploy after the `search_vector` column was introduced backfills it for every existing row, so expect that one pre-deploy run to take noticeably longer than usual. (If you'd rather manage this from the dashboard instead, remove `deploy.preDeployCommand` from `railway.json` and set the same command under **Settings** → **Deploy** → **Pre-Deploy Command**.)
 4. Deploy. `npm install` will also run `prisma generate` automatically (via `postinstall`) before `next build`, so the Prisma Client exists at build time.
 
 ### Ingestion service (scheduled backfill)

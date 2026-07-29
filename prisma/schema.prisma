@@ -25,6 +25,11 @@ model Document {
   htmlUrl      String?   @map("html_url")
   fullText     String    @map("full_text")
   textHash     String    @map("text_hash")
+  /// Materialized full-text search vector. Created by
+  /// prisma/sql/setup-search.sql as a GENERATED ALWAYS … STORED column;
+  /// declared here (as Unsupported, so the client never reads or writes it)
+  /// only so that `prisma db push` leaves it alone instead of dropping it.
+  searchVector Unsupported("tsvector")? @map("search_vector")
   isSample     Boolean   @default(false) @map("is_sample") // seed/mock docs are flagged, never passed off as real
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")

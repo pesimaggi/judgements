@@ -22,6 +22,46 @@ mark {
   @apply font-serif text-[17px] leading-relaxed whitespace-pre-wrap;
 }
 
+/* Judgment body: a readable measure, real paragraphs, visible structure.
+   Court text is long and dense, so the typography does the work the source
+   documents' own layout can't survive extraction. */
+.doc-body {
+  @apply font-serif text-[17px] leading-[1.7];
+  max-width: 68ch;
+  hyphens: auto;
+  text-wrap: pretty;
+}
+
+.doc-body > p {
+  @apply mb-4;
+}
+
+.doc-body > p:last-child {
+  @apply mb-0;
+}
+
+.doc-heading {
+  @apply mb-3 mt-7 font-sans text-[15px] font-semibold uppercase tracking-wide text-ink;
+}
+
+.doc-body > .doc-heading:first-child {
+  @apply mt-0;
+}
+
+/* Numbered clauses hang their marker in the margin so the text block stays
+   flush — how the printed judgments themselves set them. */
+.doc-item {
+  @apply relative mb-4 pl-9;
+}
+
+.doc-item-marker {
+  @apply absolute left-0 top-0 font-sans text-[14px] font-semibold text-inkSoft;
+}
+
+.doc-quote {
+  @apply mb-4 border-l-2 border-line pl-4 text-[16px] text-inkSoft;
+}
+
 *:focus-visible {
   @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-paper;
 }

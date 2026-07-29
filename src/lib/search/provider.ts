@@ -2,6 +2,8 @@ import type { SearchRequest, SearchHit } from "../types";
 
 export interface ProviderResult {
   total: number;
+  /** True when `total` is a capped lower bound rather than the exact count. */
+  totalIsCapped?: boolean;
   hits: SearchHit[];
 }
 

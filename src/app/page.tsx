@@ -1,12 +1,26 @@
 "use client";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { SourcePanel } from "@/components/SourcePanel";
 import { ResultCard } from "@/components/ResultCard";
+import { Pagination } from "@/components/Pagination";
 import { ProgressBars } from "@/components/ProgressBars";
 import { HomeCases } from "@/components/HomeCases";
 import type { SourceDef } from "@/lib/sources";
 import type { SearchResponse } from "@/lib/types";
+
+const PAGE_SIZE = 15;
+
+/** Everything that defines a result set, frozen at the moment Search is hit. */
+interface SearchCriteria {
+  query: string;
+  sources: string[];
+  dateFrom?: string;
+  dateTo?: string;
+  year?: number;
+  tag?: string;
+  sort: "relevance" | "newest" | "oldest";
+}
 
 function SearchPageInner() {
   const searchParams = useSearchParams();
@@ -27,6 +41,14 @@ function SearchPageInner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // The criteria the current result set was produced from. Paging must reuse
+  // these rather than re-reading the form, so that typing a new query and then
+  // clicking "page 3" doesn't return page 3 of a different search.
+  const criteriaRef = useRef<SearchCriteria | null>(null);
+  const resultsTopRef = useRef<HTMLDivElement | null>(null);
+  // Guards against an earlier, slower request overwriting a later one.
+  const requestIdRef = useRef(0);
+
   useEffect(() => {
     fetch("/api/sources")
       .then((r) => r.json())
@@ -40,44 +62,60 @@ function SearchPageInner() {
     return next;
   };
 
-  async function runSearch(page = 1, opts?: { tag?: string | null; sourcesOverride?: string[] }) {
-    const tag = opts && "tag" in opts ? opts.tag ?? null : activeTag;
-    // No court ticked → search every court rather than blocking the search.
-    const activeSources = opts?.sourcesOverride ?? (selected.size > 0 ? Array.from(selected) : sources.map((s) => s.key));
-    if (activeSources.length === 0) return; // sources not loaded yet
-
-    if (selected.size === 0 && sources.length > 0 && !opts?.sourcesOverride) {
-      setSelected(new Set(sources.map((s) => s.key)));
-    }
-
+  async function fetchPage(criteria: SearchCriteria, page: number) {
+    const requestId = ++requestIdRef.current;
     setLoading(true);
     setError("");
     try {
       const res = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query,
-          sources: activeSources,
-          dateFrom: dateFrom || undefined,
-          dateTo: dateTo || undefined,
-          year: year ? Number(year) : undefined,
-          tag: tag || undefined,
-          sort,
-          page,
-          pageSize: 20,
-        }),
+        body: JSON.stringify({ ...criteria, page, pageSize: PAGE_SIZE }),
       });
       const data = await res.json();
+      if (requestId !== requestIdRef.current) return; // superseded
       if (!res.ok) throw new Error(data.error ?? "Search failed.");
       setResults(data);
-      setSearchedQuery(query);
+      setSearchedQuery(criteria.query);
     } catch (e: any) {
+      if (requestId !== requestIdRef.current) return;
       setError(e.message);
       setResults(null);
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
+  }
+
+  function runSearch(opts?: { tag?: string | null; sourcesOverride?: string[] }) {
+    const tag = opts && "tag" in opts ? opts.tag ?? null : activeTag;
+    // No court ticked → search every court rather than blocking the search.
+    const activeSources =
+      opts?.sourcesOverride ?? (selected.size > 0 ? Array.from(selected) : sources.map((s) => s.key));
+    if (activeSources.length === 0) return; // sources not loaded yet
+
+    if (selected.size === 0 && sources.length > 0 && !opts?.sourcesOverride) {
+      setSelected(new Set(sources.map((s) => s.key)));
+    }
+
+    const criteria: SearchCriteria = {
+      query,
+      sources: activeSources,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+      year: year ? Number(year) : undefined,
+      tag: tag || undefined,
+      sort,
+    };
+    criteriaRef.current = criteria;
+    fetchPage(criteria, 1);
+  }
+
+  function goToPage(page: number) {
+    const criteria = criteriaRef.current;
+    if (!criteria || !results) return;
+    if (page < 1 || page > results.totalPages || page === results.page) return;
+    fetchPage(criteria, page);
+    resultsTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   // Clicking a tag (e.g. from a result card) lands here as /?tag=fasteign —
@@ -89,7 +127,8 @@ function SearchPageInner() {
     setQuery("");
     const all = sources.map((s) => s.key);
     setSelected(new Set(all));
-    runSearch(1, { tag, sourcesOverride: all });
+    criteriaRef.current = { query: "", sources: all, tag, sort: "relevance" };
+    fetchPage(criteriaRef.current, 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, sources]);
 
@@ -97,7 +136,11 @@ function SearchPageInner() {
     setActiveTag(null);
     setResults(null);
     setSearchedQuery("");
+    criteriaRef.current = null;
   }
+
+  const firstOnPage = results ? (results.page - 1) * results.pageSize + 1 : 0;
+  const lastOnPage = results ? firstOnPage + results.hits.length - 1 : 0;
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-5">
@@ -107,7 +150,7 @@ function SearchPageInner() {
 
       {/* Search bar */}
       <form
-        onSubmit={(e) => { e.preventDefault(); setActiveTag(null); runSearch(1, { tag: null }); }}
+        onSubmit={(e) => { e.preventDefault(); setActiveTag(null); runSearch({ tag: null }); }}
         className="flex flex-col gap-2 sm:flex-row"
       >
         <input
@@ -173,6 +216,7 @@ function SearchPageInner() {
         />
 
         <section className="min-w-0 flex-1">
+          <div ref={resultsTopRef} className="scroll-mt-4" />
           {(selected.size > 0 || activeTag) && (
             <div className="mb-3 flex flex-wrap items-center gap-1.5">
               {activeTag && (
@@ -212,11 +256,19 @@ function SearchPageInner() {
           {results && (
             <>
               <p className="mb-2 text-xs text-inkSoft">
-                {results.total} result{results.total === 1 ? "" : "s"}
+                {results.total === 0 ? (
+                  "No results"
+                ) : (
+                  <>
+                    Showing <span className="font-medium text-ink">{firstOnPage.toLocaleString("is-IS")}–{lastOnPage.toLocaleString("is-IS")}</span>{" "}
+                    of {results.total.toLocaleString("is-IS")}
+                    {results.totalIsCapped && "+"} result{results.total === 1 ? "" : "s"}
+                  </>
+                )}
                 {searchedQuery && <> for <span className="font-medium text-ink">{searchedQuery}</span></>}
                 {activeTag && <> tagged <span className="font-medium text-ink">{activeTag}</span></>}
               </p>
-              <div className="flex flex-col gap-3">
+              <div className={`flex flex-col gap-3 ${loading ? "opacity-50 transition-opacity" : ""}`}>
                 {results.hits.map((h) => (
                   <ResultCard key={h.id} hit={h} query={searchedQuery} />
                 ))}
@@ -226,6 +278,12 @@ function SearchPageInner() {
                   </p>
                 )}
               </div>
+              <Pagination
+                page={results.page}
+                totalPages={results.totalPages}
+                disabled={loading}
+                onPageChange={goToPage}
+              />
             </>
           )}
         </section>
