@@ -49,7 +49,14 @@ export interface SearchHit {
 
 export interface SearchResponse {
   total: number;
+  /**
+   * True when `total` hit the counting cap and is a lower bound ("10,000+")
+   * rather than an exact figure. See COUNT_CAP in lib/search/postgres.ts.
+   */
+  totalIsCapped: boolean;
   page: number;
   pageSize: number;
+  /** Number of pages available for `total` at `pageSize`. */
+  totalPages: number;
   hits: SearchHit[];
 }

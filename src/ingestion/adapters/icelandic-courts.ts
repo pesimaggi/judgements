@@ -1,6 +1,7 @@
 import { load } from "cheerio";
 import pdfParse from "pdf-parse";
 import { prisma } from "@/lib/db";
+import { normalizeJudgmentText } from "@/lib/judgment-text";
 import type { IngestionAdapter, IngestContext, IngestStats } from "../adapter";
 
 /**
@@ -136,7 +137,11 @@ async function fetchVerdictText(ctx: IngestContext, officialUrl: string): Promis
 
   if (typeof item.pdfString === "string" && item.pdfString.length > 0) {
     const { text } = await pdfParse(Buffer.from(item.pdfString, "base64"));
-    return text.replace(/\s{2,}/g, " ").trim();
+    // pdf-parse emits one line per line of the page. Reflowing into real
+    // paragraphs (rather than the flat whitespace-collapse this used to do)
+    // is what lets the document page render the judgment as prose instead of
+    // one unbroken wall of text.
+    return normalizeJudgmentText(text);
   }
 
   const richText = item.richText as Record<string, unknown> | undefined;

@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { HighlightedText } from "@/components/HighlightedText";
+import { JudgmentText } from "@/components/JudgmentText";
 import { buildCitation } from "@/lib/citation";
 
 interface Related {
@@ -111,10 +111,8 @@ export default function DocumentPage() {
         </span>
       </div>
 
-      <article className="mt-4 rounded-lg border border-line bg-white p-6">
-        <div className="doc-text">
-          <HighlightedText text={doc.fullText} query={innerQuery} />
-        </div>
+      <article className="mt-4 rounded-lg border border-line bg-white px-6 py-7 sm:px-10">
+        <JudgmentText text={doc.fullText} query={innerQuery} />
       </article>
 
       {related.length > 0 && (
