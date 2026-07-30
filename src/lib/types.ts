@@ -44,6 +44,11 @@ export interface SearchHit {
   officialUrl: string;
   pdfUrl: string | null;
   snippet: string; // may contain <mark> tags
+  /**
+   * The judgment's own "Útdráttur" section, when it has one — shown as an
+   * expandable summary on the result card. Null for documents without one.
+   */
+  summary: string | null;
   isSample: boolean;
 }
 

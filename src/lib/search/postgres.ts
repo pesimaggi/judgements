@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { parseQuery } from "../query-parser";
+import { extractSummary, SUMMARY_SCAN_CHARS } from "../judgment-text";
 import type { SearchRequest, SearchHit } from "../types";
 import type { SearchProvider, ProviderResult } from "./provider";
 
@@ -94,7 +95,8 @@ export class PostgresSearchProvider implements SearchProvider {
         prisma.$queryRaw<any[]>(Prisma.sql`
           SELECT p.id, p.source, p.court, p.case_number, p.case_name, p.title, p.date, p.year,
                  p.subject_tags, p.official_url, p.pdf_url, p.is_sample,
-                 ${headlineExpr} AS snippet
+                 ${headlineExpr} AS snippet,
+                 left(p.full_text, ${SUMMARY_SCAN_CHARS}::int) AS summary_source
           FROM (
             SELECT d.id, d.source, d.court, d.case_number, d.case_name, d.title, d.date, d.year,
                    d.subject_tags, d.official_url, d.pdf_url, d.is_sample, d.full_text,
@@ -155,6 +157,7 @@ export class PostgresSearchProvider implements SearchProvider {
       officialUrl: r.official_url,
       pdfUrl: r.pdf_url,
       snippet: r.snippet ?? "",
+      summary: extractSummary(r.summary_source ?? ""),
       isSample: r.is_sample,
     }));
 

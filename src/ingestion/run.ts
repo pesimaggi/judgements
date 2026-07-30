@@ -8,11 +8,13 @@
  * Schedule with cron / a worker in production; the MVP runs on demand.
  */
 import { prisma } from "@/lib/db";
-import { politeFetchText, saveDocument, type IngestionAdapter, type IngestContext } from "./adapter";
+import { politeFetchText, saveDocument, isDocumentKnown, type IngestionAdapter, type IngestContext } from "./adapter";
 import { icelandicCourtsAdapter } from "./adapters/icelandic-courts";
+import { eftaCourtAdapter } from "./adapters/efta-court";
 
 const ADAPTERS: Record<string, IngestionAdapter> = {
   "icelandic-courts": icelandicCourtsAdapter,
+  "efta-court": eftaCourtAdapter,
 };
 
 async function main() {
@@ -43,6 +45,7 @@ async function main() {
           return "skipped" as const;
         }
       : saveDocument,
+    isKnown: isDocumentKnown,
     log: (msg: string) => console.log(`[${adapter.key}] ${msg}`),
   };
 
@@ -53,7 +56,7 @@ async function main() {
       data: { finishedAt: new Date(), status: "success", ...stats },
     });
     await prisma.source.updateMany({
-      where: { key: adapter.key },
+      where: { key: { in: adapter.sourceKeys } },
       data: { lastIngestedAt: new Date() },
     });
     console.log(`Done: indexed=${stats.indexed} skipped=${stats.skipped} errors=${stats.errors}`);

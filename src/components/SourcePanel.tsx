@@ -1,5 +1,5 @@
 "use client";
-import type { SourceDef } from "@/lib/sources";
+import { groupedSources, type SourceDef } from "@/lib/sources";
 
 interface Props {
   sources: SourceDef[];
@@ -31,17 +31,26 @@ export function SourcePanel(p: Props) {
   return (
     <aside className="w-full shrink-0 lg:w-72">
       <div className="rounded-lg border border-line bg-white p-3">
-        <h3 className="mb-1 border-b border-line pb-1 text-[11px] font-semibold uppercase tracking-wider text-inkSoft">
-          Icelandic courts
-        </h3>
-        {p.sources.map((s) => (
-          <Check key={s.key} checked={p.selected.has(s.key)} onChange={() => p.onToggleSource(s.key)} label={s.name} />
+        {groupedSources(p.sources).map((g, i) => (
+          <div key={g.group} className={i > 0 ? "mt-3" : undefined}>
+            <h3 className="mb-1 border-b border-line pb-1 text-[11px] font-semibold uppercase tracking-wider text-inkSoft">
+              {g.group}
+            </h3>
+            {g.sources.map((s) => (
+              <Check
+                key={s.key}
+                checked={p.selected.has(s.key)}
+                onChange={() => p.onToggleSource(s.key)}
+                label={s.name}
+              />
+            ))}
+          </div>
         ))}
         <button
           onClick={() => p.onSetSources(keys, !all)}
           className="mt-1 px-1.5 text-xs text-accent hover:underline"
         >
-          {all ? "Clear all courts" : "Select all courts"}
+          {all ? "Clear all" : "Select all"}
         </button>
       </div>
     </aside>
