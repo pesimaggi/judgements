@@ -218,7 +218,7 @@ Lagasafn's markup carries stable anchors — `id="G7A"` for "7. gr. a", `id="G7A
 
 Repeat runs are cheap. An act whose stored codex version still matches the index's is skipped without being fetched, so a run against an unchanged Lagasafn release makes a single request in total.
 
-`citations` links judgments to provisions where the article and its act appear together in the text ("1. mgr. 175. gr. laga nr. 91/1991"), storing the citing sentence and its offset so the UI can show why a case matched and jump to the passage. It is incremental on `Document.citationScanHash` vs `Document.textHash`, so it rescans only judgments whose text changed. New acts do not themselves trigger a rescan — after a large Lagasafn ingest, force one with:
+`citations` links judgments to provisions where the article and its act appear together in the text ("1. mgr. 175. gr. laga nr. 91/1991"), storing the citing sentence and its offset so the UI can show why a case matched and jump to the passage. It is incremental on `Document.citationScanHash` vs `Document.textHash`, so it rescans only judgments whose text changed. Ingesting a previously unknown act clears that watermark automatically, because a new act is a link target nothing has been compared against and no judgment's text has changed to trigger a rescan on its own. To force a full rescan by hand:
 
 ```sql
 UPDATE "Document" SET citation_scan_hash = NULL;
@@ -250,7 +250,7 @@ Ingestion used to run as part of the website's pre-deploy step, but a 200-page b
 
    The acts step is deliberately left unbounded so that the first firing loads the whole corpus (~900 acts, ~22 minutes at the default delay) rather than splitting it across firings. Splitting it would be worse than slow: `citations` runs in the same firing, so acts arriving in a *later* firing would find every judgment already marked as scanned and would never be linked to. `LAGASAFN_MAX_ACTS` still exists for bounding a manual run.
 
-   After that first firing the step is nearly free: an act whose codex version still matches the index's is skipped without being fetched, so an unchanged Lagasafn release costs one request. The citations step only rescans judgments whose text changed, so a quiet week does almost nothing — except when new acts appear, which clears the scan watermark so existing judgments are re-linked against them (see below).
+   After that first firing the step is nearly free: an act whose codex version still matches the index's is skipped without being fetched, so an unchanged Lagasafn release costs one request. The citations step only rescans judgments whose text changed, so a quiet week does almost nothing. The exception is deliberate: when `lagasafn` ingests an act the database has never held, it clears the citation watermark, so the citations step in the same firing re-links the whole corpus against it. Without that, a late-arriving act would never be linked to anything — the judgments' text has not changed, so they would never be rescanned.
 5. No manual redeploys needed after this. Progress is visible at `/admin/ingestion` on the website.
 
 This used to fire every 2 hours to backfill 2000 cases a run; with the archive backfilled, a weekly incremental run is all that's needed, and a week with nothing new does almost no work. If you ever need to backfill again — a fresh database, or a gap — drop `INGEST_MODE=recent` from the start command and raise `INGEST_MAX_PAGES`; the `IngestCursor` table means each firing continues where the last one stopped.
