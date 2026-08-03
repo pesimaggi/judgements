@@ -257,6 +257,7 @@ export const lagasafnAdapter: IngestionAdapter = {
       ).map((a) => [`${a.actNumber}/${a.year}`, a])
     );
 
+    let newActs = 0;
     let processed = 0;
     let position = start;
     for (; position < entries.length && processed < maxActs; position++) {
@@ -306,6 +307,7 @@ export const lagasafnAdapter: IngestionAdapter = {
           continue;
         }
 
+        if (!existing) newActs++;
         await saveAct(parsed, entry, hash);
         stats.indexed++;
         if (stats.indexed % 25 === 0) {
@@ -328,6 +330,28 @@ export const lagasafnAdapter: IngestionAdapter = {
         update: { nextPage: next },
       });
       ctx.log(`Cursor: next run resumes at index position ${next}/${entries.length}`);
+    }
+
+    // An act this database has never held is a link target no judgment has
+    // ever been scanned against. The citation job is incremental on each
+    // judgment's own text hash, so without this it would consider the whole
+    // corpus already done and never link anything to the new acts — the case
+    // that bit a cold start, where acts arriving after the first citation
+    // pass stayed permanently unlinked.
+    //
+    // Clearing the watermark makes the next citation run a full rescan. That
+    // is the point, and it is rare: it fires on a cold start and when Alþingi
+    // passes a new act, not on the routine amendments Lagasafn publishes,
+    // which only update provisions that already exist.
+    if (newActs > 0) {
+      const cleared = await prisma.document.updateMany({
+        where: { citationScanHash: { not: null } },
+        data: { citationScanHash: null },
+      });
+      ctx.log(
+        `${newActs} previously unknown act(s) ingested — cleared the citation ` +
+          `watermark on ${cleared.count} judgments so the next citations run re-links them.`
+      );
     }
 
     return stats;
