@@ -34,11 +34,198 @@ model Document {
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
+  /// The value `textHash` had when this judgment was last scanned for
+  /// citations. Null means never scanned; a mismatch means the text changed
+  /// since. That single comparison is what makes the citation job
+  /// incremental — see src/ingestion/citations.ts.
+  citationScanHash String? @map("citation_scan_hash")
+
+  provisionLinks CaseProvisionLink[]
+  actLinks       CaseActLink[]
+
   @@unique([source, officialUrl])
   @@index([source])
   @@index([caseNumber])
   @@index([date])
   @@index([year])
+  @@index([citationScanHash])
+}
+
+/// One Icelandic act (lög), as published in Lagasafn.
+model Act {
+  id        String @id @default(cuid())
+  /// "91" in "lög nr. 91/1991".
+  actNumber Int    @map("act_number")
+  year      Int
+  title     String
+  /// Short names judgments actually use to cite this act ("vaxtalaga",
+  /// "hegningarlaga"). Harvested from the corpus rather than derived from the
+  /// title, because the two often disagree: 38/2001 is "Lög um vexti og
+  /// verðtryggingu" but is universally cited as "vaxtalög". Without these the
+  /// act type-ahead misses the most natural query for an act.
+  aliases   String[]
+  /// "in_force" — everything ingested from Lagasafn's current index. Repealed
+  /// acts have no /nuna/ page; the field exists so they can be represented
+  /// later without a migration.
+  status    String @default("in_force")
+  /// Canonical permalink to the current version, always /lagas/nuna/…, never
+  /// a pinned session version.
+  currentVersionUrl String @map("current_version_url")
+  /// Lagasafn codex version the stored text was parsed from, e.g. "157b".
+  codexVersion String? @map("codex_version")
+  /// Hash of the law's normalized body, for skipping unchanged acts on the
+  /// roughly-daily Lagasafn updates.
+  sourceHash String   @map("source_hash")
+  fetchedAt  DateTime @default(now()) @map("fetched_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  chapters   Chapter[]
+  provisions Provision[]
+  caseLinks  CaseActLink[]
+
+  @@unique([actNumber, year])
+  @@index([status])
+  @@map("acts")
+}
+
+/// A chapter (kafli) within an act. Lagasafn gives chapters no anchor of
+/// their own, so membership is derived from document order during parsing.
+model Chapter {
+  id       String  @id @default(cuid())
+  actId    String  @map("act_id")
+  /// Roman numeral as written, e.g. "II". Null for "Ákvæði til bráðabirgða".
+  numeral  String?
+  /// The letter in "II. kafli A.", for chapters inserted by amendment.
+  letter   String?
+  /// The heading as printed, e.g. "II. kafli A.".
+  label    String
+  title    String?
+  ordering Int
+
+  act        Act         @relation(fields: [actId], references: [id], onDelete: Cascade)
+  provisions Provision[]
+
+  @@index([actId, ordering])
+  @@map("chapters")
+}
+
+/// A provision (grein) — the unit judgments cite and the unit this feature
+/// is built around.
+model Provision {
+  id        String  @id @default(cuid())
+  actId     String  @map("act_id")
+  chapterId String? @map("chapter_id")
+  /// "article" for a numbered "N. gr."; "temporary" for the roman-numeral
+  /// entries under "Ákvæði til bráðabirgða", which carry no article number.
+  kind      String  @default("article")
+  /// 7 in "7. gr. a". Null for temporary provisions.
+  articleNumber Int?    @map("article_number")
+  /// "a" in "7. gr. a" — sub-articles inserted by amendment.
+  articleLetter String? @map("article_letter")
+  /// Label as printed, e.g. "7. gr. a" or "II." — what the UI shows.
+  displayLabel  String  @map("display_label")
+  /// The provision's own heading, where it has one ("Fyrirsvar jarða í sameign").
+  heading   String?
+  /// Lagasafn's own anchor for this provision, e.g. "G7A". Appending it to
+  /// the act's currentVersionUrl deep-links to the exact article on
+  /// althingi.is, and it is a stable natural key across re-ingestion.
+  anchor    String
+  fullText  String  @map("full_text")
+  /// True when the provision's entire body has been repealed — Lagasafn
+  /// prints these as a bare "…" with a footnote.
+  isRepealed Boolean @default(false) @map("is_repealed")
+  ordering  Int
+  /// Materialized search vector, maintained by a trigger created in
+  /// prisma/sql/setup-search.sql. Declared as Unsupported so `prisma db push`
+  /// leaves it alone and Prisma Client never reads or writes it.
+  searchVector Unsupported("tsvector")? @map("search_vector")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  act        Act                  @relation(fields: [actId], references: [id], onDelete: Cascade)
+  chapter    Chapter?             @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+  paragraphs ProvisionParagraph[]
+  caseLinks  CaseProvisionLink[]
+
+  @@unique([actId, anchor])
+  @@index([actId, ordering])
+  @@index([actId, articleNumber, articleLetter])
+  @@map("provisions")
+}
+
+/// A paragraph (málsgrein) within a provision. A table rather than a JSON
+/// blob because "1. mgr. 5. gr." is how Icelandic judgments cite, and
+/// Lagasafn gives every paragraph its own stable anchor (#G7AM1).
+model ProvisionParagraph {
+  id          String @id @default(cuid())
+  provisionId String @map("provision_id")
+  /// 1 → "1. mgr.".
+  number      Int
+  /// Lagasafn's paragraph anchor, e.g. "G7AM1".
+  anchor      String
+  text        String
+  ordering    Int
+
+  provision Provision @relation(fields: [provisionId], references: [id], onDelete: Cascade)
+
+  @@unique([provisionId, anchor])
+  @@index([provisionId, ordering])
+  @@map("provision_paragraphs")
+}
+
+/// A judgment citing a specific provision. The excerpt is stored, not just
+/// the link, so the UI can show *why* a case matched.
+model CaseProvisionLink {
+  id          String @id @default(cuid())
+  documentId  String @map("document_id")
+  provisionId String @map("provision_id")
+  /// "explicit_citation" — the article and its act appear together in the
+  /// text. Room for "carried_act_context" (a bare "5. gr." resolved from a
+  /// nearby act) and "ai_inferred_interpretation" later; the UI and the
+  /// badge counts can then filter by type rather than trusting all links
+  /// equally.
+  matchType   String @map("match_type")
+  /// From "1. mgr." — which paragraph of the provision was cited, if stated.
+  paragraphNumber Int? @map("paragraph_number")
+  /// From "2. tölul." — which point, if stated.
+  pointNumber     Int? @map("point_number")
+  /// The citation exactly as written, e.g. "1. mgr. 175. gr. laga nr. 91/1991".
+  citationText String @map("citation_text")
+  /// The citing sentence(s), for the "why did this match" UI.
+  excerpt      String
+  /// Character offset into Document.fullText, so the UI can jump to the passage.
+  charOffset   Int    @map("char_offset")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  document  Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  provision Provision @relation(fields: [provisionId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, provisionId, charOffset])
+  @@index([provisionId, matchType])
+  @@index([documentId])
+  @@map("case_provision_links")
+}
+
+/// A judgment citing an act without naming an article ("sbr. lög nr.
+/// 91/1991"). Kept separate because it cannot be derived from
+/// CaseProvisionLink, and the act reader's header count needs it.
+model CaseActLink {
+  id         String @id @default(cuid())
+  documentId String @map("document_id")
+  actId      String @map("act_id")
+  matchType  String @map("match_type")
+  excerpt    String
+  charOffset Int    @map("char_offset")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  act      Act      @relation(fields: [actId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, actId, charOffset])
+  @@index([actId])
+  @@index([documentId])
+  @@map("case_act_links")
 }
 
 /// Registered court sources (fixed list of three).

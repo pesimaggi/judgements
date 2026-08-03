@@ -12,9 +12,12 @@ This is a deliberately narrowed build: no ombudsman opinions, no administrative 
 - **Strict opt-in courts** — nothing is selected when the app opens, the Search button is disabled until at least one court is ticked, selected courts are shown as removable chips above the results, and the API itself returns `400 Select one or more courts to search.` if called without sources.
 - **Case summaries** — where a judgment carries its own `Útdráttur` section, result cards offer it behind a disclosure arrow, so you can read the court's own summary without opening the full text.
 - **Full document page** — structured metadata, the judgment typeset as readable prose (headings, paragraphs, numbered clauses, quoted passages) with highlighted hits, search-within-document, copyable citation, official-source link, related cases via case-number citation extraction.
-- **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`.
+- **Icelandic acts (lög)** — the in-force text of Icelandic law from [Lagasafn](https://www.althingi.is/lagas/), parsed into chapters (kaflar), provisions (greinar) and paragraphs (málsgreinar), with an act reader at `/log/{actNumber}-{year}`.
+- **Provision-level case linking** — each provision shows how many judgments cite it ("12 dómar vísa til þessa ákvæðis"), expanding to the citing cases with the sentence the citation was found in, so you can see *why* a case matched before opening it.
+- **Specific search** — alongside the keyword search: an act type-ahead (by title, by citation number, or by the short names judgments actually use — "vaxtalög" finds lög nr. 38/2001) and a provision picker to jump straight to an article.
+- **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`.
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
-- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs weekly and pulls only what's new; `efta-court` is a pilot, not yet ingesting (see below).
+- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs weekly and pulls only what's new; `lagasafn` ingests every in-force act; `citations` links judgments to the provisions they cite; `efta-court` is a pilot, not yet ingesting (see below).
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
 
 ## Quick start
@@ -142,10 +145,17 @@ src/
     api/sources/route.ts         the three court sources
     api/documents/[id]/route.ts  document + related cases
     api/ingestion/route.ts       status feed
+    log/[slug]/page.tsx          act reader — /log/91-1991
+    api/acts/route.ts            GET — act type-ahead
+    api/acts/[slug]/route.ts     GET — one act with its provisions + badge counts
+    api/provisions/route.ts      GET — provision search, optionally within one act
+    api/provisions/[id]/cases    GET — judgments citing one provision, with excerpts
   lib/
     sources.ts                   source registry: the three courts + EFTA (pilot)
     query-parser.ts              phrases / boolean / case-number detection
     judgment-text.ts             reflows extracted text into readable blocks
+    lagasafn.ts                  Lagasafn HTML → chapters/provisions/paragraphs
+    legal-citations.ts           recognises act/regulation citations in judgment text
     search/                      provider abstraction: postgres (default) + meilisearch
     citation.ts, highlight.ts
   ingestion/
@@ -153,7 +163,9 @@ src/
     run.ts                       CLI runner, records IngestionRun rows
     adapters/
       icelandic-courts.ts        GraphQL + embedded PDF/rich text; weekly incremental
+      lagasafn.ts                in-force Icelandic acts; incremental by codex version
       efta-court.ts              pilot — probe mode, not yet verified live
+    citations.ts                 judgments → provisions; incremental by text hash
 prisma/
   schema.prisma
   sql/setup-search.sql           FTS function, search_vector column + trigger, GIN/trigram indexes
@@ -171,6 +183,11 @@ INGEST_MODE=recent npm run ingest -- --adapter=icelandic-courts
 INGEST_MAX_PAGES=2 npm run ingest -- --adapter=icelandic-courts
 # backfill one court at a time (exact values: "Hæstiréttur", "Landsréttur", a "Héraðsdómur ..." string):
 INGEST_COURT=Hæstiréttur npm run ingest -- --adapter=icelandic-courts
+
+# ingest every in-force Icelandic act (~900) from Lagasafn:
+npm run ingest -- --adapter=lagasafn
+# link judgments to the provisions they cite — run after either of the above:
+npm run ingest -- --adapter=citations
 ```
 
 | Variable | Applies to | Meaning |
@@ -183,10 +200,31 @@ INGEST_COURT=Hæstiréttur npm run ingest -- --adapter=icelandic-courts
 | `INGEST_PROBE=1` | efta-court | Report what eftacourt.int serves, ingest nothing |
 | `EFTA_CASE_INDEX` | efta-court | Path to the confirmed case list |
 | `INGEST_MAX_CASES` | efta-court | Cases per run (default 25) |
+| `LAGASAFN_MAX_ACTS` | lagasafn | Acts fetched per run; the rest resume next run |
+| `LAGASAFN_ONLY` | lagasafn | Ingest a single act, e.g. `91/1991` — bypasses the cursor |
+| `LAGASAFN_FORCE=1` | lagasafn | Re-parse and rewrite even when nothing has changed |
+| `CITATION_MAX_DOCS` | citations | Judgments scanned per run |
+| `CITATION_BATCH_SIZE` | citations | Judgments held in memory at once (default 50) |
 
 Each run records indexed/skipped/error counts in `IngestionRun`, visible at `/admin/ingestion`. Politeness settings (`INGEST_DELAY_MS`, `INGEST_USER_AGENT`) live in `.env`.
 
 **How it works:** island.is's public GraphQL API (`https://island.is/api/graphql`) has introspection disabled in production, so the schema couldn't be discovered by asking the API itself. Instead it was reconstructed from island.is/domar's own live search requests: the list comes from the `webVerdicts` query (confirmed to return the full archive — 40k+ judgments — when searched with an empty term, 10 per page). The case detail pages have no separate API call for the full text; each judgment is embedded either as a base64-encoded PDF (older, scanned cases) or a Contentful-style rich-text document (newer cases) inside the page's own `__NEXT_DATA__` payload, so the adapter fetches the detail page directly and extracts the text itself (`pdf-parse`, or a rich-text tree walk) rather than needing another query.
+
+### Acts and citation links
+
+`lagasafn` reads the in-force index at `/lagasafn/nuna/` — authoritative about what is currently in force, and one request rather than a crawl — then fetches each act's own `/lagas/nuna/{year}{nr}.html` page. That page is the canonical permalink the app stores and links to, and it is served as UTF-8 (the bulk zip is ISO-8859-1; `decodeHtml()` honours whichever encoding a response actually declares rather than assuming).
+
+Lagasafn's markup carries stable anchors — `id="G7A"` for "7. gr. a", `id="G7AM1"` for its first paragraph — so provisions parse cleanly and can deep-link into the official text. Provisions are matched on `(actId, anchor)` and updated in place rather than deleted and recreated, because `CaseProvisionLink` cascades from `Provision`: a delete-and-reinsert would discard every judgment link on the act each time Lagasafn published a routine amendment.
+
+Repeat runs are cheap. An act whose stored codex version still matches the index's is skipped without being fetched, so a run against an unchanged Lagasafn release makes a single request in total.
+
+`citations` links judgments to provisions where the article and its act appear together in the text ("1. mgr. 175. gr. laga nr. 91/1991"), storing the citing sentence and its offset so the UI can show why a case matched and jump to the passage. It is incremental on `Document.citationScanHash` vs `Document.textHash`, so it rescans only judgments whose text changed. New acts do not themselves trigger a rescan — after a large Lagasafn ingest, force one with:
+
+```sql
+UPDATE "Document" SET citation_scan_hash = NULL;
+```
+
+Bare references ("skv. 5. gr." with the act named earlier in the judgment) are deliberately *not* resolved: measured over the corpus, carrying the last-named act forward is reliable only within a few hundred characters and wrong more often than not beyond that. `CaseProvisionLink.matchType` exists so such links can be added later as a separately-trustable class. See `docs/phase-0-acts-provisions.md`.
 
 **Scale note:** the full archive is 40k+ judgments — far more than a single run should attempt at once. `INGEST_MAX_PAGES` bounds how much a run pulls; the adapter persists a resume cursor per court filter (the `IngestCursor` table) after every page, so repeated runs — including a scheduled job that knows nothing about previous runs — automatically continue from wherever the last one left off, no manually-advancing page offset required.
 
@@ -208,7 +246,9 @@ Ingestion used to run as part of the website's pre-deploy step, but a 200-page b
 1. In the same Railway project, **New Service** → **GitHub Repo** → select this same repo.
 2. In that service's **Settings** → **Config-as-code**, set the **Config File Path** to `railway.ingest.json` (instead of the default `railway.json`) — this is what makes it a distinct scheduled job rather than another copy of the website.
 3. Give it the same `DATABASE_URL` reference variable as the website service (and `SEARCH_PROVIDER`/Meilisearch variables too, if you're using Meilisearch instead of the default Postgres full-text search).
-4. `railway.ingest.json` sets `deploy.cronSchedule` to `0 6 * * 1` (Mondays 06:00 UTC) and a start command that runs `INGEST_MODE=recent`. Railway spins up a container on that schedule, runs it to completion, then stops it until the next firing — no always-on dyno needed for this service.
+4. `railway.ingest.json` sets `deploy.cronSchedule` to `0 6 * * 1` (Mondays 06:00 UTC) and a start command that chains the three adapters: new judgments (`INGEST_MODE=recent`), then acts (`lagasafn`, bounded to 500 fetches a run and resuming from its cursor), then `citations` to link whatever arrived. Railway spins up a container on that schedule, runs it to completion, then stops it until the next firing — no always-on dyno needed for this service.
+
+   The acts step is cheap after the first run: an act whose codex version still matches the index's is skipped without being fetched, so an unchanged Lagasafn release costs one request. The citations step only rescans judgments whose text changed, so a quiet week does almost nothing. Note that newly-ingested *acts* do not by themselves trigger a rescan of existing judgments — after a large Lagasafn ingest, force one with `UPDATE "Document" SET citation_scan_hash = NULL;`.
 5. No manual redeploys needed after this. Progress is visible at `/admin/ingestion` on the website.
 
 This used to fire every 2 hours to backfill 2000 cases a run; with the archive backfilled, a weekly incremental run is all that's needed, and a week with nothing new does almost no work. If you ever need to backfill again — a fresh database, or a gap — drop `INGEST_MODE=recent` from the start command and raise `INGEST_MAX_PAGES`; the `IngestCursor` table means each firing continues where the last one stopped.

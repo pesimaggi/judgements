@@ -87,3 +87,71 @@ CREATE INDEX IF NOT EXISTS document_subject_tags_idx ON "Document" USING GIN (su
 -- "Newest/oldest first" within a court selection, and the front page's
 -- newest-cases list.
 CREATE INDEX IF NOT EXISTS document_source_date_idx ON "Document" (source, date DESC NULLS LAST);
+
+-- ---------------------------------------------------------------------------
+-- Acts and provisions
+--
+-- Provisions are searched through the same SearchProvider abstraction as
+-- judgments (searchProvisions), so they get the same treatment here: the
+-- 'simple' configuration to preserve Icelandic characters, a materialized
+-- vector kept current by a trigger, and a GIN index over it.
+-- ---------------------------------------------------------------------------
+
+-- Weighted provision vector: the label and heading are what a reader scans
+-- for ("26. gr.", "Miskabætur"), so they outrank the provision's body text.
+CREATE OR REPLACE FUNCTION provision_search_vector(
+  display_label text, heading text, full_text text
+) RETURNS tsvector
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT
+    setweight(to_tsvector('simple', coalesce(display_label, '')), 'A') ||
+    setweight(to_tsvector('simple', coalesce(heading, '')), 'B') ||
+    setweight(to_tsvector('simple', coalesce(full_text, '')), 'D')
+$$;
+
+CREATE OR REPLACE FUNCTION provision_search_vector_refresh() RETURNS trigger
+LANGUAGE plpgsql AS $prov$
+BEGIN
+  NEW.search_vector := provision_search_vector(
+    NEW.display_label, NEW.heading, NEW.full_text
+  );
+  RETURN NEW;
+END
+$prov$;
+
+DROP TRIGGER IF EXISTS provision_search_vector_refresh_tg ON provisions;
+CREATE TRIGGER provision_search_vector_refresh_tg
+  BEFORE INSERT OR UPDATE OF display_label, heading, full_text
+  ON provisions
+  FOR EACH ROW EXECUTE FUNCTION provision_search_vector_refresh();
+
+-- Backfill rows written before the trigger existed; a no-op on later runs,
+-- so this stays safe to re-run on every deploy.
+UPDATE provisions
+   SET search_vector = provision_search_vector(display_label, heading, full_text)
+ WHERE search_vector IS NULL;
+
+CREATE INDEX IF NOT EXISTS provision_search_vector_idx ON provisions USING GIN (search_vector);
+
+-- The act type-ahead matches on title and on the short names harvested from
+-- the corpus ("vaxtalög" for 38/2001, which its title does not contain).
+--
+-- aliases is a text[], so the trigram index goes on its flattened form — and
+-- the lookup query must use this same function, or the index will not apply.
+-- array_to_string() itself is only STABLE (the generic-type machinery behind
+-- it is not guaranteed immutable for every element type), which Postgres
+-- refuses in an index expression. Pinned to text[] with a constant delimiter
+-- it genuinely is immutable, so the wrapper below can declare it.
+CREATE OR REPLACE FUNCTION act_alias_text(aliases text[]) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT array_to_string(aliases, ' ')
+$$;
+
+CREATE INDEX IF NOT EXISTS acts_title_trgm_idx ON acts USING GIN (title gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS acts_aliases_trgm_idx
+  ON acts USING GIN (act_alias_text(aliases) gin_trgm_ops);
+
+-- The provision badge ("12 dómar vísa til þessa ákvæðis") counts links per
+-- provision, and the act reader loads every provision's count in one pass.
+CREATE INDEX IF NOT EXISTS case_provision_links_provision_idx
+  ON case_provision_links (provision_id, match_type);

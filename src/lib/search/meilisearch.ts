@@ -1,5 +1,13 @@
 import { MeiliSearch } from "meilisearch";
-import type { SearchRequest, SearchHit } from "../types";
+import { prisma } from "../db";
+import type {
+  SearchRequest,
+  SearchHit,
+  ActSearchRequest,
+  ActHit,
+  ProvisionSearchRequest,
+  ProvisionHit,
+} from "../types";
 import type { SearchProvider, ProviderResult } from "./provider";
 import { extractSummary, SUMMARY_SCAN_CHARS } from "../judgment-text";
 
@@ -13,7 +21,7 @@ const INDEX = "documents";
  * provider is active).
  */
 export class MeilisearchProvider implements SearchProvider {
-  private client = new MeiliSearch({
+  readonly client = new MeiliSearch({
     host: process.env.MEILISEARCH_HOST ?? "http://localhost:7700",
     apiKey: process.env.MEILISEARCH_API_KEY,
   });
@@ -75,6 +83,58 @@ export class MeilisearchProvider implements SearchProvider {
 
     return { total: res.estimatedTotalHits ?? hits.length, hits };
   }
+
+  async searchActs(req: ActSearchRequest): Promise<ActHit[]> {
+    const limit = Math.min(25, Math.max(1, req.limit ?? 10));
+    const res = await this.client.index(ACTS_INDEX).search(req.query, { limit });
+    return res.hits.map((h: any) => ({
+      id: h.id,
+      actNumber: h.actNumber,
+      year: h.year,
+      title: h.title,
+      citation: h.citation ?? `lög nr. ${h.actNumber}/${h.year}`,
+      path: `/log/${h.actNumber}-${h.year}`,
+      provisionCount: h.provisionCount ?? 0,
+    }));
+  }
+
+  async searchProvisions(req: ProvisionSearchRequest) {
+    const page = Math.max(1, req.page ?? 1);
+    const pageSize = Math.min(50, Math.max(1, req.pageSize ?? 20));
+    const res = await this.client.index(PROVISIONS_INDEX).search(req.query, {
+      filter: [`kind = "article"`, ...(req.actId ? [`actId = "${req.actId}"`] : [])],
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      attributesToCrop: ["fullText"],
+      cropLength: 60,
+    });
+
+    // Case counts are read live rather than indexed — see ensureActIndexes().
+    const ids = res.hits.map((h: any) => h.id);
+    const counts = ids.length
+      ? await prisma.caseProvisionLink.groupBy({
+          by: ["provisionId"],
+          where: { provisionId: { in: ids } },
+          _count: { _all: true },
+        })
+      : [];
+    const countBy = new Map(counts.map((c) => [c.provisionId, c._count._all]));
+
+    const hits: ProvisionHit[] = res.hits.map((h: any) => ({
+      id: h.id,
+      actId: h.actId,
+      actNumber: h.actNumber,
+      year: h.year,
+      actTitle: h.actTitle,
+      displayLabel: h.displayLabel,
+      heading: h.heading ?? null,
+      anchor: h.anchor,
+      snippet: h._formatted?.fullText ?? (h.fullText ?? "").slice(0, 400),
+      caseCount: countBy.get(h.id) ?? 0,
+      path: `/log/${h.actNumber}-${h.year}#${h.anchor}`,
+    }));
+    return { total: res.estimatedTotalHits ?? hits.length, hits };
+  }
 }
 
 /** Push one document into the Meilisearch index (called from ingestion). */
@@ -87,4 +147,82 @@ export async function syncDocumentToMeilisearch(doc: any) {
       dateTimestamp: doc.date ? new Date(doc.date).getTime() : null,
     },
   ]);
+}
+
+const ACTS_INDEX = "acts";
+const PROVISIONS_INDEX = "provisions";
+
+/**
+ * Acts and provisions get their own Meilisearch indexes, pushed during
+ * Lagasafn ingestion (syncActToMeilisearch, called from the adapter when this
+ * provider is active) — the same arrangement judgments already use.
+ *
+ * One thing deliberately does not live in the index: the per-provision case
+ * count. It changes every time the citation job runs over new judgments,
+ * which would mean rewriting provision documents on a schedule unrelated to
+ * the law itself. Meilisearch does the matching; the counts are read from
+ * Postgres for the handful of rows actually returned.
+ */
+export async function ensureActIndexes(client: MeiliSearch) {
+  await client.index(ACTS_INDEX).updateSettings({
+    filterableAttributes: ["actNumber", "year"],
+    searchableAttributes: ["title", "aliases", "citation"],
+  });
+  await client.index(PROVISIONS_INDEX).updateSettings({
+    filterableAttributes: ["actId", "articleNumber", "kind"],
+    sortableAttributes: ["ordering"],
+    searchableAttributes: ["displayLabel", "heading", "fullText", "actTitle"],
+  });
+}
+
+/** Push one act and its provisions into the indexes (called from ingestion). */
+export async function syncActToMeilisearch(act: {
+  id: string;
+  actNumber: number;
+  year: number;
+  title: string;
+  aliases: string[];
+  provisions: {
+    id: string;
+    kind: string;
+    displayLabel: string;
+    heading: string | null;
+    anchor: string;
+    fullText: string;
+    articleNumber: number | null;
+    ordering: number;
+  }[];
+}) {
+  const provider = new MeilisearchProvider();
+  const client = provider.client;
+  await ensureActIndexes(client);
+  await client.index(ACTS_INDEX).addDocuments([
+    {
+      id: act.id,
+      actNumber: act.actNumber,
+      year: act.year,
+      title: act.title,
+      aliases: act.aliases,
+      citation: `lög nr. ${act.actNumber}/${act.year}`,
+      provisionCount: act.provisions.filter((p) => p.kind === "article").length,
+    },
+  ]);
+  if (act.provisions.length) {
+    await client.index(PROVISIONS_INDEX).addDocuments(
+      act.provisions.map((p) => ({
+        id: p.id,
+        actId: act.id,
+        actNumber: act.actNumber,
+        year: act.year,
+        actTitle: act.title,
+        kind: p.kind,
+        articleNumber: p.articleNumber,
+        displayLabel: p.displayLabel,
+        heading: p.heading,
+        anchor: p.anchor,
+        fullText: p.fullText,
+        ordering: p.ordering,
+      }))
+    );
+  }
 }

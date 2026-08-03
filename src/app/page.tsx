@@ -2,6 +2,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { SourcePanel } from "@/components/SourcePanel";
+import { SpecificSearch } from "@/components/SpecificSearch";
 import { ResultCard } from "@/components/ResultCard";
 import { Pagination } from "@/components/Pagination";
 import { ProgressBars } from "@/components/ProgressBars";
@@ -202,18 +203,23 @@ function SearchPageInner() {
       )}
 
       <div className="mt-4 flex flex-col gap-5 lg:flex-row">
-        <SourcePanel
-          sources={sources}
-          selected={selected}
-          onToggleSource={(k) => setSelected((s) => toggle(s, k))}
-          onSetSources={(keys, on) =>
-            setSelected((s) => {
-              const next = new Set(s);
-              keys.forEach((k) => (on ? next.add(k) : next.delete(k)));
-              return next;
-            })
-          }
-        />
+        {/* Sidebar: court selection for keyword search, and — alongside it,
+            not replacing it — the act/provision lookup. */}
+        <div className="w-full shrink-0 space-y-4 lg:w-72">
+          <SourcePanel
+            sources={sources}
+            selected={selected}
+            onToggleSource={(k) => setSelected((s) => toggle(s, k))}
+            onSetSources={(keys, on) =>
+              setSelected((s) => {
+                const next = new Set(s);
+                keys.forEach((k) => (on ? next.add(k) : next.delete(k)));
+                return next;
+              })
+            }
+          />
+          <SpecificSearch />
+        </div>
 
         <section className="min-w-0 flex-1">
           <div ref={resultsTopRef} className="scroll-mt-4" />

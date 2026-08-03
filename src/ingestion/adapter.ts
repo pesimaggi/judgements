@@ -61,16 +61,63 @@ const MAX_RETRIES = 3;
  * immediately since retrying won't change the outcome.
  */
 export async function politeFetchText(url: string): Promise<string> {
+  const { body, contentType } = await politeFetchBytes(url);
+  return decodeHtml(body, contentType);
+}
+
+/**
+ * The bytes behind politeFetchText, sharing its rate limiter and retries.
+ * Needed where the response's own encoding has to be inspected rather than
+ * assumed — see decodeHtml().
+ */
+export async function politeFetchBytes(
+  url: string
+): Promise<{ body: Buffer; contentType: string | null }> {
   for (let attempt = 0; ; attempt++) {
     const wait = lastFetch + DELAY_MS - Date.now();
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     lastFetch = Date.now();
     const res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
-    if (res.ok) return res.text();
+    if (res.ok) {
+      return {
+        body: Buffer.from(await res.arrayBuffer()),
+        contentType: res.headers.get("content-type"),
+      };
+    }
     if (res.status < 500 || attempt >= MAX_RETRIES) {
       throw new Error(`HTTP ${res.status} for ${url}`);
     }
     await new Promise((r) => setTimeout(r, RETRY_BASE_MS * 2 ** attempt));
+  }
+}
+
+/**
+ * Decodes an HTML response using the encoding it actually declares.
+ *
+ * Not every Icelandic source serves UTF-8: Lagasafn's live pages do, but its
+ * bulk zip is ISO-8859-1, and decoding those bytes as UTF-8 turns every
+ * accented character into a replacement char. Trusting `Response.text()`
+ * (which assumes UTF-8 when the header omits a charset) silently corrupts
+ * exactly the characters this project exists to preserve.
+ *
+ * Order of preference: the Content-Type header, then the document's own
+ * <meta charset>, then UTF-8.
+ */
+export function decodeHtml(body: Buffer, contentType?: string | null): string {
+  const fromHeader = /charset=["']?([\w-]+)/i.exec(contentType ?? "")?.[1];
+  // The meta tag is ASCII-compatible in every encoding we care about, so
+  // sniffing it from a latin1 view of the head of the document is safe.
+  const head = body.subarray(0, 4096).toString("latin1");
+  const fromMeta =
+    /<meta[^>]+charset=["']?([\w-]+)/i.exec(head)?.[1] ??
+    /<\?xml[^>]+encoding=["']([\w-]+)/i.exec(head)?.[1];
+
+  const label = (fromHeader ?? fromMeta ?? "utf-8").toLowerCase();
+  try {
+    return new TextDecoder(label).decode(body);
+  } catch {
+    // An unknown or misspelled charset label should not fail the ingest.
+    return new TextDecoder("utf-8").decode(body);
   }
 }
 
