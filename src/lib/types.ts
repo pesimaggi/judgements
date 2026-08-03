@@ -65,3 +65,56 @@ export interface SearchResponse {
   totalPages: number;
   hits: SearchHit[];
 }
+
+/** Act lookup for the "specific search" panel's type-ahead. */
+export interface ActSearchRequest {
+  /** Free text: an act title, a short name ("vaxtalög"), or "91/1991". */
+  query: string;
+  limit?: number;
+}
+
+export interface ActHit {
+  id: string;
+  actNumber: number;
+  year: number;
+  title: string;
+  /** "lög nr. 91/1991" — the form the citation is written in. */
+  citation: string;
+  /** Route to this act's reader view, e.g. "/log/91-1991". */
+  path: string;
+  provisionCount: number;
+}
+
+/** Provision search, scoped to one act or across all of them. */
+export interface ProvisionSearchRequest {
+  query: string;
+  /** Restrict to a single act — what the provision picker uses. */
+  actId?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface ProvisionHit {
+  id: string;
+  actId: string;
+  actNumber: number;
+  year: number;
+  actTitle: string;
+  /** "5. gr." / "7. gr. a." */
+  displayLabel: string;
+  heading: string | null;
+  /** Lagasafn anchor, for deep-linking into the official text. */
+  anchor: string;
+  snippet: string;
+  /** Judgments explicitly citing this provision. */
+  caseCount: number;
+  /** Route to this provision within the act reader. */
+  path: string;
+}
+
+export interface ProvisionSearchResponse {
+  total: number;
+  page: number;
+  pageSize: number;
+  hits: ProvisionHit[];
+}
