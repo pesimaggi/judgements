@@ -107,3 +107,162 @@ export function citedCaseNumbers(text: string, exclude?: string | null): string[
   }
   return Array.from(seen);
 }
+
+// ---------------------------------------------------------------------------
+// Extraction — the deterministic pass the citation job runs over the corpus.
+// ---------------------------------------------------------------------------
+
+/**
+ * Replaces the non-breaking space variants Lagasafn and the courts' PDFs are
+ * full of, one character for one character so that every offset produced by
+ * the patterns below still indexes into the caller's original text.
+ */
+export function normalizeSpacesPreservingOffsets(text: string): string {
+  return text.replace(/[   ]/g, " ");
+}
+
+/** An act reference: "lög nr. 91/1991", "almennra hegningarlaga nr. 19/1940". */
+export interface ActCitation {
+  actNumber: number;
+  year: number;
+  /** Offset of the whole citation in the source text. */
+  index: number;
+  length: number;
+  /**
+   * The compound short name used, lowercased ("hegningarlaga"), where the
+   * citation used one rather than a bare "laga". This is where Act.aliases
+   * comes from — acts are cited by names their official titles do not
+   * contain ("vaxtalaga" for "Lög um vexti og verðtryggingu").
+   */
+  alias: string | null;
+}
+
+/** A provision reference: "1. mgr. 175. gr. laga nr. 91/1991". */
+export interface ProvisionCitation extends ActCitation {
+  articleNumber: number;
+  articleLetter: string | null;
+  paragraphNumber: number | null;
+  pointNumber: number | null;
+  /** The citation exactly as written. */
+  text: string;
+}
+
+/** "N. gr." with an optional single-letter suffix that stands as its own word. */
+const ARTICLE = String.raw`(\d+)\.\s*gr\.(?:\s*([a-záðéíóúýþæö])(?![\p{L}]))?`;
+/** The qualifiers that may precede it, outermost first. */
+const ARTICLE_PREFIX =
+  String.raw`(?:(\d+)\.\s*tölul\.\s*)?(?:(\d+)\.\s*málsl\.\s*)?(?:(\d+)\.\s*mgr\.\s*)?`;
+
+const ACT_CITATION_RE = new RegExp(
+  String.raw`(?:^|[^\p{L}])(${ACT_STEM}|l\.)${ACT_NAME_TAIL}\s*,?\s*(?:nr\.\s*)?(\d{1,3})\s*\/\s*(\d{4})`,
+  "giu"
+);
+
+/**
+ * A provision reference immediately followed by the act it belongs to. This
+ * is the high-precision case: article and act are adjacent, so no inference
+ * is involved.
+ */
+const PROVISION_CITATION_RE = new RegExp(
+  String.raw`${ARTICLE_PREFIX}${ARTICLE}\s*,?\s*(?:sbr\.\s*)?` +
+    String.raw`(?:${ACT_STEM}|l\.)${ACT_NAME_TAIL}\s*,?\s*(?:nr\.\s*)?(\d{1,3})\s*\/\s*(\d{4})`,
+  "giu"
+);
+
+/** The word carrying the "lög" stem, for alias harvesting. */
+function aliasFrom(stem: string): string | null {
+  const word = stem.trim().toLowerCase().split(/\s+/).pop() ?? "";
+  // A bare "laga"/"lögum"/"l." names no act and is useless as an alias.
+  if (/^(lög|lögum|laga|laganna|lögunum|lögin|l\.)$/.test(word)) return null;
+  return /(?:lög|lögum|laga|laganna|lögunum|lögin)$/.test(word) ? word : null;
+}
+
+/** Every act reference in the text, in document order. */
+export function extractActCitations(text: string): ActCitation[] {
+  const out: ActCitation[] = [];
+  for (const m of text.matchAll(ACT_CITATION_RE)) {
+    // The leading [^\p{L}] guard is part of the match; skip past it so the
+    // offset points at the citation itself.
+    const lead = m[0].length - m[0].trimStart().length;
+    const offset = m.index + (m[0].startsWith(m[1]) ? 0 : 1) + lead;
+    out.push({
+      actNumber: Number(m[2]),
+      year: Number(m[3]),
+      index: offset,
+      length: m[0].length,
+      alias: aliasFrom(m[1]),
+    });
+  }
+  return out;
+}
+
+/** Every provision reference that names its own act, in document order. */
+export function extractProvisionCitations(text: string): ProvisionCitation[] {
+  const out: ProvisionCitation[] = [];
+  for (const m of text.matchAll(PROVISION_CITATION_RE)) {
+    out.push({
+      pointNumber: m[1] ? Number(m[1]) : null,
+      paragraphNumber: m[3] ? Number(m[3]) : null,
+      articleNumber: Number(m[4]),
+      articleLetter: m[5] ? m[5].toLowerCase() : null,
+      actNumber: Number(m[6]),
+      year: Number(m[7]),
+      index: m.index,
+      length: m[0].length,
+      alias: null,
+      // Judgment text wraps mid-citation often enough that the raw match
+      // carries line breaks; the stored citation is display copy, so it is
+      // collapsed to one line. Offsets are unaffected — they index the source.
+      text: m[0].replace(/\s+/g, " ").trim(),
+    });
+  }
+  return out;
+}
+
+/**
+ * Abbreviations that end in a period without ending a sentence. Without these
+ * an excerpt cut at the first ". " lands mid-citation — "1. mgr. 175. gr.
+ * laga nr." — which is precisely the passage the excerpt exists to show.
+ */
+const ABBREVIATIONS = new Set([
+  "gr", "mgr", "nr", "sbr", "tölul", "málsl", "skv", "bls", "kt", "dags",
+  "o.fl", "m.a", "þ.e", "þ.á.m", "s.s", "hf", "ehf", "ohf", "sf", "slf",
+  "millj", "þús", "kr", "sk", "tbl", "árg", "útg", "ath", "jan", "feb",
+  "mars", "apr", "maí", "júní", "júlí", "ág", "sept", "okt", "nóv", "des",
+]);
+
+/** Whether the period at `i` genuinely ends a sentence. */
+function isSentenceEnd(text: string, i: number): boolean {
+  if (text[i] !== ".") return false;
+  const before = text.slice(Math.max(0, i - 12), i);
+  const word = /([\p{L}.]+)$/u.exec(before)?.[1]?.toLowerCase();
+  if (word && ABBREVIATIONS.has(word)) return false;
+  // "1." / "175." are ordinals inside a citation, not sentence ends.
+  if (/\d$/.test(before)) return false;
+  const after = text.slice(i + 1, i + 3);
+  return /^\s/.test(after);
+}
+
+/**
+ * The sentence containing `index`, for the "why did this case match" excerpt.
+ * Bounded so that a judgment without usable punctuation cannot yield a
+ * paragraph-long excerpt.
+ */
+export function sentenceAround(text: string, index: number, maxChars = 400): string {
+  let start = index;
+  const floor = Math.max(0, index - maxChars);
+  while (start > floor) {
+    if (isSentenceEnd(text, start - 1)) break;
+    start--;
+  }
+  let end = index;
+  const ceil = Math.min(text.length, index + maxChars);
+  while (end < ceil) {
+    if (isSentenceEnd(text, end)) {
+      end++;
+      break;
+    }
+    end++;
+  }
+  return text.slice(start, end).replace(/\s+/g, " ").trim();
+}
