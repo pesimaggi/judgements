@@ -11,10 +11,14 @@ import { prisma } from "@/lib/db";
 import { politeFetchText, saveDocument, isDocumentKnown, type IngestionAdapter, type IngestContext } from "./adapter";
 import { icelandicCourtsAdapter } from "./adapters/icelandic-courts";
 import { eftaCourtAdapter } from "./adapters/efta-court";
+import { lagasafnAdapter } from "./adapters/lagasafn";
+import { citationsAdapter } from "./citations";
 
 const ADAPTERS: Record<string, IngestionAdapter> = {
   "icelandic-courts": icelandicCourtsAdapter,
   "efta-court": eftaCourtAdapter,
+  lagasafn: lagasafnAdapter,
+  citations: citationsAdapter,
 };
 
 async function main() {
