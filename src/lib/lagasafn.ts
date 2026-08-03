@@ -125,7 +125,22 @@ export function parseLagasafnHtml(html: string): ParsedAct {
   const body = $("div.article.box.login .boxbody").first();
   const container = body.length ? body : $("body");
 
-  const title = normalizeLawText(stripAmendmentBrackets(container.find("h2").first().text()));
+  /**
+   * Text of an element with Lagasafn's footnote reference markers removed.
+   *
+   * Those markers are rendered as `<sup>1)</sup>` inside the very element
+   * that carries the text, so a plain .text() glues them on: the act "Lög um
+   * Kristnisjóð o.fl." comes out as "Lög um Kristnisjóð o.fl.1)". They are
+   * pointers to the amendment footnote, not part of the name, and they were
+   * reaching titles, headings and therefore the act lookup.
+   */
+  const cleanText = ($el: Cheerio<AnyNode>): string => {
+    const copy = $el.clone();
+    copy.find("sup").remove();
+    return normalizeLawText(stripAmendmentBrackets(copy.text()));
+  };
+
+  const title = cleanText(container.find("h2").first());
 
   // The act's own number sits in the centered line under the title:
   //   <p style="text-align:center"><strong>2004 nr. 81 9. júní</strong></p>
@@ -251,9 +266,7 @@ export function parseLagasafnHtml(html: string): ParsedAct {
       if (tag === "b") {
         // Take the text without any nested <sup>, so a chapter title does not
         // come out as "Jarðir í sameign.1)".
-        const withoutMarkers = $el.clone();
-        withoutMarkers.find("sup").remove();
-        const text = normalizeLawText(stripAmendmentBrackets(withoutMarkers.text()));
+        const text = cleanText($el);
 
         const chapterMatch = new RegExp(
           `^([${ROMAN}]+)\\.?\\s*kafli\\.?\\s*([A-Z]?)\\.?$`,
@@ -302,7 +315,7 @@ export function parseLagasafnHtml(html: string): ParsedAct {
       }
 
       if (tag === "em") {
-        const text = normalizeLawText(stripAmendmentBrackets($el.text()));
+        const text = cleanText($el);
         // A provision's own heading sits between its label and its first
         // paragraph; italics anywhere else is body text.
         if (current && current.heading === null && !paragraphAnchor && current.paragraphs.length === 0) {

@@ -117,9 +117,15 @@ export default function ActPage({ params }: { params: { slug: string } }) {
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-6">
-      <Link href="/" className="text-xs text-inkSoft hover:underline">
-        ← Search
-      </Link>
+      <nav className="flex items-center gap-3 text-xs text-inkSoft">
+        <Link href="/" className="hover:underline">
+          ← Search
+        </Link>
+        <span aria-hidden="true">·</span>
+        <Link href="/log" className="hover:underline">
+          Öll lög
+        </Link>
+      </nav>
 
       <header className="mt-2 rounded-lg border border-line bg-white p-5">
         <p className="font-mono text-xs text-inkSoft">{act.citation}</p>

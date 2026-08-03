@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import type { ActHit, ProvisionHit } from "@/lib/types";
 
 /**
@@ -125,6 +126,9 @@ export function SpecificSearch() {
           {!actsLoading && actQuery.trim().length >= 2 && acts.length === 0 && (
             <p className="mt-2 text-xs text-inkSoft">Engin lög fundust.</p>
           )}
+          <Link href="/log" className="mt-2 inline-block text-xs text-accent hover:underline">
+            Skoða öll lög →
+          </Link>
         </div>
       ) : (
         <div className="mt-3">

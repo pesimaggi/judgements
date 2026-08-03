@@ -14,6 +14,7 @@ This is a deliberately narrowed build: no ombudsman opinions, no administrative 
 - **Full document page** — structured metadata, the judgment typeset as readable prose (headings, paragraphs, numbered clauses, quoted passages) with highlighted hits, search-within-document, copyable citation, official-source link, related cases via case-number citation extraction.
 - **Icelandic acts (lög)** — the in-force text of Icelandic law from [Lagasafn](https://www.althingi.is/lagas/), parsed into chapters (kaflar), provisions (greinar) and paragraphs (málsgreinar), with an act reader at `/log/{actNumber}-{year}`.
 - **Provision-level case linking** — each provision shows how many judgments cite it ("12 dómar vísa til þessa ákvæðis"), expanding to the citing cases with the sentence the citation was found in, so you can see *why* a case matched before opening it.
+- **Act catalogue** — `/log` lists every ingested act with its provision count and how many judgments cite it, searchable by title, short name or number, and sortable by most-cited.
 - **Specific search** — alongside the keyword search: an act type-ahead (by title, by citation number, or by the short names judgments actually use — "vaxtalög" finds lög nr. 38/2001) and a provision picker to jump straight to an article.
 - **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`.
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
@@ -145,8 +146,9 @@ src/
     api/sources/route.ts         the three court sources
     api/documents/[id]/route.ts  document + related cases
     api/ingestion/route.ts       status feed
+    log/page.tsx                 act catalogue — every ingested act
     log/[slug]/page.tsx          act reader — /log/91-1991
-    api/acts/route.ts            GET — act type-ahead
+    api/acts/route.ts            GET — act type-ahead (?q=) and catalogue (no q)
     api/acts/[slug]/route.ts     GET — one act with its provisions + badge counts
     api/provisions/route.ts      GET — provision search, optionally within one act
     api/provisions/[id]/cases    GET — judgments citing one provision, with excerpts
@@ -154,6 +156,7 @@ src/
     sources.ts                   source registry: the three courts + EFTA (pilot)
     query-parser.ts              phrases / boolean / case-number detection
     judgment-text.ts             reflows extracted text into readable blocks
+    acts.ts                      act catalogue listing with per-act counts
     lagasafn.ts                  Lagasafn HTML → chapters/provisions/paragraphs
     legal-citations.ts           recognises act/regulation citations in judgment text
     search/                      provider abstraction: postgres (default) + meilisearch
@@ -202,7 +205,7 @@ npm run ingest -- --adapter=citations
 | `INGEST_MAX_CASES` | efta-court | Cases per run (default 25) |
 | `LAGASAFN_MAX_ACTS` | lagasafn | Acts fetched per run; the rest resume next run |
 | `LAGASAFN_ONLY` | lagasafn | Ingest a single act, e.g. `91/1991` — bypasses the cursor |
-| `LAGASAFN_FORCE=1` | lagasafn | Re-parse and rewrite even when nothing has changed |
+| `LAGASAFN_FORCE=1` | lagasafn | Re-parse and rewrite even when nothing has changed. Needed after any change to the parser: a normal run short-circuits on the codex version before the parser ever runs, so a fix would not reach acts already stored |
 | `CITATION_MAX_DOCS` | citations | Judgments scanned per run |
 | `CITATION_BATCH_SIZE` | citations | Judgments held in memory at once (default 50) |
 
