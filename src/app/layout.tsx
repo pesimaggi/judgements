@@ -25,6 +25,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </span>
             </Link>
             <nav className="flex items-center gap-4 text-sm">
+              <Link href="/log" className="text-inkSoft hover:text-ink">
+                Lög
+              </Link>
               <Link href="/admin/ingestion" className="text-inkSoft hover:text-ink">
                 Ingestion status
               </Link>
