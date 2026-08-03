@@ -61,9 +61,15 @@ export function parseActIndex(html: string): ActIndexEntry[] {
     const m = /\/lagas\/(nuna|\d+[a-z]?)\/(\d{4})(\d{3})\.html/.exec(href);
     if (!m) return;
     const year = Number(m[2]);
+    // The filename's number is not always the act's own number: for pre-1900
+    // material Lagasafn uses a sequence number there ("1700104.html" is 1700
+    // nr. 17), and "000" where an act has no number at all — Kristinréttur
+    // Árna biskups Þorlákssonar (1275) is one such, and rejecting 0 here
+    // dropped it from the corpus entirely. Where the act's own page states a
+    // number, saveAct() prefers that; this is only how the entry is found.
     const actNumber = Number(m[3]);
     const title = $(el).text().trim();
-    if (!title || !year || !actNumber) return;
+    if (!title || !year || Number.isNaN(actNumber)) return;
     const key = `${actNumber}/${year}`;
     // The index lists each act once; guard against duplicates from any
     // repeated navigation links on the page.
@@ -307,7 +313,13 @@ export const lagasafnAdapter: IngestionAdapter = {
           continue;
         }
 
-        if (!existing) newActs++;
+        // Judged on the act's *own* number, not the index entry's. For the ~16
+        // pre-1900 acts whose filename number differs from their stated one,
+        // the index key never matches a stored act, so keying this on `entry`
+        // marked them "new" on every single run — clearing the citation
+        // watermark and forcing a full corpus rescan every time.
+        const storedKey = `${parsed.actNumber ?? entry.actNumber}/${parsed.year ?? entry.year}`;
+        if (!known.has(storedKey)) newActs++;
         await saveAct(parsed, entry, hash);
         stats.indexed++;
         if (stats.indexed % 25 === 0) {
