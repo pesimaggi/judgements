@@ -444,16 +444,57 @@ index. Both stay behind the abstraction — no separate search path.
 
 ---
 
-## 5. Incidental finding
+## 5. Incidental finding — related cases (fixed)
 
-`src/app/api/documents/[id]/route.ts` finds related cases with
-`CASE_NUMBER_RE = /\b(…|\d{1,6}\/\d{4})\b/g` over the judgment text. That
-pattern matches **act citations too** — `"laga nr. 91/1991"` yields the
-case-number candidate `91/1991`, so any judgment numbered 91/1991 surfaces as
-"related" to the ~36% of judgments that cite einkamálalög. The act-citation
-extraction built for this phase can exclude those spans and fix it cheaply.
+`src/app/api/documents/[id]/route.ts` found related cases with
+`CASE_NUMBER_RE = /\b(…|\d{1,6}\/\d{4})\b/g` over the judgment text. Acts,
+regulations and cases are all cited as `N/YYYY`, so that pattern matched
+legislation too: `"laga nr. 91/1991"` yielded the case-number candidate
+`91/1991`, and any judgment numbered 91/1991 surfaced as "related" to the ~36%
+of the corpus that cites einkamálalög.
 
-Flagged, not fixed — it is outside this phase's scope.
+Measured over the same 255-judgment sample, this was not a marginal effect:
+
+| | |
+|---|---|
+| occurrences matched by the old pattern | 5,313 |
+| …that were act citations | 3,877 (73%) |
+| …that were regulation citations | 213 (4%) |
+| distinct tokens reaching the `caseNumber` lookup | 1,639 |
+| …that only ever appeared as an act citation | 907 (50%) |
+| judgments with at least one such false token | 248/255 (97%) |
+
+Because the route caps the lookup at 25 tokens, the noise was also crowding
+genuine references out of the window.
+
+Fixed in `src/lib/legal-citations.ts`, which masks legislation citations
+before case numbers are extracted. Only the words in front of the number
+distinguish the two, so the patterns match the lead-in: the "lög" stem in its
+declined and compound forms, the constitution (no "lög" stem at all —
+`stjórnarskrár lýðveldisins Íslands nr. 33/1944`), and regulations, directives
+and administrative decisions, including the European forms with an intervening
+institution name (`reglugerð Evrópusambandsins nr. 2024/2642`, `ákvörðun
+ráðsins (SSUÖ) 2024/1484`).
+
+Result over the sample:
+
+- **4,507** legislation-citation occurrences masked; distinct tokens reaching
+  the lookup down **77%** (1,639 → 377).
+- **2** leaks, one of which is a typo in the source text (`"lagaum vexti"`).
+- **0** genuine case numbers masked, checked by hand over every occurrence the
+  mask removed that a deliberately naive classifier did not expect.
+- Explicit case references (`"í máli nr. 415/2018"`) retained at **98.8%** —
+  and every apparent loss is an act name ending in *-mál*
+  (`lög um viðskiptaleyndarmál nr. 131/2020`), i.e. correctly masked.
+
+Two behaviours worth keeping in mind if the patterns are revisited: the name
+run stops at the declined forms that introduce a case reference (`máli`,
+`dómi`) so that `"laga um meðferð einkamála í máli nr. 415/2018"` does not
+swallow the case number, while the genitive `mála` is deliberately allowed
+through because it occurs inside act names (`lög um meðferð opinberra mála`).
+
+The module is the natural home for the Phase 1 citation patterns too, so the
+linking job extends it rather than starting a second set.
 
 ---
 
