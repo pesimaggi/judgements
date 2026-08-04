@@ -51,27 +51,35 @@ export class PostgresSearchProvider implements SearchProvider {
     if (req.dateFrom) filters.push(Prisma.sql`d.date >= ${new Date(req.dateFrom)}`);
     if (req.dateTo) filters.push(Prisma.sql`d.date <= ${new Date(req.dateTo)}`);
     if (req.year) filters.push(Prisma.sql`d.year = ${req.year}`);
-    if (req.tag) filters.push(Prisma.sql`d.subject_tags @> ARRAY[${req.tag}]::text[]`);
+    // `@>` is array containment, so one condition already means "carries every
+    // one of these tags" — the conjunctive reading a second tag asks for.
+    const tags = req.tags?.length ? req.tags : req.tag ? [req.tag] : [];
+    if (tags.length) {
+      filters.push(Prisma.sql`d.subject_tags @> ARRAY[${Prisma.join(tags)}]::text[]`);
+    }
 
-    // Citation filters. EXISTS rather than a join so a judgment citing the
-    // same provision five times still counts once and cannot multiply the
-    // result rows — the same distinct-judgment rule the provision badges use.
-    // Both are served by the (provision_id, match_type) and act_id indexes.
-    if (req.provisionId) {
+    // Citation filters, one condition per selection so they combine as AND:
+    // two provisions mean the judgments citing both, not either.
+    //
+    // EXISTS rather than a join, so a judgment citing the same provision five
+    // times still counts once and cannot multiply the result rows — the same
+    // distinct-judgment rule the provision badges use. Served by the
+    // case_provision_links (document_id, …) and case_act_links indexes.
+    for (const provisionId of req.provisionIds ?? []) {
       filters.push(Prisma.sql`EXISTS (
         SELECT 1 FROM case_provision_links l
-         WHERE l.document_id = d.id AND l.provision_id = ${req.provisionId}
+         WHERE l.document_id = d.id AND l.provision_id = ${provisionId}
       )`);
     }
-    if (req.actId) {
+    for (const actId of req.actIds ?? []) {
       filters.push(Prisma.sql`(
         EXISTS (
           SELECT 1 FROM case_provision_links l
             JOIN provisions p ON p.id = l.provision_id
-           WHERE l.document_id = d.id AND p.act_id = ${req.actId}
+           WHERE l.document_id = d.id AND p.act_id = ${actId}
         ) OR EXISTS (
           SELECT 1 FROM case_act_links al
-           WHERE al.document_id = d.id AND al.act_id = ${req.actId}
+           WHERE al.document_id = d.id AND al.act_id = ${actId}
         )
       )`);
     }

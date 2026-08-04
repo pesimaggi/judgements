@@ -25,15 +25,25 @@ export interface SearchRequest {
   dateFrom?: string; // ISO date
   dateTo?: string;
   year?: number;
-  tag?: string; // filter to documents whose subjectTags include this exact tag
   /**
-   * Restrict to judgments citing this act — through any of its provisions or
-   * by naming the act alone. Set by the act/provision lookup, so that picking
-   * "lög um aðbúnað og hollustuhætti" answers with the cases about it.
+   * Single-tag filter, kept for the `/?tag=…` links on result cards. Folded
+   * into `tags` by the API route; providers read `tags`.
    */
-  actId?: string;
-  /** Restrict to judgments citing this specific provision. Narrower than actId. */
-  provisionId?: string;
+  tag?: string;
+  /**
+   * Subject tags a judgment must carry — *all* of them. Two tags narrow to
+   * the judgments about both subjects, which is what someone adding a second
+   * tag is asking for; an OR would widen the result set instead.
+   */
+  tags?: string[];
+  /**
+   * Acts the judgment must cite, through any of their provisions or by naming
+   * the act alone. Also conjunctive: picking two acts asks for the cases that
+   * turn on both.
+   */
+  actIds?: string[];
+  /** Provisions the judgment must cite. Conjunctive, like actIds. */
+  provisionIds?: string[];
   sort?: "relevance" | "newest" | "oldest";
   page?: number;
   pageSize?: number;

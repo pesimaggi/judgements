@@ -44,7 +44,10 @@ export class MeilisearchProvider implements SearchProvider {
     if (req.dateFrom) filter.push(`dateTimestamp >= ${new Date(req.dateFrom).getTime()}`);
     if (req.dateTo) filter.push(`dateTimestamp <= ${new Date(req.dateTo).getTime()}`);
     if (req.year) filter.push(`year = ${req.year}`);
-    if (req.tag) filter.push(`subjectTags = ${JSON.stringify(req.tag)}`);
+    // One condition per tag: Meilisearch ANDs the entries of a filter array,
+    // which is the conjunctive reading the panel intends.
+    const tags = req.tags?.length ? req.tags : req.tag ? [req.tag] : [];
+    for (const t of tags) filter.push(`subjectTags = ${JSON.stringify(t)}`);
 
     // Citation links live in Postgres, not in the Meilisearch index — they
     // change whenever the citation job runs, on a cadence unrelated to the
@@ -54,7 +57,7 @@ export class MeilisearchProvider implements SearchProvider {
     // the corpus, and an unbounded id list would be a filter expression
     // megabytes long. Beyond the cap the result set is truncated, which the
     // Postgres provider (the default) does not do — see citationFilterIds().
-    if (req.actId || req.provisionId) {
+    if (req.actIds?.length || req.provisionIds?.length) {
       const ids = await citationFilterIds(req);
       if (ids.length === 0) return { total: 0, hits: [] };
       filter.push(`id IN [${ids.map((i) => JSON.stringify(i)).join(", ")}]`);
@@ -176,24 +179,29 @@ export async function syncDocumentToMeilisearch(doc: any) {
  */
 async function citationFilterIds(req: SearchRequest): Promise<string[]> {
   const CAP = Number(process.env.MEILI_CITATION_ID_CAP ?? 5000);
-  const rows = req.provisionId
-    ? await prisma.caseProvisionLink.findMany({
-        where: { provisionId: req.provisionId },
-        select: { documentId: true },
-        distinct: ["documentId"],
-        take: CAP,
-      })
-    : await prisma.document.findMany({
-        where: {
-          OR: [
-            { provisionLinks: { some: { provision: { actId: req.actId } } } },
-            { actLinks: { some: { actId: req.actId } } },
-          ],
-        },
-        select: { id: true },
-        take: CAP,
-      });
-  return rows.map((r) => ("documentId" in r ? r.documentId : r.id));
+
+  // Every selection must hold, so the conditions are ANDed in one query
+  // rather than intersected in JS — that way the cap applies to the final
+  // set, not to each selection's set, which could otherwise truncate away
+  // documents that satisfy them all.
+  const AND = [
+    ...(req.provisionIds ?? []).map((provisionId) => ({
+      provisionLinks: { some: { provisionId } },
+    })),
+    ...(req.actIds ?? []).map((actId) => ({
+      OR: [
+        { provisionLinks: { some: { provision: { actId } } } },
+        { actLinks: { some: { actId } } },
+      ],
+    })),
+  ];
+
+  const rows = await prisma.document.findMany({
+    where: { AND },
+    select: { id: true },
+    take: CAP,
+  });
+  return rows.map((r) => r.id);
 }
 
 const ACTS_INDEX = "acts";
