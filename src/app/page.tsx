@@ -2,7 +2,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { SourcePanel } from "@/components/SourcePanel";
-import { SpecificSearch } from "@/components/SpecificSearch";
+import { SpecificSearch, type LegalSelection } from "@/components/SpecificSearch";
 import { ResultCard } from "@/components/ResultCard";
 import { Pagination } from "@/components/Pagination";
 import { ProgressBars } from "@/components/ProgressBars";
@@ -20,6 +20,10 @@ interface SearchCriteria {
   dateTo?: string;
   year?: number;
   tag?: string;
+  /** Judgments citing this act, from the specific-search panel. */
+  actId?: string;
+  /** Judgments citing this provision — narrower than actId. */
+  provisionId?: string;
   sort: "relevance" | "newest" | "oldest";
 }
 
@@ -36,6 +40,7 @@ function SearchPageInner() {
   const [sort, setSort] = useState<"relevance" | "newest" | "oldest">("relevance");
   const [showFilters, setShowFilters] = useState(false);
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [legal, setLegal] = useState<LegalSelection | null>(null);
 
   const [results, setResults] = useState<SearchResponse | null>(null);
   const [searchedQuery, setSearchedQuery] = useState("");
@@ -87,8 +92,13 @@ function SearchPageInner() {
     }
   }
 
-  function runSearch(opts?: { tag?: string | null; sourcesOverride?: string[] }) {
+  function runSearch(opts?: {
+    tag?: string | null;
+    sourcesOverride?: string[];
+    legalOverride?: LegalSelection | null;
+  }) {
     const tag = opts && "tag" in opts ? opts.tag ?? null : activeTag;
+    const legalFilter = opts && "legalOverride" in opts ? opts.legalOverride ?? null : legal;
     // No court ticked → search every court rather than blocking the search.
     const activeSources =
       opts?.sourcesOverride ?? (selected.size > 0 ? Array.from(selected) : sources.map((s) => s.key));
@@ -105,10 +115,29 @@ function SearchPageInner() {
       dateTo: dateTo || undefined,
       year: year ? Number(year) : undefined,
       tag: tag || undefined,
+      actId: legalFilter?.kind === "act" ? legalFilter.id : undefined,
+      provisionId: legalFilter?.kind === "provision" ? legalFilter.id : undefined,
       sort,
     };
     criteriaRef.current = criteria;
     fetchPage(criteria, 1);
+  }
+
+  /**
+   * Picking an act, a provision or a tag runs the search straight away —
+   * "show me the cases about this" is the whole point of the panel, so making
+   * the user then reach for the Search button would be a pointless step. The
+   * chosen value is passed explicitly rather than read from state, which has
+   * not re-rendered yet at this point.
+   */
+  function applyLegal(selection: LegalSelection | null) {
+    setLegal(selection);
+    runSearch({ legalOverride: selection });
+  }
+
+  function applyTag(next: string | null) {
+    setActiveTag(next);
+    runSearch({ tag: next });
   }
 
   function goToPage(page: number) {
@@ -135,9 +164,13 @@ function SearchPageInner() {
 
   function clearTag() {
     setActiveTag(null);
-    setResults(null);
-    setSearchedQuery("");
-    criteriaRef.current = null;
+    // Other filters may still be in play; re-run rather than blanking the page.
+    if (legal || query.trim()) runSearch({ tag: null });
+    else {
+      setResults(null);
+      setSearchedQuery("");
+      criteriaRef.current = null;
+    }
   }
 
   const firstOnPage = results ? (results.page - 1) * results.pageSize + 1 : 0;
@@ -151,7 +184,10 @@ function SearchPageInner() {
 
       {/* Search bar */}
       <form
-        onSubmit={(e) => { e.preventDefault(); setActiveTag(null); runSearch({ tag: null }); }}
+        // Keeps the panel's act/provision and tag filters: they are explicit
+        // choices sitting in view, so a keyword search narrows within them
+        // rather than silently discarding them.
+        onSubmit={(e) => { e.preventDefault(); runSearch(); }}
         className="flex flex-col gap-2 sm:flex-row"
       >
         <input
@@ -218,13 +254,27 @@ function SearchPageInner() {
               })
             }
           />
-          <SpecificSearch />
+          <SpecificSearch
+            legal={legal}
+            onLegalChange={applyLegal}
+            tag={activeTag}
+            onTagChange={applyTag}
+          />
         </div>
 
         <section className="min-w-0 flex-1">
           <div ref={resultsTopRef} className="scroll-mt-4" />
-          {(selected.size > 0 || activeTag) && (
+          {(selected.size > 0 || activeTag || legal) && (
             <div className="mb-3 flex flex-wrap items-center gap-1.5">
+              {legal && (
+                <button
+                  onClick={() => applyLegal(null)}
+                  className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-white hover:opacity-80"
+                  title="Clear the act/provision filter"
+                >
+                  {legal.kind === "provision" ? legal.label : legal.sublabel} ✕
+                </button>
+              )}
               {activeTag && (
                 <button
                   onClick={clearTag}

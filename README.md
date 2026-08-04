@@ -15,7 +15,7 @@ This is a deliberately narrowed build: no ombudsman opinions, no administrative 
 - **Icelandic acts (lög)** — the in-force text of Icelandic law from [Lagasafn](https://www.althingi.is/lagas/), parsed into chapters (kaflar), provisions (greinar) and paragraphs (málsgreinar), with an act reader at `/log/{actNumber}-{year}`.
 - **Provision-level case linking** — each provision shows how many judgments cite it ("12 dómar vísa til þessa ákvæðis"), expanding to the citing cases with the sentence the citation was found in, so you can see *why* a case matched before opening it.
 - **Act catalogue** — `/log` lists every ingested act with its provision count and how many judgments cite it, searchable by title, short name or number, and sortable by most-cited.
-- **Specific search** — alongside the keyword search: an act type-ahead (by title, by citation number, or by the short names judgments actually use — "vaxtalög" finds lög nr. 38/2001) and a provision picker to jump straight to an article.
+- **Specific search** — alongside the keyword search, two live lookups that narrow the results: an act/provision box that takes the citation as it is written ("lög um aðbúnað og hollustuhætti" finds the cases about the act; "57. gr. a. laga um aðbúnað og hollustuhætti" narrows to the cases citing that article), and a subject-tag box. Acts match on title, citation number, or the short names judgments actually use — "vaxtalög" finds lög nr. 38/2001.
 - **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`.
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
 - **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs weekly and pulls only what's new; `lagasafn` ingests every in-force act; `citations` links judgments to the provisions they cite; `efta-court` is a pilot, not yet ingesting (see below).
@@ -116,6 +116,8 @@ eftacourt.int's robots.txt and terms of use before pointing it at the live site.
 | `uppsögn NOT sjómenn` | exclusion |
 | `22/2023`, `E-3210/2025` | case-number lookup (exact + fuzzy) |
 
+Alongside the keyword box, the specific-search panel narrows the same result set by citation or subject. Picking an act or provision adds `actId`/`provisionId` to the search request; the Postgres provider applies them as `EXISTS` subqueries over the citation links (so a judgment citing a provision five times still counts once), and a provision supersedes its act when both are set, being the narrower statement of the same intent. The Meilisearch provider resolves matching document ids from Postgres first, since citation links are not in its index — that path is capped by `MEILI_CITATION_ID_CAP`.
+
 Icelandic characters (á ð é í ó ú ý þ æ ö) are preserved exactly — the Postgres provider uses the `simple` text-search configuration plus `pg_trgm` trigram similarity for fuzzy matching of variants.
 
 Results are paginated 15 to a page. Counting stops at 10,000, so very broad queries report "10,000+" rather than paying for an exact count nobody reads.
@@ -152,11 +154,15 @@ src/
     api/acts/[slug]/route.ts     GET — one act with its provisions + badge counts
     api/provisions/route.ts      GET — provision search, optionally within one act
     api/provisions/[id]/cases    GET — judgments citing one provision, with excerpts
+    api/lookup/route.ts          GET — act/provision type-ahead, parses "57. gr. a. laga um …"
+    api/tags/route.ts            GET — subject-tag type-ahead over a cached vocabulary
   lib/
     sources.ts                   source registry: the three courts + EFTA (pilot)
     query-parser.ts              phrases / boolean / case-number detection
     judgment-text.ts             reflows extracted text into readable blocks
     acts.ts                      act catalogue listing with per-act counts
+    provision-query.ts           splits "57. gr. a. laga um …" into article + act
+    tags.ts                      cached subject-tag vocabulary
     lagasafn.ts                  Lagasafn HTML → chapters/provisions/paragraphs
     legal-citations.ts           recognises act/regulation citations in judgment text
     search/                      provider abstraction: postgres (default) + meilisearch

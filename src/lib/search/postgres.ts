@@ -52,6 +52,29 @@ export class PostgresSearchProvider implements SearchProvider {
     if (req.dateTo) filters.push(Prisma.sql`d.date <= ${new Date(req.dateTo)}`);
     if (req.year) filters.push(Prisma.sql`d.year = ${req.year}`);
     if (req.tag) filters.push(Prisma.sql`d.subject_tags @> ARRAY[${req.tag}]::text[]`);
+
+    // Citation filters. EXISTS rather than a join so a judgment citing the
+    // same provision five times still counts once and cannot multiply the
+    // result rows — the same distinct-judgment rule the provision badges use.
+    // Both are served by the (provision_id, match_type) and act_id indexes.
+    if (req.provisionId) {
+      filters.push(Prisma.sql`EXISTS (
+        SELECT 1 FROM case_provision_links l
+         WHERE l.document_id = d.id AND l.provision_id = ${req.provisionId}
+      )`);
+    }
+    if (req.actId) {
+      filters.push(Prisma.sql`(
+        EXISTS (
+          SELECT 1 FROM case_provision_links l
+            JOIN provisions p ON p.id = l.provision_id
+           WHERE l.document_id = d.id AND p.act_id = ${req.actId}
+        ) OR EXISTS (
+          SELECT 1 FROM case_act_links al
+           WHERE al.document_id = d.id AND al.act_id = ${req.actId}
+        )
+      )`);
+    }
     const filterSql = Prisma.join(filters, " AND ");
 
     // Indexed match conditions: FTS (GIN on the stored vector) + case-number
