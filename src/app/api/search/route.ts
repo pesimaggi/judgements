@@ -37,20 +37,25 @@ export async function POST(req: Request) {
   const provider = getSearchProvider();
 
   try {
-    const tag = typeof body.tag === "string" && body.tag.trim() ? body.tag.trim() : undefined;
-    // Ids come from the lookup endpoint; passed through as opaque strings and
+    // Every specific-search filter is a list, and every list is conjunctive:
+    // adding a second tag or a second provision narrows the result set. The
+    // singular `tag` is still accepted, because result cards link to
+    // `/?tag=…`; it folds into the list.
+    const strings = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "") : [];
+
+    const tags = strings(body.tags);
+    if (typeof body.tag === "string" && body.tag.trim()) tags.push(body.tag.trim());
+
+    // Ids come from the lookup endpoint; carried as opaque strings and
     // parameterised by the provider, never interpolated into SQL.
-    const actId = typeof body.actId === "string" && body.actId ? body.actId : undefined;
-    const provisionId =
-      typeof body.provisionId === "string" && body.provisionId ? body.provisionId : undefined;
     const r = await provider.search({
       ...body,
       sources,
-      tag,
-      // A provision is a narrower statement of the same intent as its act, so
-      // the act filter is dropped when both arrive rather than intersected.
-      actId: provisionId ? undefined : actId,
-      provisionId,
+      tag: undefined,
+      tags: dedupe(tags),
+      actIds: dedupe(strings(body.actIds)),
+      provisionIds: dedupe(strings(body.provisionIds)),
       page,
       pageSize,
     });
@@ -69,4 +74,9 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
+}
+
+/** Repeats would add redundant conditions without changing the result set. */
+function dedupe(values: string[]): string[] {
+  return Array.from(new Set(values));
 }

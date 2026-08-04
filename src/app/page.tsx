@@ -19,11 +19,12 @@ interface SearchCriteria {
   dateFrom?: string;
   dateTo?: string;
   year?: number;
-  tag?: string;
-  /** Judgments citing this act, from the specific-search panel. */
-  actId?: string;
-  /** Judgments citing this provision — narrower than actId. */
-  provisionId?: string;
+  /** Subject tags a result must carry — all of them. */
+  tags?: string[];
+  /** Acts a result must cite — all of them. */
+  actIds?: string[];
+  /** Provisions a result must cite — all of them. */
+  provisionIds?: string[];
   sort: "relevance" | "newest" | "oldest";
 }
 
@@ -39,8 +40,10 @@ function SearchPageInner() {
   const [year, setYear] = useState("");
   const [sort, setSort] = useState<"relevance" | "newest" | "oldest">("relevance");
   const [showFilters, setShowFilters] = useState(false);
-  const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [legal, setLegal] = useState<LegalSelection | null>(null);
+  // The specific-search panel's selections. Lists, and conjunctive: adding a
+  // second tag or provision narrows rather than widens.
+  const [activeTags, setActiveTags] = useState<string[]>([]);
+  const [legal, setLegal] = useState<LegalSelection[]>([]);
 
   const [results, setResults] = useState<SearchResponse | null>(null);
   const [searchedQuery, setSearchedQuery] = useState("");
@@ -93,12 +96,12 @@ function SearchPageInner() {
   }
 
   function runSearch(opts?: {
-    tag?: string | null;
+    tagsOverride?: string[];
     sourcesOverride?: string[];
-    legalOverride?: LegalSelection | null;
+    legalOverride?: LegalSelection[];
   }) {
-    const tag = opts && "tag" in opts ? opts.tag ?? null : activeTag;
-    const legalFilter = opts && "legalOverride" in opts ? opts.legalOverride ?? null : legal;
+    const tags = opts?.tagsOverride ?? activeTags;
+    const legalFilter = opts?.legalOverride ?? legal;
     // No court ticked → search every court rather than blocking the search.
     const activeSources =
       opts?.sourcesOverride ?? (selected.size > 0 ? Array.from(selected) : sources.map((s) => s.key));
@@ -114,9 +117,9 @@ function SearchPageInner() {
       dateFrom: dateFrom || undefined,
       dateTo: dateTo || undefined,
       year: year ? Number(year) : undefined,
-      tag: tag || undefined,
-      actId: legalFilter?.kind === "act" ? legalFilter.id : undefined,
-      provisionId: legalFilter?.kind === "provision" ? legalFilter.id : undefined,
+      tags: tags.length ? tags : undefined,
+      actIds: legalFilter.filter((l) => l.kind === "act").map((l) => l.id),
+      provisionIds: legalFilter.filter((l) => l.kind === "provision").map((l) => l.id),
       sort,
     };
     criteriaRef.current = criteria;
@@ -130,14 +133,14 @@ function SearchPageInner() {
    * chosen value is passed explicitly rather than read from state, which has
    * not re-rendered yet at this point.
    */
-  function applyLegal(selection: LegalSelection | null) {
-    setLegal(selection);
-    runSearch({ legalOverride: selection });
+  function applyLegal(selections: LegalSelection[]) {
+    setLegal(selections);
+    runSearch({ legalOverride: selections });
   }
 
-  function applyTag(next: string | null) {
-    setActiveTag(next);
-    runSearch({ tag: next });
+  function applyTags(next: string[]) {
+    setActiveTags(next);
+    runSearch({ tagsOverride: next });
   }
 
   function goToPage(page: number) {
@@ -153,20 +156,21 @@ function SearchPageInner() {
   useEffect(() => {
     const tag = searchParams.get("tag");
     if (!tag || sources.length === 0) return;
-    setActiveTag(tag);
+    setActiveTags([tag]);
     setQuery("");
     const all = sources.map((s) => s.key);
     setSelected(new Set(all));
-    criteriaRef.current = { query: "", sources: all, tag, sort: "relevance" };
+    criteriaRef.current = { query: "", sources: all, tags: [tag], sort: "relevance" };
     fetchPage(criteriaRef.current, 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, sources]);
 
-  function clearTag() {
-    setActiveTag(null);
+  function removeTag(tag: string) {
+    const next = activeTags.filter((t) => t !== tag);
     // Other filters may still be in play; re-run rather than blanking the page.
-    if (legal || query.trim()) runSearch({ tag: null });
+    if (next.length || legal.length || query.trim()) applyTags(next);
     else {
+      setActiveTags(next);
       setResults(null);
       setSearchedQuery("");
       criteriaRef.current = null;
@@ -257,33 +261,35 @@ function SearchPageInner() {
           <SpecificSearch
             legal={legal}
             onLegalChange={applyLegal}
-            tag={activeTag}
-            onTagChange={applyTag}
+            tags={activeTags}
+            onTagsChange={applyTags}
           />
         </div>
 
         <section className="min-w-0 flex-1">
           <div ref={resultsTopRef} className="scroll-mt-4" />
-          {(selected.size > 0 || activeTag || legal) && (
+          {(selected.size > 0 || activeTags.length > 0 || legal.length > 0) && (
             <div className="mb-3 flex flex-wrap items-center gap-1.5">
-              {legal && (
+              {legal.map((l) => (
                 <button
-                  onClick={() => applyLegal(null)}
+                  key={`${l.kind}-${l.id}`}
+                  onClick={() => applyLegal(legal.filter((x) => x.id !== l.id))}
                   className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-white hover:opacity-80"
-                  title="Clear the act/provision filter"
+                  title="Remove this act/provision filter"
                 >
-                  {legal.kind === "provision" ? legal.label : legal.sublabel} ✕
+                  {l.kind === "provision" ? l.label : l.sublabel} ✕
                 </button>
-              )}
-              {activeTag && (
+              ))}
+              {activeTags.map((t) => (
                 <button
-                  onClick={clearTag}
+                  key={t}
+                  onClick={() => removeTag(t)}
                   className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-white hover:opacity-80"
-                  title="Clear tag filter"
+                  title="Remove this tag filter"
                 >
-                  Tag: {activeTag} ✕
+                  Tag: {t} ✕
                 </button>
-              )}
+              ))}
               <span className="text-xs text-inkSoft">Searching:</span>
               {Array.from(selected).map((k) => (
                 <button
@@ -322,7 +328,17 @@ function SearchPageInner() {
                   </>
                 )}
                 {searchedQuery && <> for <span className="font-medium text-ink">{searchedQuery}</span></>}
-                {activeTag && <> tagged <span className="font-medium text-ink">{activeTag}</span></>}
+                {activeTags.length > 0 && (
+                  <> tagged <span className="font-medium text-ink">{activeTags.join(" + ")}</span></>
+                )}
+                {legal.length > 0 && (
+                  <>
+                    {" "}citing{" "}
+                    <span className="font-medium text-ink">
+                      {legal.map((l) => (l.kind === "provision" ? l.label : l.sublabel)).join(" + ")}
+                    </span>
+                  </>
+                )}
               </p>
               <div className={`flex flex-col gap-3 ${loading ? "opacity-50 transition-opacity" : ""}`}>
                 {results.hits.map((h) => (
