@@ -1,200 +1,238 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { ActHit, ProvisionHit } from "@/lib/types";
+
+export interface LegalSelection {
+  kind: "act" | "provision";
+  id: string;
+  actId: string;
+  label: string;
+  sublabel: string;
+  /** Route to the act reader, for "open the text" alongside the case list. */
+  path: string;
+}
+
+interface Suggestion extends LegalSelection {}
+
+interface TagCount {
+  tag: string;
+  count: number;
+}
+
+interface Props {
+  legal: LegalSelection | null;
+  onLegalChange: (selection: LegalSelection | null) => void;
+  tag: string | null;
+  onTagChange: (tag: string | null) => void;
+}
 
 /**
- * "Specific search" — reaching a known provision directly, as opposed to the
- * keyword search this sits alongside.
+ * "Specific search" — narrowing the case results to a piece of legislation or
+ * a subject tag, alongside the keyword box rather than instead of it.
  *
- * Two steps, because that is how the citation is structured: pick the act,
- * then the article within it. The act step matches titles, the short names
- * harvested from the corpus ("vaxtalög"), and citation numbers ("91/1991");
- * the article step accepts "130", "130. gr.", or words from the provision's
- * heading.
+ * The act box takes the citation as it would be written. Typing "lög um
+ * aðbúnað og hollustuhætti" suggests the act, and the results become the
+ * judgments citing it; typing "57. gr. a. laga um aðbúnað og hollustuhætti"
+ * suggests that article, and the results narrow to the judgments citing it
+ * specifically. This replaces a two-step act-then-article picker that made
+ * the common case — "show me the cases about this provision" — take several
+ * interactions and end up on the act text rather than on the cases.
+ *
+ * Selecting from either box filters the results directly; neither navigates
+ * away.
  */
-export function SpecificSearch() {
-  const router = useRouter();
+export function SpecificSearch({ legal, onLegalChange, tag, onTagChange }: Props) {
+  const [legalQuery, setLegalQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [needsAct, setNeedsAct] = useState(false);
+  const [legalLoading, setLegalLoading] = useState(false);
 
-  const [actQuery, setActQuery] = useState("");
-  const [acts, setActs] = useState<ActHit[]>([]);
-  const [selectedAct, setSelectedAct] = useState<ActHit | null>(null);
-  const [actsLoading, setActsLoading] = useState(false);
+  const [tagQuery, setTagQuery] = useState("");
+  const [tags, setTags] = useState<TagCount[]>([]);
+  const [tagOpen, setTagOpen] = useState(false);
 
-  const [provisionQuery, setProvisionQuery] = useState("");
-  const [provisions, setProvisions] = useState<ProvisionHit[]>([]);
-  const [provisionsLoading, setProvisionsLoading] = useState(false);
-
-  // Guards against a slower earlier response overwriting a later one, the
+  // Guards against a slower earlier response overwriting a later one — the
   // same hazard the main search guards against.
-  const actRequest = useRef(0);
-  const provisionRequest = useRef(0);
+  const legalRequest = useRef(0);
+  const tagRequest = useRef(0);
 
   useEffect(() => {
-    const q = actQuery.trim();
-    if (selectedAct || q.length < 2) {
-      setActs([]);
+    const q = legalQuery.trim();
+    if (legal || q.length < 2) {
+      setSuggestions([]);
+      setNeedsAct(false);
       return;
     }
-    const id = ++actRequest.current;
-    setActsLoading(true);
+    const id = ++legalRequest.current;
+    setLegalLoading(true);
     const timer = setTimeout(() => {
-      fetch(`/api/acts?q=${encodeURIComponent(q)}`)
+      fetch(`/api/lookup?q=${encodeURIComponent(q)}`)
         .then((r) => r.json())
         .then((d) => {
-          if (id !== actRequest.current) return;
-          setActs(d.acts ?? []);
+          if (id !== legalRequest.current) return;
+          const hits: Suggestion[] = d.suggestions ?? [];
+          setSuggestions(hits.length ? hits : (d.fallbackActs ?? []));
+          setNeedsAct(Boolean(d.needsAct));
         })
-        .catch(() => id === actRequest.current && setActs([]))
-        .finally(() => id === actRequest.current && setActsLoading(false));
+        .catch(() => id === legalRequest.current && setSuggestions([]))
+        .finally(() => id === legalRequest.current && setLegalLoading(false));
     }, 180);
     return () => clearTimeout(timer);
-  }, [actQuery, selectedAct]);
+  }, [legalQuery, legal]);
 
   useEffect(() => {
-    if (!selectedAct) {
-      setProvisions([]);
-      return;
-    }
-    const id = ++provisionRequest.current;
-    setProvisionsLoading(true);
+    if (!tagOpen || tag) return;
+    const id = ++tagRequest.current;
     const timer = setTimeout(() => {
-      const params = new URLSearchParams({
-        actId: selectedAct.id,
-        q: provisionQuery.trim(),
-        pageSize: "12",
-      });
-      fetch(`/api/provisions?${params}`)
+      fetch(`/api/tags?q=${encodeURIComponent(tagQuery.trim())}`)
         .then((r) => r.json())
         .then((d) => {
-          if (id !== provisionRequest.current) return;
-          setProvisions(d.hits ?? []);
+          if (id !== tagRequest.current) return;
+          setTags(d.tags ?? []);
         })
-        .catch(() => id === provisionRequest.current && setProvisions([]))
-        .finally(() => id === provisionRequest.current && setProvisionsLoading(false));
-    }, 180);
+        .catch(() => id === tagRequest.current && setTags([]));
+    }, 150);
     return () => clearTimeout(timer);
-  }, [selectedAct, provisionQuery]);
-
-  const reset = () => {
-    setSelectedAct(null);
-    setActQuery("");
-    setProvisionQuery("");
-    setProvisions([]);
-  };
+  }, [tagQuery, tagOpen, tag]);
 
   return (
     <section className="rounded-lg border border-line bg-white p-4">
       <h2 className="text-sm font-semibold">Specific search</h2>
-      <p className="mt-0.5 text-xs text-inkSoft">Go straight to an act or a provision.</p>
+      <p className="mt-0.5 text-xs text-inkSoft">
+        Narrow the results to an act, a provision, or a subject.
+      </p>
 
-      {!selectedAct ? (
-        <div className="mt-3">
-          <label htmlFor="act-lookup" className="text-xs font-medium text-inkSoft">
-            Lög
-          </label>
-          <input
-            id="act-lookup"
-            value={actQuery}
-            onChange={(e) => setActQuery(e.target.value)}
-            placeholder="t.d. „vaxtalög“ eða „38/2001“"
-            autoComplete="off"
-            className="mt-1 w-full rounded border border-line px-2 py-1.5 text-sm outline-none focus:border-ink"
-          />
-          {actsLoading && acts.length === 0 && actQuery.trim().length >= 2 && (
-            <p className="mt-2 text-xs text-inkSoft">Leita…</p>
-          )}
-          {acts.length > 0 && (
-            <ul className="mt-2 max-h-72 space-y-1 overflow-y-auto">
-              {acts.map((a) => (
-                <li key={a.id}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedAct(a)}
-                    className="w-full rounded border border-line px-2 py-1.5 text-left hover:border-ink"
-                  >
-                    <span className="block text-sm leading-snug">{a.title}</span>
-                    <span className="block font-mono text-[11px] text-inkSoft">
-                      {a.citation} · {a.provisionCount} greinar
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {!actsLoading && actQuery.trim().length >= 2 && acts.length === 0 && (
-            <p className="mt-2 text-xs text-inkSoft">Engin lög fundust.</p>
-          )}
-          <Link href="/log" className="mt-2 inline-block text-xs text-accent hover:underline">
-            Skoða öll lög →
-          </Link>
-        </div>
-      ) : (
-        <div className="mt-3">
-          <div className="flex items-start justify-between gap-2 rounded border border-line bg-paper px-2 py-1.5">
-            <div>
-              <span className="block text-sm leading-snug">{selectedAct.title}</span>
-              <span className="block font-mono text-[11px] text-inkSoft">{selectedAct.citation}</span>
+      {/* ---- Act / provision ---------------------------------------- */}
+      <div className="mt-3">
+        <label htmlFor="legal-lookup" className="text-xs font-medium text-inkSoft">
+          Lög eða ákvæði
+        </label>
+
+        {legal ? (
+          <div className="mt-1 rounded border border-line bg-paper px-2 py-1.5">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <span className="block text-sm leading-snug">{legal.label}</span>
+                <span className="block text-[11px] text-inkSoft">{legal.sublabel}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onLegalChange(null);
+                  setLegalQuery("");
+                }}
+                className="shrink-0 text-xs text-accent hover:underline"
+              >
+                Hreinsa
+              </button>
             </div>
+            <Link
+              href={legal.path}
+              className="mt-1 inline-block text-[11px] text-accent hover:underline"
+            >
+              Lesa lagatextann →
+            </Link>
+          </div>
+        ) : (
+          <>
+            <input
+              id="legal-lookup"
+              value={legalQuery}
+              onChange={(e) => setLegalQuery(e.target.value)}
+              placeholder="t.d. „lög um aðbúnað“ eða „57. gr. a. laga um aðbúnað“"
+              autoComplete="off"
+              lang="is"
+              className="mt-1 w-full rounded border border-line px-2 py-1.5 text-sm outline-none focus:border-ink"
+            />
+            {needsAct ? (
+              <p className="mt-2 text-xs text-inkSoft">Bættu við heiti laganna.</p>
+            ) : legalLoading && suggestions.length === 0 ? (
+              <p className="mt-2 text-xs text-inkSoft">Leita…</p>
+            ) : suggestions.length > 0 ? (
+              <ul className="mt-2 max-h-72 space-y-1 overflow-y-auto">
+                {suggestions.map((s) => (
+                  <li key={`${s.kind}-${s.id}`}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onLegalChange(s);
+                        setSuggestions([]);
+                      }}
+                      className="w-full rounded border border-line px-2 py-1.5 text-left hover:border-ink"
+                    >
+                      <span className="block text-sm leading-snug">{s.label}</span>
+                      <span className="block text-[11px] text-inkSoft">{s.sublabel}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : legalQuery.trim().length >= 2 ? (
+              <p className="mt-2 text-xs text-inkSoft">Ekkert fannst.</p>
+            ) : null}
+            <Link href="/log" className="mt-2 inline-block text-xs text-accent hover:underline">
+              Skoða öll lög →
+            </Link>
+          </>
+        )}
+      </div>
+
+      {/* ---- Subject tag --------------------------------------------- */}
+      <div className="mt-4 border-t border-line pt-3">
+        <label htmlFor="tag-lookup" className="text-xs font-medium text-inkSoft">
+          Efnisorð
+        </label>
+
+        {tag ? (
+          <div className="mt-1 flex items-center justify-between gap-2 rounded border border-line bg-paper px-2 py-1.5">
+            <span className="text-sm">{tag}</span>
             <button
               type="button"
-              onClick={reset}
+              onClick={() => {
+                onTagChange(null);
+                setTagQuery("");
+              }}
               className="shrink-0 text-xs text-accent hover:underline"
             >
-              Breyta
+              Hreinsa
             </button>
           </div>
-
-          <button
-            type="button"
-            onClick={() => router.push(selectedAct.path)}
-            className="mt-2 w-full rounded bg-ink px-2 py-1.5 text-xs font-medium text-white hover:opacity-90"
-          >
-            Opna lögin í heild
-          </button>
-
-          <label htmlFor="provision-lookup" className="mt-3 block text-xs font-medium text-inkSoft">
-            Grein
-          </label>
-          <input
-            id="provision-lookup"
-            value={provisionQuery}
-            onChange={(e) => setProvisionQuery(e.target.value)}
-            placeholder="t.d. „130“ eða „málskostnaður“"
-            autoComplete="off"
-            className="mt-1 w-full rounded border border-line px-2 py-1.5 text-sm outline-none focus:border-ink"
-          />
-
-          {provisionsLoading && provisions.length === 0 ? (
-            <p className="mt-2 text-xs text-inkSoft">Leita…</p>
-          ) : provisions.length > 0 ? (
-            <ul className="mt-2 max-h-72 space-y-1 overflow-y-auto">
-              {provisions.map((p) => (
-                <li key={p.id}>
-                  <button
-                    type="button"
-                    onClick={() => router.push(p.path)}
-                    className="w-full rounded border border-line px-2 py-1.5 text-left hover:border-ink"
-                  >
-                    <span className="block text-sm font-medium leading-snug">
-                      {p.displayLabel}
-                      {p.heading && (
-                        <span className="ml-1 font-normal text-inkSoft">{p.heading}</span>
-                      )}
-                    </span>
-                    <span className="block text-[11px] text-inkSoft">
-                      {p.caseCount === 1 ? "1 dómur" : `${p.caseCount} dómar`}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-2 text-xs text-inkSoft">Engin grein fannst.</p>
-          )}
-        </div>
-      )}
+        ) : (
+          <>
+            <input
+              id="tag-lookup"
+              value={tagQuery}
+              onChange={(e) => setTagQuery(e.target.value)}
+              onFocus={() => setTagOpen(true)}
+              placeholder="t.d. „gæsluvarðhald“ eða „skaðabætur“"
+              autoComplete="off"
+              lang="is"
+              className="mt-1 w-full rounded border border-line px-2 py-1.5 text-sm outline-none focus:border-ink"
+            />
+            {tagOpen && tags.length > 0 && (
+              <ul className="mt-2 flex max-h-56 flex-wrap gap-1 overflow-y-auto">
+                {tags.map((t) => (
+                  <li key={t.tag}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onTagChange(t.tag);
+                        setTagQuery("");
+                      }}
+                      className="rounded-full border border-line px-2 py-0.5 text-xs hover:border-ink"
+                    >
+                      {t.tag}
+                      <span className="ml-1 text-inkSoft">{t.count}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {tagOpen && tags.length === 0 && tagQuery.trim() && (
+              <p className="mt-2 text-xs text-inkSoft">Ekkert efnisorð fannst.</p>
+            )}
+          </>
+        )}
+      </div>
     </section>
   );
 }

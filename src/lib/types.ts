@@ -26,6 +26,14 @@ export interface SearchRequest {
   dateTo?: string;
   year?: number;
   tag?: string; // filter to documents whose subjectTags include this exact tag
+  /**
+   * Restrict to judgments citing this act — through any of its provisions or
+   * by naming the act alone. Set by the act/provision lookup, so that picking
+   * "lög um aðbúnað og hollustuhætti" answers with the cases about it.
+   */
+  actId?: string;
+  /** Restrict to judgments citing this specific provision. Narrower than actId. */
+  provisionId?: string;
   sort?: "relevance" | "newest" | "oldest";
   page?: number;
   pageSize?: number;

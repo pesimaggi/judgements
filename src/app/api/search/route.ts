@@ -38,7 +38,22 @@ export async function POST(req: Request) {
 
   try {
     const tag = typeof body.tag === "string" && body.tag.trim() ? body.tag.trim() : undefined;
-    const r = await provider.search({ ...body, sources, tag, page, pageSize });
+    // Ids come from the lookup endpoint; passed through as opaque strings and
+    // parameterised by the provider, never interpolated into SQL.
+    const actId = typeof body.actId === "string" && body.actId ? body.actId : undefined;
+    const provisionId =
+      typeof body.provisionId === "string" && body.provisionId ? body.provisionId : undefined;
+    const r = await provider.search({
+      ...body,
+      sources,
+      tag,
+      // A provision is a narrower statement of the same intent as its act, so
+      // the act filter is dropped when both arrive rather than intersected.
+      actId: provisionId ? undefined : actId,
+      provisionId,
+      page,
+      pageSize,
+    });
     return NextResponse.json({
       total: r.total,
       totalIsCapped: r.totalIsCapped ?? false,

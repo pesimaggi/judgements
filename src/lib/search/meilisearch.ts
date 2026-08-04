@@ -46,6 +46,20 @@ export class MeilisearchProvider implements SearchProvider {
     if (req.year) filter.push(`year = ${req.year}`);
     if (req.tag) filter.push(`subjectTags = ${JSON.stringify(req.tag)}`);
 
+    // Citation links live in Postgres, not in the Meilisearch index — they
+    // change whenever the citation job runs, on a cadence unrelated to the
+    // judgments themselves, so indexing them would mean rewriting documents
+    // constantly. The matching ids are resolved here and passed as a filter.
+    // Capped: an act like almenn hegningarlög is cited by a large share of
+    // the corpus, and an unbounded id list would be a filter expression
+    // megabytes long. Beyond the cap the result set is truncated, which the
+    // Postgres provider (the default) does not do — see citationFilterIds().
+    if (req.actId || req.provisionId) {
+      const ids = await citationFilterIds(req);
+      if (ids.length === 0) return { total: 0, hits: [] };
+      filter.push(`id IN [${ids.map((i) => JSON.stringify(i)).join(", ")}]`);
+    }
+
     const page = Math.max(1, req.page ?? 1);
     const pageSize = Math.min(50, Math.max(1, req.pageSize ?? 20));
 
@@ -152,6 +166,34 @@ export async function syncDocumentToMeilisearch(doc: any) {
       dateTimestamp: doc.date ? new Date(doc.date).getTime() : null,
     },
   ]);
+}
+
+/**
+ * Document ids citing the requested act or provision.
+ *
+ * DISTINCT because a judgment cites the same provision more than once as a
+ * matter of course, and the ids are only useful once each.
+ */
+async function citationFilterIds(req: SearchRequest): Promise<string[]> {
+  const CAP = Number(process.env.MEILI_CITATION_ID_CAP ?? 5000);
+  const rows = req.provisionId
+    ? await prisma.caseProvisionLink.findMany({
+        where: { provisionId: req.provisionId },
+        select: { documentId: true },
+        distinct: ["documentId"],
+        take: CAP,
+      })
+    : await prisma.document.findMany({
+        where: {
+          OR: [
+            { provisionLinks: { some: { provision: { actId: req.actId } } } },
+            { actLinks: { some: { actId: req.actId } } },
+          ],
+        },
+        select: { id: true },
+        take: CAP,
+      });
+  return rows.map((r) => ("documentId" in r ? r.documentId : r.id));
 }
 
 const ACTS_INDEX = "acts";
