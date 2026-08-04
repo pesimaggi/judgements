@@ -101,7 +101,11 @@ export default function ActPage({ params }: { params: { slug: string } }) {
     return groups;
   }, [visible, chapters]);
 
-  const totalCases = provisions.reduce((n, p) => n + p.caseCount, 0);
+  // Deliberately not the sum of the per-provision counts: those are distinct
+  // judgments *per provision*, so a judgment citing three provisions of this
+  // act would be counted three times. act.actCaseCount is the distinct count
+  // across the whole act, computed server-side.
+  const provisionsWithCases = provisions.filter((p) => p.caseCount > 0).length;
 
   if (loading) return <main className="mx-auto max-w-4xl px-4 py-8 text-sm text-inkSoft">Loading…</main>;
   if (error || !act) {
@@ -140,7 +144,10 @@ export default function ActPage({ params }: { params: { slug: string } }) {
             {provisions.filter((p) => p.kind === "article").length} greinar
             {chapters.length > 0 ? ` · ${chapters.length} kaflar` : ""}
           </span>
-          <span>{totalCases} tilvísanir úr dómum</span>
+          <span>
+            {act.actCaseCount} {act.actCaseCount === 1 ? "dómur vísar" : "dómar vísa"} til laganna
+            {provisionsWithCases > 0 ? ` · ${provisionsWithCases} greinar með tilvísunum` : ""}
+          </span>
           <a
             href={act.currentVersionUrl}
             target="_blank"

@@ -308,7 +308,10 @@ export async function searchProvisionsPostgres(
       SELECT p.id, p.act_id, p.display_label, p.heading, p.anchor,
              a.act_number, a.year, a.title AS act_title,
              left(p.full_text, 400) AS snippet,
-             (SELECT count(*)::int FROM case_provision_links l WHERE l.provision_id = p.id) AS case_count
+             -- Distinct judgments, not link rows: one link is one citing
+             -- passage, and a judgment often cites the same provision twice.
+             (SELECT count(DISTINCT l.document_id)::int
+                FROM case_provision_links l WHERE l.provision_id = p.id) AS case_count
         FROM provisions p
         JOIN acts a ON a.id = p.act_id
        WHERE ${where}

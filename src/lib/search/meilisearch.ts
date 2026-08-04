@@ -111,14 +111,19 @@ export class MeilisearchProvider implements SearchProvider {
 
     // Case counts are read live rather than indexed — see ensureActIndexes().
     const ids = res.hits.map((h: any) => h.id);
-    const counts = ids.length
-      ? await prisma.caseProvisionLink.groupBy({
-          by: ["provisionId"],
+    // Distinct judgments per provision, not link rows — a judgment often
+    // cites the same provision more than once and each occurrence is its own
+    // link. groupBy cannot express COUNT(DISTINCT …), so this counts the
+    // distinct pairs itself.
+    const pairs = ids.length
+      ? await prisma.caseProvisionLink.findMany({
           where: { provisionId: { in: ids } },
-          _count: { _all: true },
+          select: { provisionId: true, documentId: true },
+          distinct: ["provisionId", "documentId"],
         })
       : [];
-    const countBy = new Map(counts.map((c) => [c.provisionId, c._count._all]));
+    const countBy = new Map<string, number>();
+    for (const p of pairs) countBy.set(p.provisionId, (countBy.get(p.provisionId) ?? 0) + 1);
 
     const hits: ProvisionHit[] = res.hits.map((h: any) => ({
       id: h.id,

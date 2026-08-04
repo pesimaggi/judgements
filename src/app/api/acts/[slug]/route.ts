@@ -30,14 +30,33 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
   });
   if (!act) return NextResponse.json({ error: "Act not found." }, { status: 404 });
 
-  const counts = await prisma.caseProvisionLink.groupBy({
-    by: ["provisionId"],
-    where: { provision: { actId: act.id } },
-    _count: { _all: true },
-  });
-  const countBy = new Map(counts.map((c) => [c.provisionId, c._count._all]));
+  // Distinct judgments per provision, not link rows. There is one link per
+  // citing passage, and a judgment routinely cites the same provision more
+  // than once, so counting rows made the badge read "6 dómar" where two
+  // judgments cited the provision six times between them. Prisma's groupBy
+  // cannot express COUNT(DISTINCT …), hence the raw query.
+  const counts = await prisma.$queryRaw<{ provision_id: string; judgments: number }[]>`
+    SELECT l.provision_id, count(DISTINCT l.document_id)::int AS judgments
+      FROM case_provision_links l
+      JOIN provisions p ON p.id = l.provision_id
+     WHERE p.act_id = ${act.id}
+     GROUP BY l.provision_id
+  `;
+  const countBy = new Map(counts.map((c) => [c.provision_id, Number(c.judgments)]));
 
-  const actCaseCount = await prisma.caseActLink.count({ where: { actId: act.id } });
+  // Judgments citing this act at all — through any of its provisions, or by
+  // naming the act with no article. Counted across both link tables so a
+  // judgment doing both is one case, not two.
+  const [{ judgments: actCaseCount }] = await prisma.$queryRaw<{ judgments: number }[]>`
+    SELECT count(DISTINCT d)::int AS judgments FROM (
+      SELECT l.document_id AS d
+        FROM case_provision_links l
+        JOIN provisions p ON p.id = l.provision_id
+       WHERE p.act_id = ${act.id}
+      UNION
+      SELECT al.document_id FROM case_act_links al WHERE al.act_id = ${act.id}
+    ) refs
+  `;
 
   return NextResponse.json({
     act: {
