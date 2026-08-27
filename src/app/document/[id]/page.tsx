@@ -102,7 +102,8 @@ export default function DocumentPage() {
           <a href={doc.officialUrl} target="_blank" rel="noopener noreferrer" className="rounded bg-ink px-2.5 py-1 text-xs font-medium text-white hover:bg-inkSoft">
             {scholarship ? "Read at publisher ↗" : "Official source ↗"}
           </a>
-          {doc.pdfUrl && (
+          {/* See ResultCard: an article is reached through the journal's page. */}
+          {doc.pdfUrl && !scholarship && (
             <a href={doc.pdfUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-accent hover:underline">
               Source document / PDF ↗
             </a>
