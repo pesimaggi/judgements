@@ -9,7 +9,15 @@
  */
 import { prisma } from "@/lib/db";
 import { ALL_SOURCES } from "@/lib/sources";
-import { politeFetchText, saveDocument, isDocumentKnown, type IngestionAdapter, type IngestContext } from "./adapter";
+import {
+  politeFetchText,
+  saveDocument,
+  isDocumentKnown,
+  recordIngestGap,
+  openIngestGaps,
+  type IngestionAdapter,
+  type IngestContext,
+} from "./adapter";
 import { icelandicCourtsAdapter } from "./adapters/icelandic-courts";
 import { eftaCourtAdapter } from "./adapters/efta-court";
 import { umbodsmadurAdapter } from "./adapters/umbodsmadur";
@@ -60,17 +68,23 @@ async function main() {
     });
   }
 
-  const run = await prisma.ingestionRun.create({ data: { sourceKey: adapter.key } });
+  const run = await prisma.ingestionRun.create({
+    data: { sourceKey: adapter.key, mode: process.env.INGEST_MODE || null },
+  });
 
-  const ctx = {
+  const ctx: IngestContext = {
     fetchText: politeFetchText,
     save: dryRun
-      ? async (doc: any) => {
+      ? async (doc) => {
           console.log(`[dry-run] would save: ${doc.title} (${doc.officialUrl})`);
           return "skipped" as const;
         }
       : saveDocument,
     isKnown: isDocumentKnown,
+    // A dry run must not write to the gap ledger either — it would record
+    // every case it declined to fetch as a gap it had failed on.
+    recordGap: dryRun ? async () => {} : recordIngestGap,
+    openGaps: openIngestGaps,
     log: (msg: string) => console.log(`[${adapter.key}] ${msg}`),
   };
 
@@ -85,6 +99,22 @@ async function main() {
       data: { lastIngestedAt: new Date() },
     });
     console.log(`Done: indexed=${stats.indexed} skipped=${stats.skipped} errors=${stats.errors}`);
+
+    // The number that actually answers "are we there yet". Printed after every
+    // run so a shortfall is visible in the deploy log instead of only showing
+    // up as a percentage on the front page that nobody can explain.
+    const outstanding = await prisma.ingestGap.groupBy({
+      by: ["reason"],
+      where: { source: { in: adapter.sourceKeys }, resolvedAt: null },
+      _count: { _all: true },
+    });
+    if (outstanding.length) {
+      const total = outstanding.reduce((n, r) => n + r._count._all, 0);
+      const breakdown = outstanding.map((r) => `${r.reason}=${r._count._all}`).join(" ");
+      console.log(`Outstanding gaps for this adapter: ${total} (${breakdown})`);
+    } else {
+      console.log(`Outstanding gaps for this adapter: none`);
+    }
   } catch (e) {
     await prisma.ingestionRun.update({
       where: { id: run.id },

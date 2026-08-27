@@ -339,27 +339,84 @@ Two further traps with the scheduled service:
   `railway.ingest.json`, it falls back to `railway.json` — which starts the web
   app, not the ingest.
 
-### Finishing the Icelandic archive
+### Why the archive stalls short, and the gap ledger
 
-The backfill left a tail behind. A case whose text could not be extracted was
-skipped and never revisited, and the weekly `recent` sweep stops after a run of
-already-known cases, so it never reaches back to them. Endurupptökudómur was
-missing entirely: `courtToSourceKey` had no branch for it, so all ~102 of its
-cases were counted as "no court match" and dropped.
+A source bar that reads 99.6% and never moves is not a scraping problem. The
+API is fine: every court paginates cleanly to its last page, and a sample of
+cases across all four courts and every era from 1999 to today extracts text
+without a single failure. The shortfall was bookkeeping.
 
-`INGEST_MODE=gaps` walks the feed court by court and fetches only what is
-missing:
+Every adapter used to give up on a case with `stats.skipped++` (or
+`stats.errors++`) and a line in the deploy log. That log is gone the moment the
+deployment rolls, so a case lost to a one-off 503 became indistinguishable from
+a case that genuinely has no extractable text — and **nothing ever went back
+for either**. The weekly `recent` sweep stops after a run of already-known
+cases, so it cannot reach back to an older gap; the `gaps` sweep that could was
+opt-in and off by default. That is the whole mechanism. Endurupptökudómur sat
+at 2 of 102 cases not because its cases were unreachable — all 102 list and
+extract perfectly — but because the only sweep that would have found the other
+100 was one somebody had to remember to switch on.
+
+So gaps are now **written down**. `IngestGap` holds one row per case we know
+exists at the official source but do not hold:
+
+| Column | |
+|---|---|
+| `officialUrl` | the case, addressable — so a gap can be opened and looked at, not just counted |
+| `reason` | `no-text`, `fetch-failed`, `unmapped-court`, `error` |
+| `attempts`, `lastTriedAt` | how hard we have already tried |
+| `resolvedAt` | set automatically by `saveDocument` when the case finally lands |
+
+Because a successful save clears the row, the open rows are by construction
+exactly the work outstanding — a retry queue and the explanation for the
+missing percent in one table. Both the front-page bars and `/admin/ingestion`
+now split the shortfall into *identified* (in the ledger, queued for retry) and
+*not yet swept*, because those need different fixes.
+
+An unmapped court gets a row too, under the reserved `_unmapped` source, and a
+banner on `/admin/ingestion` naming the court. A counter is how the last one
+stayed invisible.
+
+#### The three Icelandic passes
+
+All three are in the default weekly chain. Completeness that depends on
+somebody remembering to set a variable is not completeness.
+
+| Pass | What it does | Cost |
+|---|---|---|
+| `icelandic-courts` (`INGEST_MODE=recent`) | newest-first, stops after 40 consecutive known cases | a handful of list queries |
+| `icelandic-retry` (`INGEST_MODE=retry`) | works the ledger — no listings at all, one detail fetch per outstanding case | proportional to the backlog |
+| `icelandic-gaps` (`INGEST_MODE=gaps`) | walks the feed court by court, fetches only what is missing | ~4,300 list pages for a full pass |
+
+The gap sweep is **bounded and resumable**. Each court keeps its own cursor
+(`gaps:<filter>`), persisted after every page, so a run cut short by a platform
+timeout resumes where it stopped instead of re-walking from page 1 — which is
+what made a full sweep something nobody could finish in one sitting. A court
+that reaches its last page wraps back to page 1, so repeated runs keep
+re-verifying rather than going quiet. `ICELANDIC_GAP_PAGES` caps the pages per
+run (default 600); set it to `0` for an unbounded one-off pass.
 
 ```
-sh scripts/ingest-all.sh icelandic-gaps                    # every court
-INGEST_COURT=hd-reykjavik npm run ingest -- --adapter=icelandic-courts   # one
+# Finish the archive now — one unbounded pass, then let the weekly chain hold it
+INGEST_ADAPTERS="icelandic-gaps" ICELANDIC_GAP_PAGES=0   # on the ingest-once service
+
+# Or locally
+sh scripts/ingest-all.sh icelandic-gaps      # bounded, resumable
+sh scripts/ingest-all.sh icelandic-retry     # just re-attempt known gaps
+INGEST_COURT=hd-reykjavik INGEST_MODE=gaps npm run ingest -- --adapter=icelandic-courts
 ```
 
-The list queries go over GraphQL without the polite delay that rate-limits
-detail pages, so a full pass is minutes and only genuine gaps cost a real
-fetch. Cases that still yield no text are logged individually — after this
-sweep they are the entire remaining difference between the feed's totals and
-ours.
+`INGEST_GAP_MAX_ATTEMPTS` (default 8) is where retrying stops: a case that has
+failed that many times is left in the ledger as the honest record of what this
+archive cannot reach, rather than burning the budget every week.
+
+#### One list page is ten cases, not twenty
+
+`pageSize` is accepted by the query and silently ignored — 10, 20, 50 and 100
+all return 10 items. So `hd-reykjavik` is ~1,305 pages, not the ~653 an earlier
+note here claimed, and a full sweep is ~4,300 list queries at roughly 1.3s
+each: about an hour and a half, not "minutes". That is why the sweep is bounded
+and resumable rather than assumed cheap.
 
 #### The court filter values are slugs
 
@@ -372,10 +429,10 @@ the UI to one district court issues
 | Filter value | Total | Court |
 |---|---|---|
 | `Hæstiréttur` | 12,221 | Hæstiréttur — the one court keyed by its display name; the `haestirettur` slug matches nothing |
-| `landsrettur` | 6,420 | Landsréttur |
+| `landsrettur` | 6,424 | Landsréttur |
 | `endurupptokudomur` | 102 | Endurupptökudómur |
 | `hd-reykjavik` | 13,050 | Héraðsdómur Reykjavíkur |
-| `hd-reykjanes` | 5,295 | Héraðsdómur Reykjaness |
+| `hd-reykjanes` | 5,301 | Héraðsdómur Reykjaness |
 | `hd-sudurland` | 1,918 | Héraðsdómur Suðurlands |
 | `hd-nordurland-eystra` | 1,797 | Héraðsdómur Norðurlands eystra |
 | `hd-vesturland` | 914 | Héraðsdómur Vesturlands |
@@ -383,8 +440,10 @@ the UI to one district court issues
 | `hd-vestfirdir` | 469 | Héraðsdómur Vestfjarða |
 | `hd-nordurland-vestra` | 374 | Héraðsdómur Norðurlands vestra |
 
-These eleven partition the feed exactly: they sum to 43,222, which is what the
-unfiltered feed reports. `syncAvailableTotals` checks that on every run and
+These eleven partition the feed exactly: they sum to 43,232, which is what the
+unfiltered feed reports. The figures drift upward as the courts publish — they
+were re-checked against the live API on 2026-08-27 — so treat the table as
+illustrative and `syncAvailableTotals` as the authority. `syncAvailableTotals` checks that on every run and
 says so when it stops holding, because that means a court has been added or a
 slug has changed and the progress bars are about to be quietly wrong. Nothing
 is derived by subtraction any more — that is what let one wrong filter value
@@ -396,7 +455,7 @@ Sweeping per court is also what makes a complete pass possible. The unfiltered
 search will not paginate past roughly page 3,081 — the classic fixed
 result-window symptom — so no single unfiltered walk can reach the end of a 43k
 archive. Every filter above sits comfortably inside that window; the largest,
-`hd-reykjavik`, is about 653 pages of 20 (the API caps `pageSize` at 20).
+`hd-reykjavik`, is about 1,305 pages of 10 (`pageSize` is ignored — see above).
 
 ### Running ingestion on Railway
 

@@ -15,9 +15,17 @@ export const dynamic = "force-dynamic";
  * source was simply invisible here until someone remembered to seed.
  */
 export async function GET() {
-  const [rows, counts] = await Promise.all([
+  const [rows, counts, gaps] = await Promise.all([
     prisma.source.findMany(),
     prisma.document.groupBy({ by: ["source"], _count: { _all: true } }),
+    // Cases we know exist at the official source but do not hold. This is the
+    // missing percent, itemised — without it a bar reading 99.6% is a number
+    // nobody can explain or act on.
+    prisma.ingestGap.groupBy({
+      by: ["source"],
+      where: { resolvedAt: null },
+      _count: { _all: true },
+    }),
   ]);
 
   const sources = SOURCES.map((def) => {
@@ -25,12 +33,20 @@ export async function GET() {
     // 0 means "we could not determine it" — see syncAvailableTotals — and a
     // zero denominator is what rendered the "6,321 / 0" bar.
     const total = row?.totalAvailable && row.totalAvailable > 0 ? row.totalAvailable : null;
+    const ingested = counts.find((c) => c.source === def.key)?._count._all ?? 0;
+    const known = gaps.find((g) => g.source === def.key)?._count._all ?? 0;
     return {
       key: def.key,
       name: def.name,
       group: def.group,
-      ingested: counts.find((c) => c.source === def.key)?._count._all ?? 0,
+      ingested,
       total,
+      /// Missing cases the ingester has identified and can retry.
+      knownGaps: known,
+      /// Missing cases it has not accounted for at all. A non-zero figure here
+      /// means a stretch of the archive has never been swept, which is a
+      /// different problem from a case that keeps failing to parse.
+      unexplained: total != null ? Math.max(0, total - ingested - known) : null,
       lastIngestedAt: row?.lastIngestedAt ?? null,
     };
   });
@@ -40,6 +56,7 @@ export async function GET() {
     return {
       name,
       ingested: members.reduce((sum, s) => sum + s.ingested, 0),
+      knownGaps: members.reduce((sum, s) => sum + s.knownGaps, 0),
       // A group total is only meaningful when every source in it knows its own.
       total: members.every((s) => s.total != null)
         ? members.reduce((sum, s) => sum + (s.total ?? 0), 0)
@@ -49,9 +66,10 @@ export async function GET() {
   });
 
   const ingested = sources.reduce((sum, s) => sum + s.ingested, 0);
+  const knownGaps = sources.reduce((sum, s) => sum + s.knownGaps, 0);
   const total = sources.every((s) => s.total != null)
     ? sources.reduce((sum, s) => sum + (s.total ?? 0), 0)
     : null;
 
-  return NextResponse.json({ ingested, total, groups, courts: sources });
+  return NextResponse.json({ ingested, total, knownGaps, groups, courts: sources });
 }

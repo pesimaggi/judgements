@@ -24,6 +24,7 @@
 # INGEST_ADAPTERS variable, which the dashboard can set without a code change:
 #
 #   INGEST_ADAPTERS="icelandic-gaps"          # one-off, finish the archive
+#   INGEST_ADAPTERS="icelandic-retry"         # just re-attempt known gaps
 #   INGEST_ADAPTERS="logretta ulfljotur"      # just the new sources
 #   (unset)                                   # every adapter, in order
 #
@@ -37,6 +38,10 @@
 #
 #   ICELANDIC_INGEST_MODE   default "recent"
 #   ICELANDIC_MAX_PAGES     default 40
+#   ICELANDIC_GAP_PAGES     default 600   — list pages the rolling gap sweep
+#                                           may walk per run; "0" for no limit
+#                                           (a full ~4,300-page sweep)
+#   ICELANDIC_RETRY_CASES   default 500   — cases the retry sweep re-attempts
 #   EFTA_FETCH_DOCUMENTS    default 1     — see README on eftacourt.int robots.txt
 #   EFTA_MAX_CASES          default 1000  — the register is ~461 cases
 #   UMBODSMADUR_MAX_CASES   default 600   — full backfill is ~11,455; raise for a one-off
@@ -47,7 +52,13 @@ set -u
 # Order matters on two counts: citations links judgments to the provisions they
 # cite, so lagasafn must have run first; and anything slow should come last, so
 # a deploy that gets cut short has already done the cheap sources.
-DEFAULT_ADAPTERS="icelandic-courts efta-court umbodsmadur logretta ulfljotur lagasafn citations"
+#
+# icelandic-retry and icelandic-gaps are in the default chain deliberately.
+# Completeness used to depend on someone remembering to set INGEST_ADAPTERS by
+# hand, which is why Endurupptökudómur sat at 2 of 102 cases: the sweep that
+# would have found the other 100 was opt-in and nobody opted in. A source that
+# only closes its gaps when prompted does not close them.
+DEFAULT_ADAPTERS="icelandic-courts icelandic-retry icelandic-gaps efta-court umbodsmadur logretta ulfljotur lagasafn citations"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"
@@ -71,13 +82,34 @@ for adapter in $ADAPTERS; do
       INGEST_MAX_CASES="${EFTA_MAX_CASES:-1000}" \
         npm run ingest -- --adapter=efta-court
       ;;
+    icelandic-retry)
+      # Not a separate adapter: the Icelandic one working its gap ledger. Every
+      # case we know exists but could not store has a row in IngestGap, so this
+      # needs no listing at all — one detail fetch per outstanding case. Cheap
+      # enough to run every time, and it is what actually recovers a case lost
+      # to a one-off 503 rather than leaving it missing forever.
+      INGEST_MODE=retry \
+      INGEST_MAX_CASES="${ICELANDIC_RETRY_CASES:-500}" \
+        npm run ingest -- --adapter=icelandic-courts
+      ;;
     icelandic-gaps)
       # Not a separate adapter: the Icelandic one in gap mode, which walks the
-      # whole feed and fetches only what is missing. This is what finishes the
-      # archive after a backfill has left a tail of cases behind. Deliberately
-      # not in DEFAULT_ADAPTERS — it is a one-off, not weekly work.
-      INGEST_MODE=gaps \
-        npm run ingest -- --adapter=icelandic-courts
+      # feed court by court and fetches only what is missing. The weekly
+      # `recent` sweep stops after a run of already-known cases, so it can
+      # never reach back to an older gap; this is what does.
+      #
+      # Bounded by default and resumable — each court keeps its own cursor, so
+      # successive runs carry the sweep forward instead of re-walking page 1,
+      # and a court that reaches the end wraps around to re-verify. Set
+      # ICELANDIC_GAP_PAGES=0 for an unbounded one-off pass.
+      gap_pages="${ICELANDIC_GAP_PAGES:-600}"
+      if [ "$gap_pages" = "0" ]; then
+        INGEST_MODE=gaps npm run ingest -- --adapter=icelandic-courts
+      else
+        INGEST_MODE=gaps \
+        INGEST_MAX_PAGES="$gap_pages" \
+          npm run ingest -- --adapter=icelandic-courts
+      fi
       ;;
     umbodsmadur)
       INGEST_MAX_CASES="${UMBODSMADUR_MAX_CASES:-600}" \
