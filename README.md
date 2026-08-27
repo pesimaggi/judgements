@@ -4,7 +4,7 @@ An MVP search engine for **Icelandic court judgments only** — Hæstiréttur Í
 
 > **Disclaimer shown throughout the app:** This is an unofficial research tool. Always verify text against the official source.
 
-This is a deliberately narrowed build: no ombudsman opinions, no administrative boards, no EFTA Court, no CJEU. Just the three Icelandic courts published at [island.is/domar](https://island.is/domar), searched properly.
+This is a deliberately narrowed build: no ombudsman opinions, no administrative boards, no CJEU. Just the three Icelandic courts published at [island.is/domar](https://island.is/domar), searched properly.
 
 ## What's in the MVP
 
@@ -18,7 +18,7 @@ This is a deliberately narrowed build: no ombudsman opinions, no administrative 
 - **Specific search** — alongside the keyword search, two live lookups that narrow the results, each accepting several selections that combine as AND: an act/provision box that takes the citation as it is written ("lög um aðbúnað og hollustuhætti" finds the cases about the act; "57. gr. a. laga um aðbúnað og hollustuhætti" narrows to the cases citing that article), and a subject-tag box. Acts match on title, citation number, or the short names judgments actually use — "vaxtalög" finds lög nr. 38/2001.
 - **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`.
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
-- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs weekly and pulls only what's new; `lagasafn` ingests every in-force act; `citations` links judgments to the provisions they cite; `efta-court` is a pilot, not yet ingesting (see below).
+- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs weekly and pulls only what's new; `lagasafn` ingests every in-force act; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register (see below).
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
 
 ## Quick start
@@ -81,30 +81,46 @@ court that would return nothing).
 | Source | Status | Language stored |
 |---|---|---|
 | Hæstiréttur Íslands, Landsréttur, Héraðsdómar | live | Icelandic |
-| EFTA Court | pilot | English |
+| EFTA Court | live | English |
 
-### EFTA Court (pilot)
+### EFTA Court
 
-The EFTA Court's working language is English, and some decisions are also
-published in Icelandic and Norwegian. We ingest **only the English text**;
-`officialUrl` points at the case page — the page carrying the language switcher
-— so "Official source ↗" lands somewhere the reader can switch language, the
-same way it does for island.is. The English document itself goes in `pdfUrl`.
+The EFTA Court's working language is English, and most decisions are also
+published in the language of the request (Icelandic, Norwegian, German, …). We
+store **only English**; `officialUrl` points at the case page — the page
+carrying every language version — so "Official source ↗" lands somewhere the
+reader can switch language, the same way it does for island.is.
 
-`src/ingestion/adapters/efta-court.ts` is written but **not verified against
-the live site**, which was unreachable from the environment it was written in.
-It is deliberately built to find out rather than assume: it matches on the EFTA
-case-number format (`E-1/24`) and on link wording rather than guessed CSS
-selectors, and it validates every document before saving, logging the reason
-for each rejection instead of storing a junk row. To finish it:
+`src/ingestion/adapters/efta-court.ts` walks `cases-sitemap.xml` (461 cases at
+the time of writing) and parses each case page for its number, parties,
+status, procedure, subjects, EFTA Court Reports citation, the Court's own
+"About this case" note, and the list of published documents. Case *slugs* are
+not usable as identifiers — the site mixes `/cases/e-03-15/`,
+`/cases/case-e-13-19/`, `/cases/e-0920/` and `/cases/e-2224/` — so the case
+number is always read off the page.
+
+**What is stored, and the robots.txt question.** The Court publishes each
+decision as a PDF per language, and eftacourt.int's robots.txt disallows
+`/download/` and `/wp-content/uploads/` for every user agent — which is exactly
+where those PDFs live. So by default this adapter ingests the case **record**
+(metadata, subjects, the Court's summary, and the documents as links) and does
+not fetch the PDFs. That gives a complete, searchable EFTA case register
+without crawling a path the Court has asked crawlers to stay out of, but it is
+not full judgment text.
+
+`EFTA_FETCH_DOCUMENTS=1` additionally downloads the English decision PDF per
+case and appends its text, giving true full-text search. It is off by default
+deliberately — turn it on only with the Court's agreement, or on your own
+considered reading of that robots.txt.
 
 ```
-INGEST_PROBE=1 npm run ingest -- --adapter=efta-court   # what does the site actually serve?
-EFTA_CASE_INDEX=/cases/ INGEST_MAX_CASES=3 npm run ingest -- --adapter=efta-court
+INGEST_PROBE=1 npm run ingest -- --adapter=efta-court   # what the site serves now
+npm run ingest -- --adapter=efta-court                  # the whole register
 ```
 
-Then flip `eftacourt`'s status to `live` in `src/lib/sources.ts`. Check
-eftacourt.int's robots.txt and terms of use before pointing it at the live site.
+Runs are incremental: a case page is only re-fetched when the sitemap's
+`lastmod` is newer than the last time we stored it, so pending cases still
+refresh as their court diary moves. `INGEST_FULL=1` forces a full re-walk.
 
 ## Search syntax
 
@@ -157,7 +173,7 @@ src/
     api/lookup/route.ts          GET — act/provision type-ahead, parses "57. gr. a. laga um …"
     api/tags/route.ts            GET — subject-tag type-ahead over a cached vocabulary
   lib/
-    sources.ts                   source registry: the three courts + EFTA (pilot)
+    sources.ts                   source registry: the three courts + EFTA Court
     query-parser.ts              phrases / boolean / case-number detection
     judgment-text.ts             reflows extracted text into readable blocks
     acts.ts                      act catalogue listing with per-act counts
@@ -173,7 +189,7 @@ src/
     adapters/
       icelandic-courts.ts        GraphQL + embedded PDF/rich text; weekly incremental
       lagasafn.ts                in-force Icelandic acts; incremental by codex version
-      efta-court.ts              pilot — probe mode, not yet verified live
+      efta-court.ts              EFTA Court case register, via cases-sitemap.xml
     citations.ts                 judgments → provisions; incremental by text hash
 prisma/
   schema.prisma
@@ -207,8 +223,10 @@ npm run ingest -- --adapter=citations
 | `INGEST_MAX_PAGES` | both sweeps | List pages per run (10 cases each) |
 | `INGEST_COURT` | backfill | Restrict to one court |
 | `INGEST_PROBE=1` | efta-court | Report what eftacourt.int serves, ingest nothing |
-| `EFTA_CASE_INDEX` | efta-court | Path to the confirmed case list |
-| `INGEST_MAX_CASES` | efta-court | Cases per run (default 25) |
+| `EFTA_FETCH_DOCUMENTS=1` | efta-court | Also fetch decision PDFs — see the robots.txt note above |
+| `EFTA_CASES_SITEMAP` | efta-court | Override the case sitemap URL |
+| `INGEST_MAX_CASES` | efta-court | Cases per run (default 1000) |
+| `INGEST_FULL=1` | efta-court | Ignore `lastmod` and re-walk every case |
 | `LAGASAFN_MAX_ACTS` | lagasafn | Acts fetched per run; the rest resume next run |
 | `LAGASAFN_ONLY` | lagasafn | Ingest a single act, e.g. `91/1991` — bypasses the cursor |
 | `LAGASAFN_FORCE=1` | lagasafn | Re-parse and rewrite even when nothing has changed. Needed after any change to the parser: a normal run short-circuits on the codex version before the parser ever runs, so a fix would not reach acts already stored |

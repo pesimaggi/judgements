@@ -56,7 +56,7 @@ export const ALL_SOURCES: SourceDef[] = [
     officialBaseUrl: "https://eftacourt.int",
     language: "en",
     group: EEA_EFTA,
-    status: "pilot",
+    status: "live",
   },
 ];
 

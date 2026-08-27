@@ -46,6 +46,9 @@ const HEADING_WORDS = [
   "Niðurstöður", "Forsendur", "Kröfur", "Kröfugerð", "Sératkvæði", "Reifun",
   "Útdráttur", "Ágrip", "Inngangur", "Refsing", "Sakarkostnaður",
   "Málskostnaður", "Áfrýjun", "Sönnunarfærsla", "Lagarök", "Ákæra",
+  // English, for the EFTA Court records composed by its adapter — that source
+  // publishes in English and has no Icelandic heading to key off.
+  "Summary", "Case details", "Documents",
 ];
 
 /**
@@ -351,9 +354,11 @@ export function parseJudgmentText(raw: string): JudgmentBlock[] {
 
 /**
  * The heading a judgment's summary sits under. Hæstiréttur calls it
- * "Útdráttur"; "Reifun" and "Ágrip" turn up as well.
+ * "Útdráttur"; "Reifun" and "Ágrip" turn up as well. EFTA Court records use
+ * "Summary", the heading their adapter composes the Court's own case note
+ * under.
  */
-const SUMMARY_HEADING_RE = new RegExp(`^(?:Útdráttur|Reifun|Ágrip)\\s*:?$`, "i");
+const SUMMARY_HEADING_RE = new RegExp(`^(?:Útdráttur|Reifun|Ágrip|Summary)\\s*:?$`, "i");
 
 /**
  * How much of the document to look at. The summary is always at the very top,
