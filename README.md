@@ -162,6 +162,36 @@ At the shared `INGEST_DELAY_MS` that is roughly five hours for the full
 archive. It is safe to interrupt and re-run — anything already stored is
 skipped on the next pass.
 
+### Two ingest services: scheduled and on demand
+
+There are two Railway config files for ingestion, and the difference matters:
+
+| File | `cronSchedule` | When it runs |
+|---|---|---|
+| `railway.ingest.json` | `0 6 * * 1` | **Only** Mondays 06:00 UTC |
+| `railway.ingest-once.json` | none | Every time you deploy it |
+
+**A Railway service with a `cronSchedule` does not run when you redeploy it.**
+Redeploying builds the image; the start command then waits for the next
+scheduled time. So a redeploy on a Thursday does nothing at all until the
+following Monday — no ingestion and no runtime logs, which reads exactly like
+a broken deploy but is the schedule working as designed.
+
+`railway.ingest-once.json` is the on-demand runner: no cron, so deploying it
+runs ingestion immediately, and `restartPolicyType: NEVER` stops it from
+looping. Point a second Railway service at this file (Settings → Config as
+code) and redeploy that service whenever you want a run now.
+
+Two further traps with the scheduled service:
+
+- **A run that never exits blocks every run after it.** Railway skips a
+  scheduled execution if the previous one is still going, so a deployment stuck
+  on `Active` silently stops the cron indefinitely. Check for one before
+  assuming the schedule is broken.
+- **Config as code is per service.** If a service's config path is not set to
+  `railway.ingest.json`, it falls back to `railway.json` — which starts the web
+  app, not the ingest.
+
 ### Running ingestion
 
 `scripts/ingest-all.sh` runs the adapters, each isolated from the rest, and is
