@@ -49,6 +49,10 @@ const HEADING_WORDS = [
   // The two kinds of document Umboðsmaður Alþingis issues. Each heads the
   // body of its record, which is what keeps the summary above it separate.
   "Álit", "Bréf",
+  // "Lykilorð" — the index terms an úrskurðarnefnd writes above its ruling,
+  // and the heading the stjornarradid adapter files them under. Without it
+  // the terms run straight into the "Útdráttur" that follows them.
+  "Lykilorð", "Úrskurðarorð", "Úrskurðarnefnd", "Ákvörðun",
   // English, for the EFTA Court records composed by its adapter — that source
   // publishes in English and has no Icelandic heading to key off.
   "Summary", "Case details", "Documents",
