@@ -162,6 +162,38 @@ At the shared `INGEST_DELAY_MS` that is roughly five hours for the full
 archive. It is safe to interrupt and re-run — anything already stored is
 skipped on the next pass.
 
+### Running ingestion
+
+`scripts/ingest-all.sh` runs the adapters, each isolated from the rest, and is
+what the Railway ingest service calls. It exists because the adapters used to
+be chained with `&&`: the runner exits non-zero when an adapter throws, so one
+failing source silently stopped every source behind it from running at all.
+A single island.is or Lagasafn hiccup meant no EFTA Court cases and nothing in
+the deploy log obviously saying why. Now a failure is reported and the rest
+still run, and the script still exits non-zero so the deploy is marked failed
+rather than quietly green — `/admin/ingestion` shows which adapter it was.
+
+```
+npm run ingest:all                       # every adapter, in order
+sh scripts/ingest-all.sh efta-court      # just one
+sh scripts/ingest-all.sh efta-court umbodsmadur
+```
+
+Per-adapter limits are read from the environment with defaults, so they can be
+tuned as Railway service variables without a code change:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `ICELANDIC_INGEST_MODE` | `recent` | island.is sweep mode |
+| `ICELANDIC_MAX_PAGES` | `40` | Pages of judgments per run |
+| `EFTA_FETCH_DOCUMENTS` | `1` | Fetch decision PDFs — see the robots.txt note above |
+| `EFTA_MAX_CASES` | `1000` | Cases per run; the register is ~461 |
+| `UMBODSMADUR_MAX_CASES` | `600` | Cases per run; full backfill is ~11,455 |
+
+Note that a variable written *inline* into a start command (`FOO=1 npm run …`)
+overrides a service variable of the same name and cannot be changed from the
+Railway dashboard. That is why the limits live in the script instead.
+
 ## Search syntax
 
 | Input | Behaviour |
