@@ -1,12 +1,22 @@
 "use client";
 import Link from "next/link";
 import type { SearchHit } from "@/lib/types";
+import { isScholarship } from "@/lib/sources";
 import { SnippetHtml } from "./HighlightedText";
 
 export function ResultCard({ hit, query }: { hit: SearchHit; query: string }) {
   const dateStr = hit.date
     ? new Date(hit.date).toLocaleDateString("is-IS", { day: "numeric", month: "short", year: "numeric" })
     : hit.year ? String(hit.year) : "—";
+
+  // A journal article is its author's work, not a public record, so the card
+  // leads to the journal that published it rather than to our copy. The copy
+  // is what made the article findable in the first place; it is not ours to
+  // put on a page of our own. Judgments keep the in-app reader.
+  const scholarship = isScholarship(hit.source);
+  const openHref = scholarship
+    ? hit.officialUrl
+    : `/document/${hit.id}?q=${encodeURIComponent(query)}`;
 
   return (
     <article className="rounded-lg border border-line bg-white p-4">
@@ -26,9 +36,15 @@ export function ResultCard({ hit, query }: { hit: SearchHit; query: string }) {
       </div>
 
       <h3 className="mt-1.5 font-serif text-lg font-semibold leading-snug">
-        <Link href={`/document/${hit.id}?q=${encodeURIComponent(query)}`} className="hover:underline">
-          {hit.caseName ?? hit.title}
-        </Link>
+        {scholarship ? (
+          <a href={openHref} target="_blank" rel="noopener noreferrer" className="hover:underline">
+            {hit.caseName ?? hit.title} <span className="text-sm font-normal text-inkSoft">↗</span>
+          </a>
+        ) : (
+          <Link href={openHref} className="hover:underline">
+            {hit.caseName ?? hit.title}
+          </Link>
+        )}
       </h3>
       {hit.caseName && hit.caseName !== hit.title && (
         <p className="text-sm text-inkSoft">{hit.title}</p>
@@ -73,16 +89,35 @@ export function ResultCard({ hit, query }: { hit: SearchHit; query: string }) {
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
-        <Link
-          href={`/document/${hit.id}?q=${encodeURIComponent(query)}`}
-          className="rounded bg-ink px-2.5 py-1 text-xs font-medium text-white hover:bg-inkSoft"
-        >
-          Open full text
-        </Link>
-        <a href={hit.officialUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-accent hover:underline">
-          Official source ↗
-        </a>
-        {hit.pdfUrl && (
+        {scholarship ? (
+          <a
+            href={openHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded bg-ink px-2.5 py-1 text-xs font-medium text-white hover:bg-inkSoft"
+          >
+            Read at publisher ↗
+          </a>
+        ) : (
+          <>
+            <Link
+              href={openHref}
+              className="rounded bg-ink px-2.5 py-1 text-xs font-medium text-white hover:bg-inkSoft"
+            >
+              Open full text
+            </Link>
+            <a href={hit.officialUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-accent hover:underline">
+              Official source ↗
+            </a>
+          </>
+        )}
+        {/*
+          No direct PDF link for an article. The file is the journal's own, but
+          linking it lands the reader on a bare document instead of the page
+          the journal publishes it on — the byline, the licence terms, the
+          issue it belongs to. One route in, and it is theirs.
+        */}
+        {hit.pdfUrl && !scholarship && (
           <a href={hit.pdfUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-inkSoft hover:underline">
             PDF ↗
           </a>

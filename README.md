@@ -19,7 +19,7 @@ This is a deliberately narrowed build: no CJEU, and of the Icelandic administrat
 - **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`.
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
 - **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs weekly and pulls only what's new; `lagasafn` ingests every in-force act; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `umbodsmadur` ingests the Ombudsman's opinions and letters; `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
-- **Scholarly commentary** — Tímarit Lögréttu and Vefrit Úlfljóts, searched alongside the case law rather than in a separate silo, so a query about an unsettled point returns both the judgments and the articles arguing about them.
+- **Scholarly commentary** — Tímarit Lögréttu and Vefrit Úlfljóts, searched alongside the case law rather than in a separate silo, so a query about an unsettled point returns both the judgments and the articles arguing about them. Articles are indexed in full but read at the journal that published them: their cards and pages link out rather than reproducing the text here.
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
 
 ## Quick start
@@ -178,14 +178,33 @@ decided* but *what the argument was* — and the two are most useful next to eac
 other, so they are ordinary sources in the source panel rather than a separate
 feature.
 
-They are registered as `kind: "scholarship"`, and that has one consequence
-beyond the panel heading: **the `citations` adapter skips them.**
-`CaseProvisionLink` is modelled as *a judgment citing a provision*, and the act
-reader counts its rows as "dómar" — "12 dómar vísa til þessa ákvæðis". An
-article citing 26. gr. skaðabótalaga is worth finding, but feeding it into that
-table would quietly make every one of those counts wrong. The articles stay
-fully searchable; linking them to provisions needs a link type and a label of
-its own first.
+They are registered as `kind: "scholarship"`, and that has two consequences
+beyond the panel heading.
+
+**Reading an article happens at the journal, not here.** A judgment is a public
+record; an article is somebody's authored work. So the article text is indexed
+— that is what makes it findable — and never republished: a result card's title
+and its button both open the journal's own page in a new tab, and
+`/api/documents/[id]` withholds `fullText` for a scholarly source, sending the
+catalogue entry and the journal's own abstract instead. Reaching
+`/document/{id}` directly gets that same catalogue entry — metadata, byline,
+keywords, abstract, copyable citation, and a link out — rather than a reader.
+
+There is exactly one route in, and it is the journal's article page. The direct
+PDF link that judgments carry is deliberately not offered for an article: the
+file is the journal's own, but it lands the reader on a bare document instead
+of the page the journal publishes it on, with the byline, the licence terms and
+the issue around it.
+
+Search snippets are unaffected; those are cut server-side and are what a search
+engine is for.
+
+**The `citations` adapter skips them.** `CaseProvisionLink` is modelled as *a
+judgment citing a provision*, and the act reader counts its rows as "dómar" —
+"12 dómar vísa til þessa ákvæðis". An article citing 26. gr. skaðabótalaga is
+worth finding, but feeding it into that table would quietly make every one of
+those counts wrong. Linking articles to provisions needs a link type and a
+label of its own first.
 
 #### Tímarit Lögréttu
 
@@ -480,11 +499,11 @@ island.is serves older cases as scanned PDFs and newer ones as a rich-text tree,
 src/
   app/
     page.tsx                     search UI
-    document/[id]/page.tsx       full document view
+    document/[id]/page.tsx       full document view; catalogue entry for articles
     admin/ingestion/page.tsx     ingestion status
     api/search/route.ts          POST — refuses empty source list
     api/sources/route.ts         the registered sources
-    api/documents/[id]/route.ts  document + related cases
+    api/documents/[id]/route.ts  document + related cases; withholds article text
     api/ingestion/route.ts       status feed
     log/page.tsx                 act catalogue — every ingested act
     log/[slug]/page.tsx          act reader — /log/91-1991
@@ -629,4 +648,4 @@ Note: this repo uses `prisma db push` rather than `prisma migrate`, so there's n
 
 This tool searches and links to public judgments. It always displays the official island.is URL, does not present itself as an official publisher, and displays on every page: *"This is an unofficial research tool. Always verify text against the official source."*
 
-The same applies to the journals, with one addition: an article is the work of its named author and the journal that published it, and both are kept with the record — the byline as the journal wrote it, and a link to the article on the journal's own site. Where a journal's own host asks crawlers away from the article files, this repo stays out of them by default and says so above rather than burying the choice in a flag's default.
+The journals are treated differently, because an article is not a public record — it is the work of its named author and the journal that published it. Both are kept with the record: the byline as the journal wrote it, and a link to the article on the journal's own site. The text is indexed so the article can be **found** here, and is not served for **reading** here — every route into an article opens the journal's page instead, and the document API withholds the text for a scholarly source. Where a journal's own host asks crawlers away from the article files, this repo stays out of them by default and says so above rather than burying the choice in a flag's default.

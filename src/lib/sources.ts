@@ -162,6 +162,18 @@ export function sourceByKey(key: string): SourceDef | undefined {
   return ALL_SOURCES.find((s) => s.key === key);
 }
 
+/**
+ * True for a source whose documents are somebody's authored work rather than a
+ * public record of a decision.
+ *
+ * The app indexes those in full — that is what makes them findable — but never
+ * republishes them: a reader who wants the article is sent to the journal that
+ * published it. See "Reading an article" in the README.
+ */
+export function isScholarship(sourceKey: string): boolean {
+  return sourceByKey(sourceKey)?.kind === "scholarship";
+}
+
 /** Sources bucketed by group for the source panel, in registry order. */
 export function groupedSources(sources: SourceDef[]): { group: string; sources: SourceDef[] }[] {
   const groups: { group: string; sources: SourceDef[] }[] = [];
