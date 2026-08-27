@@ -251,6 +251,38 @@ result-window symptom — so no single unfiltered walk can reach the end of a 43
 archive. Every filter above sits comfortably inside that window; the largest,
 `hd-reykjavik`, is about 653 pages of 20 (the API caps `pageSize` at 20).
 
+### Running ingestion on Railway
+
+Railway gives a service no shell — it runs its start command and nothing else.
+So there are three ways to run a particular ingest, in rough order of
+convenience:
+
+**1. Set `INGEST_ADAPTERS` on the on-demand service and redeploy.** The
+service pointed at `railway.ingest-once.json` has no `cronSchedule`, so
+deploying it runs immediately. Set the variable in the dashboard to pick what
+runs; no code change and no push:
+
+| `INGEST_ADAPTERS` | Runs |
+|---|---|
+| *(unset)* | every adapter, in order |
+| `icelandic-gaps` | the gap sweep that finishes the Icelandic archive |
+| `efta-court umbodsmadur` | just those two |
+
+**2. `railway run` — from a local checkout.** This runs on *your* machine with
+the service's variables injected, writing to the same Railway database. Good
+for the long one-offs, because nothing about a deploy can time it out:
+
+```
+railway run sh scripts/ingest-all.sh icelandic-gaps
+```
+
+**3. `railway ssh` — a shell in a running container.** Note this only works
+against a service that is actually running; a cron service sits idle between
+its scheduled fires, so there is usually nothing to attach to.
+
+Command-line arguments take precedence over `INGEST_ADAPTERS`, so a local run
+can override whatever the service has set.
+
 ### Running ingestion
 
 `scripts/ingest-all.sh` runs the adapters, each isolated from the rest, and is
@@ -384,7 +416,8 @@ npm run ingest -- --adapter=citations
 | `INGEST_RECHECK_KNOWN=1` | recent mode | Re-fetch known cases so amendments are picked up |
 | `INGEST_MAX_PAGES` | both sweeps | List pages per run (10 cases each) |
 | `INGEST_COURT` | backfill | Restrict to one court |
-| `INGEST_MODE=gaps` | icelandic-courts | Walk the whole feed, fetch only what is missing |
+| `INGEST_ADAPTERS` | ingest-all.sh | Which adapters to run, space-separated (Railway-settable) |
+| `INGEST_MODE=gaps` | icelandic-courts | Walk the feed court by court, fetch only what is missing |
 | `INGEST_PROBE=1` | efta-court | Report what eftacourt.int serves, ingest nothing |
 | `EFTA_FETCH_DOCUMENTS=1` | efta-court | Also fetch decision PDFs — see the robots.txt note above |
 | `EFTA_CASES_SITEMAP` | efta-court | Override the case sitemap URL |
