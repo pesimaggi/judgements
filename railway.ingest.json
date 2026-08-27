@@ -5,7 +5,7 @@
   },
   "deploy": {
     "cronSchedule": "0 6 * * 1",
-    "startCommand": "npm run db:deploy && INGEST_MODE=recent INGEST_MAX_PAGES=40 npm run ingest -- --adapter=icelandic-courts && npm run ingest -- --adapter=lagasafn && npm run ingest -- --adapter=citations",
+    "startCommand": "npm run db:deploy && INGEST_MODE=recent INGEST_MAX_PAGES=40 npm run ingest -- --adapter=icelandic-courts && npm run ingest -- --adapter=lagasafn && EFTA_FETCH_DOCUMENTS=1 npm run ingest -- --adapter=efta-court && INGEST_MAX_CASES=600 npm run ingest -- --adapter=umbodsmadur && npm run ingest -- --adapter=citations",
     "restartPolicyType": "NEVER"
   }
 }
