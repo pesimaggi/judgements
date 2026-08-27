@@ -11,6 +11,13 @@
  * beyond that. `CaseProvisionLink.matchType` exists so such links can be
  * added later as a separate, separately-trustable class.
  *
+ * Scholarly journals are deliberately left out. An article citing 26. gr.
+ * skaðabótalaga is worth finding, but CaseProvisionLink is modelled as *a
+ * judgment citing a provision* and the act reader counts its rows as "dómar" —
+ * so feeding articles into it would quietly make every one of those counts
+ * wrong. Journal articles stay fully searchable; linking them to provisions
+ * needs a link type and a label of their own first.
+ *
  * Incremental and resumable, like the other pipelines here: a judgment is
  * rescanned only when its text has changed since the last scan, which is one
  * comparison of Document.citationScanHash against Document.textHash. A run
@@ -21,7 +28,9 @@
  *
  * Run with:  npm run ingest -- --adapter=citations
  */
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { SCHOLARSHIP_SOURCE_KEYS } from "@/lib/sources";
 import {
   extractActCitations,
   extractProvisionCitations,
@@ -189,6 +198,11 @@ export const citationsAdapter: IngestionAdapter = {
     }
 
     const maxDocs = Number(process.env.CITATION_MAX_DOCS ?? Number.MAX_SAFE_INTEGER);
+    // Empty-safe: with no scholarly sources registered this adds no condition
+    // at all, rather than an `IN ()` Postgres would reject.
+    const excludeScholarship = SCHOLARSHIP_SOURCE_KEYS.length
+      ? Prisma.sql`AND source NOT IN (${Prisma.join(SCHOLARSHIP_SOURCE_KEYS)})`
+      : Prisma.empty;
     const aliasTotals = new Map<string, Map<string, number>>();
     const unknownActs = new Map<string, number>();
     let linksWritten = 0;
@@ -204,7 +218,8 @@ export const citationsAdapter: IngestionAdapter = {
       >`
         SELECT id, full_text, text_hash
           FROM "Document"
-         WHERE citation_scan_hash IS NULL OR citation_scan_hash <> text_hash
+         WHERE (citation_scan_hash IS NULL OR citation_scan_hash <> text_hash)
+           ${excludeScholarship}
          LIMIT ${Math.min(BATCH_SIZE, maxDocs - processed)}
       `;
       if (batch.length === 0) break;

@@ -4,7 +4,7 @@ An MVP search engine for **Icelandic court judgments only** — Hæstiréttur Í
 
 > **Disclaimer shown throughout the app:** This is an unofficial research tool. Always verify text against the official source.
 
-This is a deliberately narrowed build: no CJEU, and of the Icelandic administrative bodies only Umboðsmaður Alþingis so far. Just the three Icelandic courts published at [island.is/domar](https://island.is/domar), searched properly.
+This is a deliberately narrowed build: no CJEU, and of the Icelandic administrative bodies only Umboðsmaður Alþingis so far. Just the three Icelandic courts published at [island.is/domar](https://island.is/domar), searched properly — plus the EFTA Court, and two peer-reviewed Icelandic legal journals for the commentary on them.
 
 ## What's in the MVP
 
@@ -18,7 +18,8 @@ This is a deliberately narrowed build: no CJEU, and of the Icelandic administrat
 - **Specific search** — alongside the keyword search, two live lookups that narrow the results, each accepting several selections that combine as AND: an act/provision box that takes the citation as it is written ("lög um aðbúnað og hollustuhætti" finds the cases about the act; "57. gr. a. laga um aðbúnað og hollustuhætti" narrows to the cases citing that article), and a subject-tag box. Acts match on title, citation number, or the short names judgments actually use — "vaxtalög" finds lög nr. 38/2001.
 - **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`.
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
-- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs weekly and pulls only what's new; `lagasafn` ingests every in-force act; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `umbodsmadur` ingests the Ombudsman's opinions and letters (see below).
+- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs weekly and pulls only what's new; `lagasafn` ingests every in-force act; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `umbodsmadur` ingests the Ombudsman's opinions and letters; `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
+- **Scholarly commentary** — Tímarit Lögréttu and Vefrit Úlfljóts, searched alongside the case law rather than in a separate silo, so a query about an unsettled point returns both the judgments and the articles arguing about them.
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
 
 ## Quick start
@@ -78,11 +79,18 @@ offered in the search UI) or `pilot` (adapter still being built — a valid
 source key for ingestion and the API, but hidden from the UI so nobody ticks a
 court that would return nothing).
 
+Each source is also a `kind`: a `decision` (a court judgment, an ombudsman
+opinion) or `scholarship` (a journal article). The distinction is not cosmetic
+— it decides what the citation job scans, and therefore what the act reader is
+allowed to call "dómar". See *Ritrýnd fræðirit* below.
+
 | Source | Status | Language stored |
 |---|---|---|
 | Hæstiréttur Íslands, Landsréttur, Héraðsdómar, Endurupptökudómur | live | Icelandic |
 | EFTA Court | live | English |
 | Umboðsmaður Alþingis | live | Icelandic |
+| Tímarit Lögréttu | live | Icelandic |
+| Úlfljótur (vefrit) | live | Icelandic |
 
 ### EFTA Court
 
@@ -161,6 +169,126 @@ INGEST_MAX_CASES=20000 npm run ingest -- --adapter=umbodsmadur
 At the shared `INGEST_DELAY_MS` that is roughly five hours for the full
 archive. It is safe to interrupt and re-run — anything already stored is
 skipped on the next pass.
+
+### Ritrýnd fræðirit
+
+Two peer-reviewed Icelandic legal journals, searched in the same index as the
+case law. They answer a different question from a judgment — not *what was
+decided* but *what the argument was* — and the two are most useful next to each
+other, so they are ordinary sources in the source panel rather than a separate
+feature.
+
+They are registered as `kind: "scholarship"`, and that has one consequence
+beyond the panel heading: **the `citations` adapter skips them.**
+`CaseProvisionLink` is modelled as *a judgment citing a provision*, and the act
+reader counts its rows as "dómar" — "12 dómar vísa til þessa ákvæðis". An
+article citing 26. gr. skaðabótalaga is worth finding, but feeding it into that
+table would quietly make every one of those counts wrong. The articles stay
+fully searchable; linking them to provisions needs a link type and a label of
+its own first.
+
+#### Tímarit Lögréttu
+
+A peer-reviewed Icelandic legal journal published out of the law faculty of
+Reykjavík University — first issued at the end of 2004, electronic-only since
+2024, double-blind review by at least two specialists in the field. 193
+articles across 34 volumes, 2004 to date.
+
+The site is a client-rendered Next.js static export — its HTML is a loading
+spinner, so scraping an article page yields no article. What it renders from is
+a public Prismic repository, and that is what the adapter reads instead:
+
+```
+https://logretta.cdn.prismic.io/api/v2                                   # master ref
+/api/v2/documents/search?ref=…&q=[[at(document.type,"greinar")]]         # 196 entries
+/api/v2/documents/search?ref=…&q=[[at(document.type,"timarit")]]         # 34 volumes
+```
+
+Everything comes back as structured data — title, author, abstract
+(`urdrattur`), keywords (`efnisord`), page count, and a link to the volume the
+article belongs to. Three of the 196 entries are not articles but whole volumes
+filed alongside them, titled with the volume label; those are skipped, since
+every article in them is indexed separately. Article pages are addressed by the
+pair of Prismic ids (`/timarit/{volumeId}/{articleId}`), so the volume link is
+what makes an article's `officialUrl` reachable at all.
+
+**What is stored, and the robots.txt question.** Full article text lives in two
+places. 19 articles carry it in the API's own `html` field, and that text is
+stored. For the rest the body exists only as a PDF on
+`logretta.cdn.prismic.io`, whose robots.txt is `Disallow: *.pdf` for every user
+agent.
+
+So by default a PDF-only article is stored as its **record** — title, author,
+abstract, keywords, volume and page count, with the PDF kept as a link. That is
+a real, searchable bibliography of the journal without fetching a path its host
+asks crawlers to stay out of; 93 of the 193 articles carry an abstract or a
+body this way, and the rest say plainly, under their `Meginmál` heading, that
+the text is published as a PDF.
+
+`LOGRETTA_FETCH_PDFS=1` additionally downloads each article PDF and appends its
+text, giving full-text search over the whole journal. Same decision as
+`EFTA_FETCH_DOCUMENTS`, and the same reasoning — except that this one is **off
+in this deployment too**, because unlike the EFTA Court's, this robots.txt
+disallows the exact files in question and the repository's own licence field
+reads "All Rights Reserved". Turn it on with the journal's agreement, or on
+your own considered reading of that robots.txt.
+
+```
+INGEST_PROBE=1 npm run ingest -- --adapter=logretta        # what the API serves now
+npm run ingest -- --adapter=logretta                       # records + abstracts
+LOGRETTA_FETCH_PDFS=1 npm run ingest -- --adapter=logretta # the whole journal
+```
+
+A run is three API calls and finishes in seconds; with PDFs on, the first run
+fetches one per article at the shared `INGEST_DELAY_MS` and later runs fetch
+none. A record whose body came out of a PDF is never recomposed from metadata
+alone — doing so would replace the article with the "published as a PDF" note,
+so the second run would undo the first. `INGEST_FULL=1` rebuilds everything.
+
+#### Úlfljótur (vefrit)
+
+The web journal of Úlfljótur, the law students' journal at the University of
+Iceland — first issued in February 1947 and published every year since bar
+1951, which makes it the longest-running academic journal at the university.
+The web journal has its own academic editor and review committee. 47 articles,
+2017 to date.
+
+WordPress.com serves no `/wp-json/` on the custom domain, but the platform's
+public REST API carries the same content — and carries the *whole* post,
+rendered body included:
+
+```
+https://public-api.wordpress.com/rest/v1.1/sites/ulfljotur.com/posts/?number=100
+```
+
+One request lists the journal and brings every article with it, which makes a
+complete run a single HTTP call. Articles are published in full on the web —
+abstract (`Ágrip`), an English `Abstract` on the newer ones, the argument,
+footnotes and bibliography — so unlike the two sources above this one needs no
+opt-in flag to be genuinely full-text.
+
+Two things are read out of the body rather than the post's metadata. The
+byline, because every post is authored by the shared `ulfljotur` editorial
+account: the opening paragraph is "Eftir Ragnheiði Bragadóttur, prófessor við
+lagadeild Háskóla Íslands" (or "By …" on the one English article), and it is
+lifted out and stored under its own `Höfundur` heading. And the table of
+contents, which is one paragraph of `<br>`-separated entries — cheerio's
+`.text()` drops the breaks, so they are turned into newlines first, otherwise
+the whole contents list runs together as "1 Inngangur2 Um verðtryggingu".
+
+Peer review is stated in the body too, and stated **both ways**: "Grein þessi
+hefur verið ritrýnd og staðist þær fræðilegu kröfur …" on a reviewed article,
+"Grein þessi hefur ekki verið ritrýnd" on one that is not, and half a dozen
+other phrasings on the older ones. It is therefore left exactly where the
+journal put it rather than boiled down to a flag this adapter would have to get
+right — a footnote that reads the same to a searcher as to a reader, and no
+claim of ours. Occasional news items (tagged `Frétt`) are not scholarship and
+are left out.
+
+```
+INGEST_PROBE=1 npm run ingest -- --adapter=ulfljotur   # what the API serves now
+npm run ingest -- --adapter=ulfljotur
+```
 
 ### Two ingest services: scheduled and on demand
 
@@ -310,6 +438,7 @@ tuned as Railway service variables without a code change:
 | `EFTA_FETCH_DOCUMENTS` | `1` | Fetch decision PDFs — see the robots.txt note above |
 | `EFTA_MAX_CASES` | `1000` | Cases per run; the register is ~461 |
 | `UMBODSMADUR_MAX_CASES` | `600` | Cases per run; full backfill is ~11,455 |
+| `LOGRETTA_FETCH_PDFS` | unset | Fetch article PDFs — see the robots.txt note above |
 
 Note that a variable written *inline* into a start command (`FOO=1 npm run …`)
 overrides a service variable of the same name and cannot be changed from the
@@ -354,7 +483,7 @@ src/
     document/[id]/page.tsx       full document view
     admin/ingestion/page.tsx     ingestion status
     api/search/route.ts          POST — refuses empty source list
-    api/sources/route.ts         the three court sources
+    api/sources/route.ts         the registered sources
     api/documents/[id]/route.ts  document + related cases
     api/ingestion/route.ts       status feed
     log/page.tsx                 act catalogue — every ingested act
@@ -366,7 +495,7 @@ src/
     api/lookup/route.ts          GET — act/provision type-ahead, parses "57. gr. a. laga um …"
     api/tags/route.ts            GET — subject-tag type-ahead over a cached vocabulary
   lib/
-    sources.ts                   source registry: the courts, EFTA, Umboðsmaður
+    sources.ts                   source registry: courts, EFTA, Umboðsmaður, journals
     query-parser.ts              phrases / boolean / case-number detection
     judgment-text.ts             reflows extracted text into readable blocks
     acts.ts                      act catalogue listing with per-act counts
@@ -384,7 +513,10 @@ src/
       lagasafn.ts                in-force Icelandic acts; incremental by codex version
       efta-court.ts              EFTA Court case register, via cases-sitemap.xml
       umbodsmadur.ts             Umboðsmaður Alþingis, by walking the case id space
+      logretta.ts                Tímarit Lögréttu, via the site's own Prismic API
+      ulfljotur.ts               Vefrit Úlfljóts, via the WordPress.com REST API
     citations.ts                 judgments → provisions; incremental by text hash
+                                 (scholarship sources excluded — see Ritrýnd fræðirit)
 prisma/
   schema.prisma
   sql/setup-search.sql           FTS function, search_vector column + trigger, GIN/trigram indexes
@@ -403,6 +535,10 @@ INGEST_MAX_PAGES=2 npm run ingest -- --adapter=icelandic-courts
 # backfill one court at a time (exact values: "Hæstiréttur", "Landsréttur", a "Héraðsdómur ..." string):
 INGEST_COURT=Hæstiréttur npm run ingest -- --adapter=icelandic-courts
 
+# the two peer-reviewed journals — small enough to run in full every time:
+npm run ingest -- --adapter=logretta
+npm run ingest -- --adapter=ulfljotur
+
 # ingest every in-force Icelandic act (~900) from Lagasafn:
 npm run ingest -- --adapter=lagasafn
 # link judgments to the provisions they cite — run after either of the above:
@@ -418,11 +554,16 @@ npm run ingest -- --adapter=citations
 | `INGEST_COURT` | backfill | Restrict to one court |
 | `INGEST_ADAPTERS` | ingest-all.sh | Which adapters to run, space-separated (Railway-settable) |
 | `INGEST_MODE=gaps` | icelandic-courts | Walk the feed court by court, fetch only what is missing |
-| `INGEST_PROBE=1` | efta-court | Report what eftacourt.int serves, ingest nothing |
+| `INGEST_PROBE=1` | efta-court, logretta, ulfljotur | Report what the source serves now, ingest nothing |
 | `EFTA_FETCH_DOCUMENTS=1` | efta-court | Also fetch decision PDFs — see the robots.txt note above |
 | `EFTA_CASES_SITEMAP` | efta-court | Override the case sitemap URL |
 | `INGEST_MAX_CASES` | efta-court | Cases per run (default 1000) |
-| `INGEST_FULL=1` | efta-court, umbodsmadur | Ignore what is stored and re-walk everything |
+| `INGEST_FULL=1` | efta-court, umbodsmadur, logretta | Ignore what is stored and re-walk everything |
+| `LOGRETTA_FETCH_PDFS=1` | logretta | Also fetch article PDFs — see the robots.txt note above |
+| `LOGRETTA_API` | logretta | Override the Prismic API base |
+| `LOGRETTA_SITE` | logretta | Override the site the `officialUrl` points at |
+| `ULFLJOTUR_API` | ulfljotur | Override the WordPress.com posts endpoint |
+| `INGEST_MAX_CASES` | logretta | Articles per run (default 1000; the journal is ~193) |
 | `UMBODSMADUR_START_ID` | umbodsmadur | Highest case id to walk down from |
 | `UMBODSMADUR_STOP_ID` | umbodsmadur | Lowest case id to walk down to (default 1) |
 | `LAGASAFN_MAX_ACTS` | lagasafn | Acts fetched per run; the rest resume next run |
@@ -448,6 +589,8 @@ Repeat runs are cheap. An act whose stored codex version still matches the index
 ```sql
 UPDATE "Document" SET citation_scan_hash = NULL;
 ```
+
+Scholarly journals are excluded from that scan — see *Ritrýnd fræðirit* above for why.
 
 Bare references ("skv. 5. gr." with the act named earlier in the judgment) are deliberately *not* resolved: measured over the corpus, carrying the last-named act forward is reliable only within a few hundred characters and wrong more often than not beyond that. `CaseProvisionLink.matchType` exists so such links can be added later as a separately-trustable class. See `docs/phase-0-acts-provisions.md`.
 
@@ -485,3 +628,5 @@ Note: this repo uses `prisma db push` rather than `prisma migrate`, so there's n
 ## Legal note
 
 This tool searches and links to public judgments. It always displays the official island.is URL, does not present itself as an official publisher, and displays on every page: *"This is an unofficial research tool. Always verify text against the official source."*
+
+The same applies to the journals, with one addition: an article is the work of its named author and the journal that published it, and both are kept with the record — the byline as the journal wrote it, and a link to the article on the journal's own site. Where a journal's own host asks crawlers away from the article files, this repo stays out of them by default and says so above rather than burying the choice in a flag's default.

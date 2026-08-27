@@ -4,6 +4,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { JudgmentText } from "@/components/JudgmentText";
 import { buildCitation } from "@/lib/citation";
+import { sourceByKey } from "@/lib/sources";
 
 interface Related {
   id: string; caseNumber: string | null; title: string;
@@ -63,7 +64,19 @@ export default function DocumentPage() {
         </div>
         <h1 className="mt-2 font-serif text-2xl font-semibold leading-snug">{doc.caseName ?? doc.title}</h1>
         {doc.caseName && doc.caseName !== doc.title && <p className="text-inkSoft">{doc.title}</p>}
-        {doc.parties && <p className="mt-1 text-sm text-inkSoft">Parties: {doc.parties}</p>}
+        {/*
+          A journal article's `parties` is its byline — "Eftir Gunnar Atla
+          Gunnarsson, lögmann" — stored as the journal writes it. Labelling
+          that "Parties:" would be wrong, and labelling it "Höfundur:" would
+          read as a label on a sentence that already names its own author, so
+          for scholarship it is printed as written.
+        */}
+        {doc.parties &&
+          (sourceByKey(doc.source)?.kind === "scholarship" ? (
+            <p className="mt-1 text-sm text-inkSoft">{doc.parties}</p>
+          ) : (
+            <p className="mt-1 text-sm text-inkSoft">Parties: {doc.parties}</p>
+          ))}
         {doc.subjectTags?.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {doc.subjectTags.map((t: string) => (
