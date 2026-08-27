@@ -13,6 +13,8 @@ import { politeFetchText, saveDocument, isDocumentKnown, type IngestionAdapter, 
 import { icelandicCourtsAdapter } from "./adapters/icelandic-courts";
 import { eftaCourtAdapter } from "./adapters/efta-court";
 import { umbodsmadurAdapter } from "./adapters/umbodsmadur";
+import { logrettaAdapter } from "./adapters/logretta";
+import { ulfljoturAdapter } from "./adapters/ulfljotur";
 import { lagasafnAdapter } from "./adapters/lagasafn";
 import { citationsAdapter } from "./citations";
 
@@ -20,6 +22,8 @@ const ADAPTERS: Record<string, IngestionAdapter> = {
   "icelandic-courts": icelandicCourtsAdapter,
   "efta-court": eftaCourtAdapter,
   umbodsmadur: umbodsmadurAdapter,
+  logretta: logrettaAdapter,
+  ulfljotur: ulfljoturAdapter,
   lagasafn: lagasafnAdapter,
   citations: citationsAdapter,
 };

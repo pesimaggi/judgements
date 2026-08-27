@@ -14,6 +14,16 @@ export interface SourceDef {
    */
   adapterKey: string;
   /**
+   * "decision"    — a ruling in an individual case: a court judgment, or an
+   *   ombudsman opinion. These are what the citation job links to provisions
+   *   and what the act reader counts as "dómar".
+   * "scholarship" — a peer-reviewed article in a legal journal. Searchable
+   *   like everything else, but deliberately kept out of the provision
+   *   citation job, whose model and UI both say "dómar" — see
+   *   src/ingestion/citations.ts.
+   */
+  kind: "decision" | "scholarship";
+  /**
    * "live"  — ingested and searchable; offered in the search UI.
    * "pilot" — the adapter is still being built. Registered here so ingestion,
    *   the search API and the schema all treat the key as legitimate, but kept
@@ -26,6 +36,7 @@ export interface SourceDef {
 const ICELANDIC_COURTS = "Icelandic courts";
 const EEA_EFTA = "EEA / EFTA";
 const OVERSIGHT = "Eftirlit og kærunefndir";
+const JOURNALS = "Ritrýnd fræðirit";
 
 /** Every source the system knows about, live or not. */
 export const ALL_SOURCES: SourceDef[] = [
@@ -36,6 +47,7 @@ export const ALL_SOURCES: SourceDef[] = [
     language: "is",
     group: ICELANDIC_COURTS,
     adapterKey: "icelandic-courts",
+    kind: "decision",
     status: "live",
   },
   {
@@ -45,6 +57,7 @@ export const ALL_SOURCES: SourceDef[] = [
     language: "is",
     group: ICELANDIC_COURTS,
     adapterKey: "icelandic-courts",
+    kind: "decision",
     status: "live",
   },
   {
@@ -54,6 +67,7 @@ export const ALL_SOURCES: SourceDef[] = [
     language: "is",
     group: ICELANDIC_COURTS,
     adapterKey: "icelandic-courts",
+    kind: "decision",
     status: "live",
   },
   {
@@ -67,6 +81,7 @@ export const ALL_SOURCES: SourceDef[] = [
     language: "is",
     group: ICELANDIC_COURTS,
     adapterKey: "icelandic-courts",
+    kind: "decision",
     status: "live",
   },
   {
@@ -81,6 +96,7 @@ export const ALL_SOURCES: SourceDef[] = [
     language: "en",
     group: EEA_EFTA,
     adapterKey: "efta-court",
+    kind: "decision",
     status: "live",
   },
   {
@@ -93,6 +109,37 @@ export const ALL_SOURCES: SourceDef[] = [
     language: "is",
     group: OVERSIGHT,
     adapterKey: "umbodsmadur",
+    kind: "decision",
+    status: "live",
+  },
+  {
+    // A peer-reviewed legal journal out of Reykjavík University's law
+    // faculty, published since the end of 2004 and electronic-only since
+    // 2024. Ingested from the Prismic API its own site reads from, so the
+    // article record (title, author, abstract, keywords, volume) comes as
+    // structured data rather than being scraped back out of a page that
+    // renders entirely in the browser.
+    key: "logretta",
+    name: "Tímarit Lögréttu",
+    officialBaseUrl: "https://www.timaritlogrettu.is",
+    language: "is",
+    group: JOURNALS,
+    adapterKey: "logretta",
+    kind: "scholarship",
+    status: "live",
+  },
+  {
+    // Vefrit Úlfljóts — the web journal of Úlfljótur, the law students'
+    // journal at the University of Iceland, in print since 1947. Articles are
+    // published in full on the web, so this source carries whole articles,
+    // not just their abstracts.
+    key: "ulfljotur",
+    name: "Úlfljótur (vefrit)",
+    officialBaseUrl: "https://ulfljotur.com",
+    language: "is",
+    group: JOURNALS,
+    adapterKey: "ulfljotur",
+    kind: "scholarship",
     status: "live",
   },
 ];
@@ -102,6 +149,14 @@ export const SOURCES: SourceDef[] = ALL_SOURCES.filter((s) => s.status === "live
 
 /** Valid source keys, pilots included, so their documents stay queryable. */
 export const SOURCE_KEYS = new Set(ALL_SOURCES.map((s) => s.key));
+
+/**
+ * Sources whose documents are scholarly articles rather than decisions in a
+ * case. Read by the citation job, which links *judgments* to provisions.
+ */
+export const SCHOLARSHIP_SOURCE_KEYS = ALL_SOURCES.filter((s) => s.kind === "scholarship").map(
+  (s) => s.key
+);
 
 export function sourceByKey(key: string): SourceDef | undefined {
   return ALL_SOURCES.find((s) => s.key === key);

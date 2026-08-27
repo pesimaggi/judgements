@@ -52,6 +52,13 @@ const HEADING_WORDS = [
   // English, for the EFTA Court records composed by its adapter — that source
   // publishes in English and has no Icelandic heading to key off.
   "Summary", "Case details", "Documents",
+  // Journal articles. "Höfundur", "Heimild", "Efnisorð" and "Meginmál" head
+  // the sections the journal adapters compose; "Abstract", "Efnisyfirlit" and
+  // "Heimildaskrá" are the article's own, written by its author. Each one
+  // matters as much for what it *ends* as for what it starts: without them an
+  // abstract runs on into the body it precedes.
+  "Höfundur", "Heimild", "Heimildaskrá", "Efnisorð", "Efnisyfirlit",
+  "Meginmál", "Abstract",
 ];
 
 /**

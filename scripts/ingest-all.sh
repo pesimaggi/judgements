@@ -24,7 +24,7 @@
 # INGEST_ADAPTERS variable, which the dashboard can set without a code change:
 #
 #   INGEST_ADAPTERS="icelandic-gaps"          # one-off, finish the archive
-#   INGEST_ADAPTERS="efta-court umbodsmadur"  # just the new sources
+#   INGEST_ADAPTERS="logretta ulfljotur"      # just the new sources
 #   (unset)                                   # every adapter, in order
 #
 # Command-line arguments win over the variable, so a local run can still
@@ -40,13 +40,14 @@
 #   EFTA_FETCH_DOCUMENTS    default 1     — see README on eftacourt.int robots.txt
 #   EFTA_MAX_CASES          default 1000  — the register is ~461 cases
 #   UMBODSMADUR_MAX_CASES   default 600   — full backfill is ~11,455; raise for a one-off
+#   LOGRETTA_FETCH_PDFS     unset         — see README on the Prismic CDN's robots.txt
 #
 set -u
 
 # Order matters on two counts: citations links judgments to the provisions they
 # cite, so lagasafn must have run first; and anything slow should come last, so
 # a deploy that gets cut short has already done the cheap sources.
-DEFAULT_ADAPTERS="icelandic-courts efta-court umbodsmadur lagasafn citations"
+DEFAULT_ADAPTERS="icelandic-courts efta-court umbodsmadur logretta ulfljotur lagasafn citations"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"
@@ -81,6 +82,14 @@ for adapter in $ADAPTERS; do
     umbodsmadur)
       INGEST_MAX_CASES="${UMBODSMADUR_MAX_CASES:-600}" \
         npm run ingest -- --adapter=umbodsmadur
+      ;;
+    logretta)
+      # Both journals list in a handful of API calls, so they run in full every
+      # time rather than being chunked like the archives above. The only knob
+      # is whether the article PDFs are fetched, and it is named here so the
+      # dashboard can set it — the default is off, deliberately.
+      LOGRETTA_FETCH_PDFS="${LOGRETTA_FETCH_PDFS:-}" \
+        npm run ingest -- --adapter=logretta
       ;;
     *)
       npm run ingest -- --adapter="$adapter"
