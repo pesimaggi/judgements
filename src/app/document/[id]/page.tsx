@@ -4,7 +4,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { JudgmentText } from "@/components/JudgmentText";
 import { buildCitation } from "@/lib/citation";
-import { sourceByKey } from "@/lib/sources";
+import { isScholarship, sourceByKey } from "@/lib/sources";
 
 interface Related {
   id: string; caseNumber: string | null; title: string;
@@ -39,12 +39,18 @@ export default function DocumentPage() {
     const terms = innerQuery.replace(/"/g, "").trim();
     if (!terms) return 0;
     try {
-      return (doc.fullText.match(new RegExp(terms.split(/\s+/).join("|"), "giu")) ?? []).length;
+      return ((doc.fullText ?? "").match(new RegExp(terms.split(/\s+/).join("|"), "giu")) ?? []).length;
     } catch { return 0; }
   }, [doc, innerQuery]);
 
   if (error) return <main className="mx-auto max-w-4xl p-6 text-sm text-accent">{error}</main>;
   if (!doc) return <main className="mx-auto max-w-4xl p-6 text-sm text-inkSoft">Loading…</main>;
+
+  // For a journal article this page is a catalogue entry, not a reader: the
+  // API sends the record and the journal's own abstract, never the text. See
+  // "Reading an article" in the README.
+  const scholarship = isScholarship(doc.source);
+  const publisher = sourceByKey(doc.source)?.name ?? "the publisher";
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-6">
@@ -94,7 +100,7 @@ export default function DocumentPage() {
 
         <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
           <a href={doc.officialUrl} target="_blank" rel="noopener noreferrer" className="rounded bg-ink px-2.5 py-1 text-xs font-medium text-white hover:bg-inkSoft">
-            Official source ↗
+            {scholarship ? "Read at publisher ↗" : "Official source ↗"}
           </a>
           {doc.pdfUrl && (
             <a href={doc.pdfUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-accent hover:underline">
@@ -111,22 +117,53 @@ export default function DocumentPage() {
         <p className="mt-2 break-all rounded bg-paper px-2 py-1 font-mono text-[11px] text-inkSoft">{citation}</p>
       </header>
 
-      <div className="sticky top-0 z-10 mt-4 flex items-center gap-2 rounded-lg border border-line bg-white p-2">
-        <input
-          value={innerQuery}
-          onChange={(e) => setInnerQuery(e.target.value)}
-          placeholder="Search within this document…"
-          className="w-full rounded border border-line px-3 py-1.5 text-sm"
-          lang="is"
-        />
-        <span className="whitespace-nowrap text-xs text-inkSoft">
-          {innerQuery.trim() ? `${matchCount} hit${matchCount === 1 ? "" : "s"}` : ""}
-        </span>
-      </div>
+      {scholarship ? (
+        <article className="mt-4 rounded-lg border border-line bg-white px-6 py-7 sm:px-10">
+          {doc.summary && (
+            <>
+              <h2 className="font-serif text-lg font-semibold">Útdráttur</h2>
+              <div className="mt-2 font-serif text-[15px] leading-relaxed">
+                {doc.summary.split("\n\n").map((paragraph: string, i: number) => (
+                  <p key={i} className="mb-3 last:mb-0">{paragraph}</p>
+                ))}
+              </div>
+            </>
+          )}
+          <div className={doc.summary ? "mt-6 border-t border-line pt-5" : undefined}>
+            <p className="text-sm text-inkSoft">
+              Published by {publisher}. The article is its author&apos;s work: indexed here so it
+              can be found, and read at the journal that published it.
+            </p>
+            <a
+              href={doc.officialUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-block rounded bg-ink px-3 py-1.5 text-sm font-medium text-white hover:bg-inkSoft"
+            >
+              Read the article at {publisher} ↗
+            </a>
+          </div>
+        </article>
+      ) : (
+        <>
+          <div className="sticky top-0 z-10 mt-4 flex items-center gap-2 rounded-lg border border-line bg-white p-2">
+            <input
+              value={innerQuery}
+              onChange={(e) => setInnerQuery(e.target.value)}
+              placeholder="Search within this document…"
+              className="w-full rounded border border-line px-3 py-1.5 text-sm"
+              lang="is"
+            />
+            <span className="whitespace-nowrap text-xs text-inkSoft">
+              {innerQuery.trim() ? `${matchCount} hit${matchCount === 1 ? "" : "s"}` : ""}
+            </span>
+          </div>
 
-      <article className="mt-4 rounded-lg border border-line bg-white px-6 py-7 sm:px-10">
-        <JudgmentText text={doc.fullText} query={innerQuery} />
-      </article>
+          <article className="mt-4 rounded-lg border border-line bg-white px-6 py-7 sm:px-10">
+            <JudgmentText text={doc.fullText} query={innerQuery} />
+          </article>
+        </>
+      )}
 
       {related.length > 0 && (
         <section className="mt-4 rounded-lg border border-line bg-white p-4">
