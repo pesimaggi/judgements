@@ -200,34 +200,56 @@ already-known cases, so it never reaches back to them. Endurupptökudómur was
 missing entirely: `courtToSourceKey` had no branch for it, so all ~102 of its
 cases were counted as "no court match" and dropped.
 
-`INGEST_MODE=gaps` walks the whole feed and fetches only what is missing:
+`INGEST_MODE=gaps` walks the feed court by court and fetches only what is
+missing:
 
 ```
-sh scripts/ingest-all.sh icelandic-gaps
+sh scripts/ingest-all.sh icelandic-gaps                    # every court
+INGEST_COURT=hd-reykjavik npm run ingest -- --adapter=icelandic-courts   # one
 ```
 
 The list queries go over GraphQL without the polite delay that rate-limits
-detail pages, so a full pass over 43k cases in pages of 20 (the API caps
-`pageSize` there) is minutes, and only genuine gaps cost a real fetch. Cases
-that still yield no text are logged individually — after this sweep they are
-the entire remaining difference between the feed's totals and ours.
+detail pages, so a full pass is minutes and only genuine gaps cost a real
+fetch. Cases that still yield no text are logged individually — after this
+sweep they are the entire remaining difference between the feed's totals and
+ours.
 
-**The court filter values are not the names the API returns.** They were
-established by probing the live endpoint against island.is's own displayed
-totals, and the obvious guess is wrong for three of the four courts — and
-returns 0 rather than erroring:
+#### The court filter values are slugs
 
-| Filter value sent | Total | The accented/ASCII counterpart |
+They are not the court names the API returns, and a value it does not
+recognise answers 0 rather than erroring — so a wrong guess is silent. The
+values were found by reading what island.is/domar's own page sends: filtering
+the UI to one district court issues
+`webVerdicts(input: { court: ["hd-reykjavik"] })`.
+
+| Filter value | Total | Court |
 |---|---|---|
-| `Hæstiréttur` | 12,221 | `Haestirettur` → 0 |
-| `Landsrettur` | 6,420 | `Landsréttur` → 0 |
-| `Endurupptokudomur` | 102 | `Endurupptökudómur` → 0 |
-| *(none works)* | — | Héraðsdómur, in any form → 0 |
+| `Hæstiréttur` | 12,221 | Hæstiréttur — the one court keyed by its display name; the `haestirettur` slug matches nothing |
+| `landsrettur` | 6,420 | Landsréttur |
+| `endurupptokudomur` | 102 | Endurupptökudómur |
+| `hd-reykjavik` | 13,050 | Héraðsdómur Reykjavíkur |
+| `hd-reykjanes` | 5,295 | Héraðsdómur Reykjaness |
+| `hd-sudurland` | 1,918 | Héraðsdómur Suðurlands |
+| `hd-nordurland-eystra` | 1,797 | Héraðsdómur Norðurlands eystra |
+| `hd-vesturland` | 914 | Héraðsdómur Vesturlands |
+| `hd-austurland` | 662 | Héraðsdómur Austurlands |
+| `hd-vestfirdir` | 469 | Héraðsdómur Vestfjarða |
+| `hd-nordurland-vestra` | 374 | Héraðsdómur Norðurlands vestra |
 
-The district courts have no working filter, so their total is derived:
-43,222 − 12,221 − 6,420 − 102 = **24,479**. A total of 0 is never written to
-`Source.totalAvailable`, because 0 means "we asked wrong", not "this court has
-no cases" — storing it is what produced the `6,321 / 0` progress bar.
+These eleven partition the feed exactly: they sum to 43,222, which is what the
+unfiltered feed reports. `syncAvailableTotals` checks that on every run and
+says so when it stops holding, because that means a court has been added or a
+slug has changed and the progress bars are about to be quietly wrong. Nothing
+is derived by subtraction any more — that is what let one wrong filter value
+corrupt a second court's figure. A total of 0 is never stored: 0 means "we
+asked wrong", not "this court has no cases", and storing it is what produced
+the `6,321 / 0` bar.
+
+Sweeping per court is also what makes a complete pass possible. The unfiltered
+search will not paginate past roughly page 3,081 — the classic fixed
+result-window symptom — so no single unfiltered walk can reach the end of a 43k
+archive. Every filter above sits comfortably inside that window; the largest,
+`hd-reykjavik`, is about 653 pages of 20 (the API caps `pageSize` at 20).
 
 ### Running ingestion
 
