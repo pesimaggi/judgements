@@ -111,7 +111,13 @@ export function ResultCard({ hit, query }: { hit: SearchHit; query: string }) {
             </a>
           </>
         )}
-        {hit.pdfUrl && (
+        {/*
+          No direct PDF link for an article. The file is the journal's own, but
+          linking it lands the reader on a bare document instead of the page
+          the journal publishes it on — the byline, the licence terms, the
+          issue it belongs to. One route in, and it is theirs.
+        */}
+        {hit.pdfUrl && !scholarship && (
           <a href={hit.pdfUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-inkSoft hover:underline">
             PDF ↗
           </a>

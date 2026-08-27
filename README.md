@@ -189,6 +189,13 @@ and its button both open the journal's own page in a new tab, and
 catalogue entry and the journal's own abstract instead. Reaching
 `/document/{id}` directly gets that same catalogue entry — metadata, byline,
 keywords, abstract, copyable citation, and a link out — rather than a reader.
+
+There is exactly one route in, and it is the journal's article page. The direct
+PDF link that judgments carry is deliberately not offered for an article: the
+file is the journal's own, but it lands the reader on a bare document instead
+of the page the journal publishes it on, with the byline, the licence terms and
+the issue around it.
+
 Search snippets are unaffected; those are cut server-side and are what a search
 engine is for.
 
