@@ -357,6 +357,17 @@ export const eftaCourtAdapter: IngestionAdapter = {
         if (!record) {
           stats.skipped++;
           ctx.log(`  ${entry.url}: no case number found — not a case page, skipped`);
+          // The sitemap is the denominator for this source's progress bar, so
+          // a URL it lists that we cannot parse is exactly the difference
+          // between the bar and 100%. Record it rather than only logging it.
+          await ctx.recordGap({
+            adapter: eftaCourtAdapter.key,
+            source: "eftacourt",
+            officialUrl: entry.url,
+            court: "EFTA Court",
+            reason: "no-text",
+            detail: "no case number found on the page — parseCasePage returned nothing",
+          });
           continue;
         }
 
@@ -364,6 +375,16 @@ export const eftaCourtAdapter: IngestionAdapter = {
         if (fullText.length < MIN_RECORD_CHARS) {
           stats.skipped++;
           ctx.log(`  ${record.caseNumber}: record of only ${fullText.length} chars — skipped as a likely parse failure`);
+          await ctx.recordGap({
+            adapter: eftaCourtAdapter.key,
+            source: "eftacourt",
+            officialUrl: entry.url,
+            court: "EFTA Court",
+            caseNumber: record.caseNumber,
+            title: record.parties || null,
+            reason: "no-text",
+            detail: `record of only ${fullText.length} chars (minimum ${MIN_RECORD_CHARS})`,
+          });
           continue;
         }
 
@@ -406,7 +427,26 @@ export const eftaCourtAdapter: IngestionAdapter = {
         stats.errors++;
         stats.errorSample = stats.errorSample ?? String(e);
         ctx.log(`  error on ${entry.url}: ${String(e).slice(0, 200)}`);
+        await ctx.recordGap({
+          adapter: eftaCourtAdapter.key,
+          source: "eftacourt",
+          officialUrl: entry.url,
+          court: "EFTA Court",
+          reason: /HTTP \d+|fetch failed|ETIMEDOUT|ECONNRESET/i.test(String(e))
+            ? "fetch-failed"
+            : "error",
+          detail: String(e).slice(0, 300),
+        });
       }
+    }
+
+    // A case still in the ledger is the entire difference between the
+    // sitemap's count and ours, named rather than merely subtracted.
+    const open = await ctx.openGaps(["eftacourt"]);
+    if (open.length) {
+      ctx.log(`${open.length} case(s) outstanding:`);
+      for (const g of open.slice(0, 40)) ctx.log(`  [${g.reason}, ${g.attempts}x] ${g.caseNumber ?? "?"} ${g.officialUrl}`);
+      if (open.length > 40) ctx.log(`  …and ${open.length - 40} more`);
     }
 
     return stats;

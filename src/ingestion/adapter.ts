@@ -37,7 +37,39 @@ export interface IngestContext {
    * expensive, rate-limited part of ingestion.
    */
   isKnown(source: string, officialUrl: string): Promise<boolean>;
+  /**
+   * Record a case we know exists but could not store. Call this on every path
+   * that gives up on a case; `save` clears the row again when the case finally
+   * lands, so the open rows stay an accurate to-do list rather than a log.
+   */
+  recordGap(gap: GapRecord): Promise<void>;
+  /** Open (unresolved) gaps for these sources, oldest attempt first. */
+  openGaps(sources: string[]): Promise<OpenGap[]>;
   log(msg: string): void;
+}
+
+/** Why a case seen in a listing did not get stored. */
+export type GapReason = "no-text" | "fetch-failed" | "unmapped-court" | "error";
+
+export interface GapRecord {
+  adapter: string;
+  source: string;
+  officialUrl: string;
+  court?: string | null;
+  caseNumber?: string | null;
+  title?: string | null;
+  date?: Date | null;
+  reason: GapReason;
+  detail?: string | null;
+}
+
+export interface OpenGap {
+  source: string;
+  officialUrl: string;
+  court: string | null;
+  caseNumber: string | null;
+  reason: string;
+  attempts: number;
 }
 
 const DELAY_MS = Number(process.env.INGEST_DELAY_MS ?? 1500);
@@ -133,13 +165,75 @@ export async function isDocumentKnown(source: string, officialUrl: string): Prom
   return existing !== null;
 }
 
+/**
+ * Records a case we know exists but could not store, or bumps the attempt
+ * count on one already recorded. Never throws: a bookkeeping failure must not
+ * cost us the rest of the run.
+ */
+export async function recordIngestGap(gap: GapRecord): Promise<void> {
+  try {
+    await prisma.ingestGap.upsert({
+      where: { source_officialUrl: { source: gap.source, officialUrl: gap.officialUrl } },
+      create: {
+        adapter: gap.adapter,
+        source: gap.source,
+        officialUrl: gap.officialUrl,
+        court: gap.court ?? null,
+        caseNumber: gap.caseNumber ?? null,
+        title: gap.title ?? null,
+        date: gap.date ?? null,
+        reason: gap.reason,
+        detail: gap.detail?.slice(0, 500) ?? null,
+      },
+      update: {
+        // A re-attempt that fails differently should say so, and a row that
+        // was resolved and has regressed becomes open again.
+        reason: gap.reason,
+        detail: gap.detail?.slice(0, 500) ?? null,
+        attempts: { increment: 1 },
+        lastTriedAt: new Date(),
+        resolvedAt: null,
+      },
+    });
+  } catch {
+    // Deliberately silent: see above.
+  }
+}
+
+/** Open gaps for these sources, least-attempted first so a case that keeps
+ *  failing cannot monopolise a bounded retry budget. */
+export async function openIngestGaps(sources: string[]): Promise<OpenGap[]> {
+  return prisma.ingestGap.findMany({
+    where: { source: { in: sources }, resolvedAt: null },
+    orderBy: [{ attempts: "asc" }, { lastTriedAt: "asc" }],
+    select: { source: true, officialUrl: true, court: true, caseNumber: true, reason: true, attempts: true },
+  });
+}
+
+/** Marks any gap for this document closed. Cheap enough to do unconditionally:
+ *  the (source, officialUrl) unique index makes it a single indexed update. */
+async function resolveIngestGap(source: string, officialUrl: string): Promise<void> {
+  try {
+    await prisma.ingestGap.updateMany({
+      where: { source, officialUrl, resolvedAt: null },
+      data: { resolvedAt: new Date() },
+    });
+  } catch {
+    // Bookkeeping only — never fail a successful save over it.
+  }
+}
+
 export async function saveDocument(doc: NormalizedDocument): Promise<"indexed" | "skipped"> {
   const textHash = hashText(doc.fullText);
   const existing = await prisma.document.findUnique({
     where: { source_officialUrl: { source: doc.source, officialUrl: doc.officialUrl } },
     select: { id: true, textHash: true },
   });
-  if (existing?.textHash === textHash) return "skipped";
+  // Unchanged, but stored — so it is not a gap, whatever an earlier run thought.
+  if (existing?.textHash === textHash) {
+    await resolveIngestGap(doc.source, doc.officialUrl);
+    return "skipped";
+  }
 
   const data = {
     source: doc.source,
@@ -168,5 +262,7 @@ export async function saveDocument(doc: NormalizedDocument): Promise<"indexed" |
     const { syncDocumentToMeilisearch } = await import("@/lib/search/meilisearch");
     await syncDocumentToMeilisearch(saved);
   }
+  // The case has landed; whatever kept it out before no longer applies.
+  await resolveIngestGap(doc.source, doc.officialUrl);
   return "indexed";
 }

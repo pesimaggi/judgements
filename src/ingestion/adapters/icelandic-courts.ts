@@ -119,25 +119,51 @@ function extractRichText(node: unknown): string {
   return RICH_TEXT_BLOCK_TYPES.has(rec.nodeType as string) ? `${inner}\n` : inner;
 }
 
+/** The listing fields a detail page carries in its own right. */
+interface VerdictMeta {
+  court: string | null;
+  caseNumber: string | null;
+  title: string | null;
+  verdictDate: string | null;
+  keywords: string[];
+}
+
 /**
- * Fetches a case's detail page and extracts the judgment's full text — from
- * an embedded PDF (older, scanned cases) or a Contentful-style rich-text
- * document (newer cases, authored directly rather than scanned).
+ * Fetches a case's detail page once and returns both its full text — from an
+ * embedded PDF (older, scanned cases) or a Contentful-style rich-text document
+ * (newer cases, authored directly rather than scanned) — and the listing
+ * fields the same payload carries.
+ *
+ * Returning both matters for the retry sweep, which works from the gap ledger
+ * rather than from a listing: it has a URL and needs the metadata, and this
+ * way that costs one rate-limited fetch instead of two.
  */
-async function fetchVerdictText(ctx: IngestContext, officialUrl: string): Promise<string> {
+async function fetchVerdict(
+  ctx: IngestContext,
+  officialUrl: string
+): Promise<{ text: string; meta: VerdictMeta }> {
+  const empty: VerdictMeta = { court: null, caseNumber: null, title: null, verdictDate: null, keywords: [] };
   const html = await ctx.fetchText(officialUrl);
   const $ = load(html);
   const nextDataRaw = $("#__NEXT_DATA__").html();
   if (!nextDataRaw) {
     ctx.log(`  no __NEXT_DATA__ found (html length ${html.length})`);
-    return "";
+    return { text: "", meta: empty };
   }
   const nextData = JSON.parse(nextDataRaw);
   const item = findByTypename(nextData, "WebVerdictByIdItem");
   if (!item) {
     ctx.log(`  no WebVerdictByIdItem found (__NEXT_DATA__ ${nextDataRaw.length} chars)`);
-    return "";
+    return { text: "", meta: empty };
   }
+
+  const meta: VerdictMeta = {
+    court: typeof item.court === "string" ? item.court : null,
+    caseNumber: typeof item.caseNumber === "string" ? item.caseNumber : null,
+    title: typeof item.title === "string" ? item.title : null,
+    verdictDate: typeof item.verdictDate === "string" ? item.verdictDate : null,
+    keywords: Array.isArray(item.keywords) ? (item.keywords as string[]) : [],
+  };
 
   if (typeof item.pdfString === "string" && item.pdfString.length > 0) {
     const { text } = await pdfParse(Buffer.from(item.pdfString, "base64"));
@@ -145,18 +171,32 @@ async function fetchVerdictText(ctx: IngestContext, officialUrl: string): Promis
     // paragraphs (rather than the flat whitespace-collapse this used to do)
     // is what lets the document page render the judgment as prose instead of
     // one unbroken wall of text.
-    return normalizeJudgmentText(text);
+    return { text: normalizeJudgmentText(text), meta };
   }
 
   const richText = item.richText as Record<string, unknown> | undefined;
   if (richText && typeof richText === "object") {
     const text = extractRichText(richText.document).replace(/\n{2,}/g, "\n").trim();
-    if (text) return text;
+    if (text) return { text, meta };
   }
 
   ctx.log(`  neither pdfString nor richText yielded text (fields: ${Object.keys(item).join(", ")})`);
-  return "";
+  return { text: "", meta };
 }
+
+/** The full text alone, for callers with no use for the metadata. */
+async function fetchVerdictText(ctx: IngestContext, officialUrl: string): Promise<string> {
+  return (await fetchVerdict(ctx, officialUrl)).text;
+}
+
+/**
+ * Source key used for a gap whose court we cannot map. Not a real source (it
+ * has no row in src/lib/sources.ts and nothing is ever stored under it) — it
+ * exists so an unmapped court lands in the ledger as a visible, named row
+ * instead of vanishing into a skip counter, which is exactly how every
+ * Endurupptökudómur case stayed invisible until someone counted the front page.
+ */
+export const UNMAPPED_SOURCE = "_unmapped";
 
 /** Maps island.is court names onto our per-court source keys. */
 export function courtToSourceKey(court: string): string | null {
@@ -337,22 +377,65 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
     let noPdf = 0;
     let unchanged = 0;
 
-    // Shared per-item handling for both the flat-paged and year-chunked loops
-    // below: bucket by court, fetch the verdict text, upsert it.
-    const processItems = async (items: any[]) => {
+    // Shared per-item handling for every loop below: bucket by court, fetch
+    // the verdict text, upsert it.
+    //
+    // Every path that gives up on a case now writes an IngestGap row first.
+    // Before that, a case lost to a one-off 503 was a `stats.skipped++` and a
+    // line in a deploy log that scrolls away — indistinguishable from a case
+    // that genuinely has no text, and never revisited by anything. That is the
+    // whole mechanism behind an archive that sits at 99.6% forever. A
+    // successful save clears the row again (see saveDocument), so the open
+    // rows are exactly the work still outstanding.
+    // `prefetched` lets a caller that has already paid for a case's detail
+    // page (the retry sweep, which fetches it to recover the metadata the
+    // ledger does not hold) pass the text straight in, rather than fetching
+    // the same rate-limited page a second time.
+    const processItems = async (items: any[], prefetched?: Map<string, string>) => {
       for (const it of items) {
+        const officialUrl = verdictUrl(it.id);
+        const sourceKey = courtToSourceKey(it.court ?? "");
+        // Common identifying fields, so a gap row can be acted on directly
+        // rather than just counted.
+        const identity = {
+          adapter: icelandicCourtsAdapter.key,
+          officialUrl,
+          court: it.court ?? null,
+          caseNumber: it.caseNumber ?? null,
+          title: it.title ?? null,
+          date: it.verdictDate ? new Date(it.verdictDate) : null,
+        };
+
         try {
-          const sourceKey = courtToSourceKey(it.court ?? "");
           if (!sourceKey) {
             stats.skipped++;
             noCourtMatch++;
             if (it.court) unmatchedCourts.add(it.court);
+            // Filed under a reserved key rather than dropped: a court we do
+            // not map yet is precisely the failure that hid Endurupptökudómur
+            // for months, and it should be a row someone can see, not a
+            // number in a summary line.
+            await ctx.recordGap({
+              ...identity,
+              source: UNMAPPED_SOURCE,
+              reason: "unmapped-court",
+              detail: `no source key for court "${it.court ?? ""}"`,
+            });
             continue;
           }
 
-          const officialUrl = verdictUrl(it.id);
-          const fullText = await fetchVerdictText(ctx, officialUrl);
-          if (!fullText) { stats.skipped++; noPdf++; continue; }
+          const fullText = prefetched?.get(officialUrl) ?? (await fetchVerdictText(ctx, officialUrl));
+          if (!fullText) {
+            stats.skipped++;
+            noPdf++;
+            await ctx.recordGap({
+              ...identity,
+              source: sourceKey,
+              reason: "no-text",
+              detail: "detail page yielded neither pdfString nor richText",
+            });
+            continue;
+          }
 
           const result = await ctx.save({
             source: sourceKey,
@@ -372,6 +455,16 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
           stats.errors++;
           stats.errorSample = stats.errorSample ?? String(e);
           ctx.log(`  error on ${it.caseNumber ?? it.id}: ${String(e).slice(0, 200)}`);
+          await ctx.recordGap({
+            ...identity,
+            source: sourceKey ?? UNMAPPED_SOURCE,
+            // A fetch that threw is the transient case worth retrying hardest;
+            // anything else is a genuine bug until proven otherwise.
+            reason: /HTTP \d+|fetch failed|ETIMEDOUT|ECONNRESET/i.test(String(e))
+              ? "fetch-failed"
+              : "error",
+            detail: String(e).slice(0, 300),
+          });
         }
       }
     };
@@ -422,9 +515,28 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
 
         for (const it of items) {
           const sourceKey = courtToSourceKey(it.court ?? "");
-          // Not one of our three courts — neither new nor known, so it must
-          // not count towards the stop condition either way.
-          if (!sourceKey) { stats.skipped++; noCourtMatch++; continue; }
+          // Not one of our courts — neither new nor known, so it must not
+          // count towards the stop condition either way. It does get a ledger
+          // row: an unmapped court appearing in the newest cases is how a
+          // newly created court would announce itself, and a counter alone is
+          // how the last one stayed invisible.
+          if (!sourceKey) {
+            stats.skipped++;
+            noCourtMatch++;
+            if (it.court) unmatchedCourts.add(it.court);
+            await ctx.recordGap({
+              adapter: icelandicCourtsAdapter.key,
+              source: UNMAPPED_SOURCE,
+              officialUrl: verdictUrl(it.id),
+              court: it.court ?? null,
+              caseNumber: it.caseNumber ?? null,
+              title: it.title ?? null,
+              date: it.verdictDate ? new Date(it.verdictDate) : null,
+              reason: "unmapped-court",
+              detail: `no source key for court "${it.court ?? ""}"`,
+            });
+            continue;
+          }
 
           const officialUrl = verdictUrl(it.id);
           if (!recheckKnown && (await ctx.isKnown(sourceKey, officialUrl))) {
@@ -483,6 +595,95 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
     // a real fetch. Cases that still yield no text are reported individually,
     // because after this sweep they are the entire remaining difference
     // between what the feed claims and what we hold.
+    // Retry sweep (INGEST_MODE=retry): work the gap ledger and nothing else.
+    //
+    // This is the mode that actually closes the archive over time, and the
+    // reason the ledger exists. It touches no listings at all — every case it
+    // needs is already named in IngestGap — so it costs one detail fetch per
+    // outstanding case and is cheap enough to run on every scheduled pass.
+    // A case that succeeds is removed from the ledger by saveDocument; one
+    // that fails again has its attempt count bumped and comes back next time.
+    if (process.env.INGEST_MODE === "retry") {
+      const budget = Number(process.env.INGEST_MAX_CASES ?? 500);
+      const maxAttempts = Number(process.env.INGEST_GAP_MAX_ATTEMPTS ?? 8);
+
+      const gaps = (await ctx.openGaps([...icelandicCourtsAdapter.sourceKeys, UNMAPPED_SOURCE]))
+        // A case that has failed this many times is not going to start working
+        // because we asked once more; leave it in the ledger as the honest
+        // record of what this archive cannot reach, and spend the budget on
+        // cases that might still land.
+        .filter((g) => g.attempts < maxAttempts)
+        .slice(0, budget);
+
+      if (gaps.length === 0) {
+        ctx.log(`Retry sweep: no outstanding gaps under ${maxAttempts} attempts — nothing to do.`);
+        return stats;
+      }
+      ctx.log(`Retry sweep: ${gaps.length} outstanding gap(s) to re-attempt (budget ${budget})`);
+
+      for (const gap of gaps) {
+        // The ledger stores the case's URL, not its feed row, and the detail
+        // page carries everything a save needs — so ask the feed for the row
+        // by case number only when the court is one we could not map, where
+        // the mapping (not the text) was the problem.
+        const id = gap.officialUrl.split("/").pop() ?? "";
+        let text = "";
+        let meta: VerdictMeta = {
+          court: gap.court, caseNumber: gap.caseNumber, title: null, verdictDate: null, keywords: [],
+        };
+        try {
+          const fetched = await fetchVerdict(ctx, gap.officialUrl);
+          text = fetched.text;
+          // Prefer what the page says now; fall back to what the ledger
+          // recorded when it was first seen.
+          meta = {
+            court: fetched.meta.court ?? gap.court,
+            caseNumber: fetched.meta.caseNumber ?? gap.caseNumber,
+            title: fetched.meta.title,
+            verdictDate: fetched.meta.verdictDate,
+            keywords: fetched.meta.keywords,
+          };
+        } catch (e) {
+          stats.errors++;
+          stats.errorSample = stats.errorSample ?? String(e);
+          await ctx.recordGap({
+            adapter: icelandicCourtsAdapter.key,
+            source: gap.source,
+            officialUrl: gap.officialUrl,
+            court: gap.court,
+            caseNumber: gap.caseNumber,
+            reason: "fetch-failed",
+            detail: String(e).slice(0, 300),
+          });
+          continue;
+        }
+
+        const prefetched = new Map<string, string>();
+        if (text) prefetched.set(gap.officialUrl, text);
+        await processItems([{ id, ...meta }], prefetched);
+      }
+
+      const left = await ctx.openGaps([...icelandicCourtsAdapter.sourceKeys, UNMAPPED_SOURCE]);
+      ctx.log(`Retry sweep done: ${stats.indexed} recovered, ${left.length} gap(s) still open`);
+      return stats;
+    }
+
+    // Gap sweep (INGEST_MODE=gaps): walks the feed court by court and fetches
+    // only what is missing. This is what finishes an archive after a backfill
+    // has left a tail behind — the weekly `recent` sweep stops after a run of
+    // already-known cases, so it can never reach back to an older gap.
+    //
+    // Walks court by court rather than the whole feed at once. That is not a
+    // tidiness choice: the unfiltered search will not paginate past roughly
+    // page 3,081, so no single unfiltered walk can reach the end of a 43k
+    // archive. Each per-court filter is well inside that window.
+    //
+    // Resumable. Each court keeps its own cursor (key "gaps:<filter>"),
+    // persisted after every page, so a run cut short by a platform timeout
+    // resumes where it stopped instead of re-walking from page 1 — which is
+    // what made a full sweep something nobody could finish in one sitting.
+    // A court that reaches the end wraps back to page 1, so repeated runs
+    // keep re-verifying the archive rather than going quiet.
     if (process.env.INGEST_MODE === "gaps") {
       const known = new Set(
         (
@@ -491,6 +692,18 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
             select: { officialUrl: true },
           })
         ).map((d) => d.officialUrl)
+      );
+
+      // Cases the ledger has already given up on. Without this the sweep
+      // re-fetches every hopeless case on every pass, spending the
+      // rate-limited detail-page budget on the one set of cases guaranteed
+      // not to yield anything — which is what stops a repeated sweep from
+      // converging. They stay in the ledger; they just stop costing a fetch.
+      const maxAttempts = Number(process.env.INGEST_GAP_MAX_ATTEMPTS ?? 8);
+      const exhausted = new Set(
+        (await ctx.openGaps([...icelandicCourtsAdapter.sourceKeys, UNMAPPED_SOURCE]))
+          .filter((g) => g.attempts >= maxAttempts)
+          .map((g) => g.officialUrl)
       );
 
       // INGEST_COURT names one filter (e.g. hd-reykjavik) to sweep just that
@@ -502,17 +715,38 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
         ctx.log(`INGEST_COURT="${courtEnv}" matches no known court filter. Known: ${COURT_FILTERS.map((c) => c.filter).join(", ")}`);
         return stats;
       }
-      ctx.log(`Gap sweep over ${targets.length} court(s); ${known.size} cases already stored`);
 
-      const stillEmpty: string[] = [];
+      // Total list pages this run may walk, across all courts. Unbounded by
+      // default (a full sweep is the point); set INGEST_MAX_PAGES to fit the
+      // sweep into a scheduled run's window and let the cursors carry it over.
+      let pageBudget = Number(process.env.INGEST_MAX_PAGES ?? Infinity);
+      ctx.log(
+        `Gap sweep over ${targets.length} court(s); ${known.size} cases already stored` +
+          (exhausted.size ? `; ${exhausted.size} written off after ${maxAttempts} attempts` : "") +
+          (Number.isFinite(pageBudget) ? `; page budget ${pageBudget}` : "")
+      );
 
       for (const target of targets) {
+        if (pageBudget <= 0) {
+          ctx.log(`Page budget spent — remaining courts resume from their cursors next run.`);
+          break;
+        }
+
+        const cursorKey = `gaps:${target.filter}`;
+        const saved = await prisma.ingestCursor.findUnique({ where: { key: cursorKey } });
+        let page = Number(process.env.INGEST_START_PAGE ?? saved?.nextPage ?? 1);
+        const saveCursor = (next: number) =>
+          prisma.ingestCursor.upsert({
+            where: { key: cursorKey },
+            create: { key: cursorKey, nextPage: next },
+            update: { nextPage: next },
+          });
+
         let seen = 0;
         let missingHere = 0;
-        let page = 1;
-        const lastPage = Number(process.env.INGEST_MAX_PAGES ?? Infinity);
+        let wrapped = false;
 
-        while (page <= lastPage) {
+        while (pageBudget > 0) {
           let items: any[] = [];
           try {
             const data = await gql(LIST_QUERY, {
@@ -523,31 +757,45 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
               },
             });
             items = data?.webVerdicts?.items ?? [];
-            if (page === 1) ctx.log(`${target.name}: feed reports ${data?.webVerdicts?.total ?? "?"} cases`);
+            if (seen === 0) ctx.log(`${target.name}: feed reports ${data?.webVerdicts?.total ?? "?"} cases (from page ${page})`);
           } catch (e) {
             stats.errors++;
             stats.errorSample = stats.errorSample ?? String(e);
+            // Leave the cursor on the failing page so the next run retries it
+            // rather than stepping over a court's worth of cases.
             ctx.log(`  ${target.name} page ${page} failed: ${String(e).slice(0, 150)} — moving on`);
             break;
           }
-          if (items.length === 0) break;
-          seen += items.length;
 
-          const missing = items.filter((it) => !known.has(verdictUrl(it.id)));
-          for (const it of missing) {
+          if (items.length === 0) {
+            // End of this court. Wrap so the next run re-verifies it from the
+            // top instead of sitting past the end doing nothing forever.
+            await saveCursor(1);
+            wrapped = true;
+            break;
+          }
+
+          seen += items.length;
+          for (const it of items) {
+            const url = verdictUrl(it.id);
+            if (known.has(url) || exhausted.has(url)) continue;
             missingHere++;
             const before = stats.indexed;
             await processItems([it]);
-            if (stats.indexed === before && courtToSourceKey(it.court ?? "")) {
-              stillEmpty.push(`${it.court} ${it.caseNumber ?? it.id} (${verdictUrl(it.id)})`);
-            } else {
-              known.add(verdictUrl(it.id));
-            }
+            // Anything not indexed is now a row in the gap ledger (see
+            // processItems), so it is retryable rather than merely logged.
+            if (stats.indexed > before) known.add(verdictUrl(it.id));
           }
+
           page++;
+          pageBudget--;
+          await saveCursor(page);
         }
 
-        ctx.log(`${target.name}: ${seen} seen, ${missingHere} were missing`);
+        ctx.log(
+          `${target.name}: ${seen} seen this run, ${missingHere} were missing` +
+            (wrapped ? " — reached the end, cursor wrapped to page 1" : `, cursor at page ${page}`)
+        );
       }
 
       ctx.log(
@@ -557,10 +805,11 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
       if (unmatchedCourts.size) {
         ctx.log(`Courts with no source mapping (add them to courtToSourceKey): ${Array.from(unmatchedCourts).join(", ")}`);
       }
-      if (stillEmpty.length) {
-        ctx.log(`${stillEmpty.length} cases in the feed still yielded no text:`);
-        for (const c of stillEmpty.slice(0, 50)) ctx.log(`  ${c}`);
-        if (stillEmpty.length > 50) ctx.log(`  …and ${stillEmpty.length - 50} more`);
+      const open = await ctx.openGaps([...icelandicCourtsAdapter.sourceKeys, UNMAPPED_SOURCE]);
+      if (open.length) {
+        ctx.log(`${open.length} case(s) in the ledger still outstanding — run INGEST_MODE=retry to re-attempt them:`);
+        for (const g of open.slice(0, 50)) ctx.log(`  [${g.reason}, ${g.attempts}x] ${g.court ?? "?"} ${g.caseNumber ?? ""} ${g.officialUrl}`);
+        if (open.length > 50) ctx.log(`  …and ${open.length - 50} more`);
       }
       return stats;
     }

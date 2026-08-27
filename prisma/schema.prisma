@@ -241,6 +241,50 @@ model Source {
   totalAvailable  Int?      @map("total_available")
 }
 
+/// One case we know exists at the official source but do not hold.
+///
+/// Every adapter used to drop such a case with `stats.skipped++` and a line in
+/// the deploy log. That log is gone the moment the deployment rolls, so a case
+/// lost to a one-off 503 was indistinguishable from a case that genuinely has
+/// no extractable text — and nothing ever went back for either. That is the
+/// whole reason the archive stalls a few hundred cases short of the feed's own
+/// totals instead of finishing.
+///
+/// A gap is written whenever a case is seen in a listing but not stored, and
+/// cleared automatically the moment `saveDocument` stores that officialUrl. So
+/// the open rows are, by construction, exactly the work still outstanding —
+/// a retry queue and the explanation for the missing percent, in one table.
+model IngestGap {
+  id          String    @id @default(cuid())
+  /// The adapter that found it ("icelandic-courts"), for retrying by adapter.
+  adapter     String
+  /// The source key it would be stored under ("endurupptokudomur").
+  source      String
+  officialUrl String    @map("official_url")
+  court       String?
+  caseNumber  String?   @map("case_number")
+  title       String?
+  date        DateTime?
+  /// Why it is not stored. Kept to a small vocabulary so the counts mean
+  /// something: "no-text" (the page yielded no judgment body), "fetch-failed"
+  /// (the detail page could not be retrieved), "unmapped-court" (the feed
+  /// named a court no source covers), "error" (anything else).
+  reason      String
+  detail      String?
+  attempts    Int       @default(1)
+  firstSeenAt DateTime  @default(now()) @map("first_seen_at")
+  lastTriedAt DateTime  @default(now()) @map("last_tried_at")
+  /// Set when the case is finally stored. Resolved rows are kept rather than
+  /// deleted: "this case needed four attempts" is worth knowing when a source
+  /// starts degrading.
+  resolvedAt  DateTime? @map("resolved_at")
+
+  @@unique([source, officialUrl])
+  @@index([adapter, resolvedAt])
+  @@index([source, resolvedAt])
+  @@map("ingest_gaps")
+}
+
 /// Resume point for a paginated backfill, keyed by the court filter value
 /// used ("Hæstiréttur", "Landsréttur", "" for the unfiltered combined feed).
 /// Lets a run pick up where the last one left off without needing the next
@@ -260,6 +304,10 @@ model IngestCursor {
 model IngestionRun {
   id          String    @id @default(cuid())
   sourceKey   String    @map("source_key")
+  /// Which pass this was — "recent", "gaps", "retry", or null for an adapter
+  /// with only one mode. The Icelandic adapter runs three times in a single
+  /// scheduled pass and they are otherwise indistinguishable in the run list.
+  mode        String?
   startedAt   DateTime  @default(now()) @map("started_at")
   finishedAt  DateTime? @map("finished_at")
   status      String    @default("running") // running | success | failed

@@ -7,16 +7,22 @@ interface SourceProgress {
   group: string;
   ingested: number;
   total: number | null;
+  /** Missing cases the ingester has identified by URL and can retry. */
+  knownGaps: number;
+  /** Missing cases not accounted for at all — an unswept stretch of archive. */
+  unexplained: number | null;
 }
 interface GroupProgress {
   name: string;
   ingested: number;
   total: number | null;
+  knownGaps: number;
   sources: SourceProgress[];
 }
 interface ProgressData {
   ingested: number;
   total: number | null;
+  knownGaps: number;
   groups: GroupProgress[];
 }
 
@@ -26,11 +32,15 @@ function Bar({
   label,
   ingested,
   total,
+  knownGaps = 0,
+  unexplained = null,
   strong = false,
 }: {
   label: string;
   ingested: number;
   total: number | null;
+  knownGaps?: number;
+  unexplained?: number | null;
   strong?: boolean;
 }) {
   // A null total means the source has not told us how much there is to have.
@@ -38,6 +48,16 @@ function Bar({
   // so those render as a plain count with a muted, full-width track instead.
   const pct = total != null && total > 0 ? Math.min(100, (ingested / total) * 100) : null;
   const complete = pct != null && ingested >= total!;
+
+  // The shortfall, split by whether we can name it. A case in the gap ledger
+  // is identified and queued for retry; an unexplained one means a stretch of
+  // the archive has not been swept yet. Saying which is what turns "99.6%"
+  // from a mystery into a to-do list.
+  const gapPct = pct != null && total ? Math.min(100 - pct, (knownGaps / total) * 100) : 0;
+  const missing = total != null ? Math.max(0, total - ingested) : 0;
+  const shortfall: string[] = [];
+  if (knownGaps > 0) shortfall.push(`${nf(knownGaps)} identified and queued for retry`);
+  if (unexplained != null && unexplained > 0) shortfall.push(`${nf(unexplained)} not yet swept`);
 
   return (
     <div>
@@ -49,13 +69,31 @@ function Bar({
           {pct != null && <> · {pct.toFixed(1)}%</>}
         </span>
       </div>
-      <div className={`mt-1 w-full overflow-hidden rounded-full bg-paper ${strong ? "h-2.5" : "h-2"}`}>
+      <div
+        className={`mt-1 flex w-full overflow-hidden rounded-full bg-paper ${strong ? "h-2.5" : "h-2"}`}
+        title={
+          pct == null
+            ? "Not yet ingested, or the source does not publish a total"
+            : shortfall.length
+              ? `${nf(missing)} missing: ${shortfall.join(", ")}`
+              : undefined
+        }
+      >
         <div
-          className={`h-full rounded-full transition-all ${complete ? "bg-green-600" : "bg-accent"}`}
+          className={`h-full transition-all ${complete ? "bg-green-600" : "bg-accent"}`}
           style={{ width: `${pct ?? 100}%`, opacity: pct == null ? 0.25 : 1 }}
-          title={pct == null ? "Not yet ingested, or the source does not publish a total" : undefined}
         />
+        {/* Identified gaps get their own segment: still missing, but known
+            about and retryable, which is a different state from unswept. */}
+        {gapPct > 0 && (
+          <div className="h-full bg-amber-400 transition-all" style={{ width: `${gapPct}%` }} />
+        )}
       </div>
+      {shortfall.length > 0 && (
+        <div className="mt-1 text-[11px] text-inkSoft">
+          {nf(missing)} missing — {shortfall.join(", ")}
+        </div>
+      )}
     </div>
   );
 }
@@ -128,7 +166,13 @@ export function ProgressBars() {
 
       {open && (
         <div id="ingestion-progress-detail" className="border-t border-line px-4 pb-4 pt-3">
-          <Bar label="All sources" ingested={data.ingested} total={data.total} strong />
+          <Bar
+            label="All sources"
+            ingested={data.ingested}
+            total={data.total}
+            knownGaps={data.knownGaps}
+            strong
+          />
           <div className="mt-4 space-y-4">
             {data.groups.map((g) => (
               <div key={g.name}>
@@ -137,7 +181,14 @@ export function ProgressBars() {
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   {g.sources.map((s) => (
-                    <Bar key={s.key} label={s.name} ingested={s.ingested} total={s.total} />
+                    <Bar
+                      key={s.key}
+                      label={s.name}
+                      ingested={s.ingested}
+                      total={s.total}
+                      knownGaps={s.knownGaps}
+                      unexplained={s.unexplained}
+                    />
                   ))}
                 </div>
               </div>
