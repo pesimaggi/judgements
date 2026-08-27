@@ -16,7 +16,8 @@
     "db:setup-search": "tsx prisma/setup-search.ts",
     "db:deploy": "prisma db push --accept-data-loss && tsx prisma/setup-search.ts",
     "db:seed": "tsx prisma/seed.ts",
-    "ingest": "tsx src/ingestion/run.ts"
+    "ingest": "tsx src/ingestion/run.ts",
+    "ingest:all": "sh scripts/ingest-all.sh"
   },
   "dependencies": {
     "@prisma/client": "^5.18.0",
