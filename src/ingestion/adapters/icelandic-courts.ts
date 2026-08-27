@@ -164,16 +164,45 @@ export function courtToSourceKey(court: string): string | null {
   if (c.includes("hæstirétt") || c.includes("haestirett")) return "haestirettur";
   if (c.includes("landsrétt") || c.includes("landsrett")) return "landsrettur";
   if (c.includes("héraðsdóm") || c.includes("heradsdom")) return "heradsdomar";
+  if (c.includes("endurupptöku") || c.includes("endurupptoku")) return "endurupptokudomur";
   return null;
 }
 
 /**
- * Refreshes Source.totalAvailable for all three courts, powering the
- * front-page ingestion progress bar. Héraðsdómar has no single court-name
- * filter (it's dozens of individual district courts), so its total is
- * derived as the grand total minus the other two, rather than queried
- * directly. Best-effort: failures are logged and swallowed so a totals
- * hiccup never fails the ingestion run itself.
+ * The exact `court` strings this API accepts, which are not the strings it
+ * returns. Established by probing the live endpoint against the totals
+ * island.is itself displays:
+ *
+ *   "Hæstiréttur"        → 12,221   (accented; the ASCII form matches nothing)
+ *   "Landsrettur"        →  6,420   (ASCII; the accented form matches nothing)
+ *   "Endurupptokudomur"  →    102   (ASCII; the accented form matches nothing)
+ *
+ * There is no working filter value for the district courts — neither
+ * "Héraðsdómur"/"Heradsdomur", nor the plural, nor an individual court such as
+ * "Héraðsdómur Reykjavíkur" — so their total is derived by subtraction.
+ *
+ * The inconsistency is the whole point of hard-coding these: the obvious
+ * guess is wrong for three of the four courts, and a wrong guess does not
+ * error, it silently returns 0.
+ */
+const COURT_FILTERS: { key: string; filter: string }[] = [
+  { key: "haestirettur", filter: "Hæstiréttur" },
+  { key: "landsrettur", filter: "Landsrettur" },
+  { key: "endurupptokudomur", filter: "Endurupptokudomur" },
+];
+
+/**
+ * Refreshes Source.totalAvailable for each court, powering the front-page
+ * ingestion progress bar.
+ *
+ * A total of 0 is never written. The court filter answers 0 for a value it
+ * does not recognise rather than erroring, so a 0 means "we asked wrong", not
+ * "this court has no cases" — and storing it produced the "6,321 / 0" bar.
+ * Unknown is stored as null, which the UI renders as a count with no
+ * denominator instead of a wrong one.
+ *
+ * Best-effort: failures are logged and swallowed so a totals hiccup never
+ * fails the ingestion run itself.
  */
 export async function syncAvailableTotals(ctx: IngestContext): Promise<void> {
   try {
@@ -188,19 +217,27 @@ export async function syncAvailableTotals(ctx: IngestContext): Promise<void> {
       return Number(data?.webVerdicts?.total ?? 0);
     };
 
-    const [all, haestirettur, landsrettur] = await Promise.all([
-      totalFor([]),
-      totalFor(["Hæstiréttur"]),
-      totalFor(["Landsréttur"]),
-    ]);
-    const heradsdomar = Math.max(0, all - haestirettur - landsrettur);
+    const all = await totalFor([]);
+    const totals = new Map<string, number>();
+    for (const { key, filter } of COURT_FILTERS) totals.set(key, await totalFor([filter]));
 
-    await Promise.all([
-      prisma.source.updateMany({ where: { key: "haestirettur" }, data: { totalAvailable: haestirettur } }),
-      prisma.source.updateMany({ where: { key: "landsrettur" }, data: { totalAvailable: landsrettur } }),
-      prisma.source.updateMany({ where: { key: "heradsdomar" }, data: { totalAvailable: heradsdomar } }),
-    ]);
-    ctx.log(`Totals synced: haestirettur=${haestirettur} landsrettur=${landsrettur} heradsdomar=${heradsdomar} (all=${all})`);
+    // The district courts have no filter of their own, so they are whatever
+    // is left. This only holds while every *other* court has a real total;
+    // if one of them came back 0 the remainder would silently absorb it.
+    const named = COURT_FILTERS.reduce((sum, c) => sum + (totals.get(c.key) ?? 0), 0);
+    const everyNamedKnown = COURT_FILTERS.every((c) => (totals.get(c.key) ?? 0) > 0);
+    if (all > 0 && everyNamedKnown) totals.set("heradsdomar", all - named);
+
+    const written: string[] = [];
+    for (const [key, value] of totals) {
+      if (value <= 0) {
+        ctx.log(`  totals: ${key} came back ${value} — left unchanged rather than stored as a wrong denominator`);
+        continue;
+      }
+      await prisma.source.updateMany({ where: { key }, data: { totalAvailable: value } });
+      written.push(`${key}=${value}`);
+    }
+    ctx.log(`Totals synced: ${written.join(" ") || "(none)"} (all=${all})`);
   } catch (e) {
     ctx.log(`Totals sync failed (non-fatal): ${String(e).slice(0, 200)}`);
   }
@@ -209,7 +246,7 @@ export async function syncAvailableTotals(ctx: IngestContext): Promise<void> {
 export const icelandicCourtsAdapter: IngestionAdapter = {
   key: "icelandic-courts",
   name: "Icelandic courts (island.is/domar, GraphQL + embedded PDF)",
-  sourceKeys: ["haestirettur", "landsrettur", "heradsdomar"],
+  sourceKeys: ["haestirettur", "landsrettur", "heradsdomar", "endurupptokudomur"],
 
   async run(ctx: IngestContext): Promise<IngestStats> {
     const stats: IngestStats = { indexed: 0, skipped: 0, errors: 0 };
@@ -257,6 +294,10 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
     ctx.log(`Court filter: ${court.length ? court.join(", ") : "(none — all courts)"}${searchTerm ? `, searchTerm=${searchTerm}` : ""}`);
 
     let noCourtMatch = 0;
+    // The names, not just the count. Endurupptökudómur went missing for as
+    // long as it did because an unmapped court was only ever a number in a
+    // summary line; a new court in the feed should name itself instead.
+    const unmatchedCourts = new Set<string>();
     let noPdf = 0;
     let unchanged = 0;
 
@@ -266,7 +307,12 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
       for (const it of items) {
         try {
           const sourceKey = courtToSourceKey(it.court ?? "");
-          if (!sourceKey) { stats.skipped++; noCourtMatch++; continue; }
+          if (!sourceKey) {
+            stats.skipped++;
+            noCourtMatch++;
+            if (it.court) unmatchedCourts.add(it.court);
+            continue;
+          }
 
           const officialUrl = verdictUrl(it.id);
           const fullText = await fetchVerdictText(ctx, officialUrl);
@@ -361,6 +407,94 @@ export const icelandicCourtsAdapter: IngestionAdapter = {
       }
 
       ctx.log(`Skip breakdown: already-stored=${alreadyStored}, no-court-match=${noCourtMatch}, no-pdf-found=${noPdf}, unchanged=${unchanged}`);
+      if (unmatchedCourts.size) {
+        ctx.log(`Courts with no source mapping (add them to courtToSourceKey): ${Array.from(unmatchedCourts).join(", ")}`);
+      }
+      return stats;
+    }
+
+    // Gap sweep (INGEST_MODE=gaps): the mode that actually finishes the
+    // archive. The backfill sweeps ran to completion, but a case whose text
+    // could not be extracted was skipped and never revisited, and the weekly
+    // `recent` sweep stops after a run of known cases so it never reaches
+    // back to them. The result is a permanent shortfall against the feed's
+    // own totals — a couple of hundred cases across the courts, plus every
+    // Endurupptökudómur case for as long as courtToSourceKey ignored it.
+    //
+    // This walks the whole feed and fetches only what is missing. The list
+    // queries are the cheap part: they go over GraphQL without the polite
+    // delay that rate-limits detail pages, so a full pass over 43k cases in
+    // pages of 20 is minutes, and only the genuine gaps cost a real fetch.
+    //
+    // Cases that still yield no text are reported individually rather than
+    // just counted, because after this sweep they are the entire remaining
+    // difference between what the feed claims and what we hold.
+    if (process.env.INGEST_MODE === "gaps") {
+      const known = new Set(
+        (
+          await prisma.document.findMany({
+            where: { source: { in: icelandicCourtsAdapter.sourceKeys } },
+            select: { officialUrl: true },
+          })
+        ).map((d) => d.officialUrl)
+      );
+      ctx.log(`Gap sweep: ${known.size} cases already stored; walking the feed for the rest`);
+
+      const stillEmpty: string[] = [];
+      let seen = 0;
+      let page = Number(process.env.INGEST_START_PAGE ?? 1);
+      const lastPage = Number(process.env.INGEST_MAX_PAGES ?? Infinity);
+
+      while (page <= lastPage) {
+        let items: any[] = [];
+        let total = 0;
+        try {
+          const data = await gql(LIST_QUERY, {
+            input: {
+              page, searchTerm, court: court.length ? court : null, caseNumber: "",
+              keywords: null, caseCategories: null, caseTypes: null, laws: null,
+              dateFrom: null, dateTo: null, caseContact: "",
+            },
+          });
+          items = data?.webVerdicts?.items ?? [];
+          total = Number(data?.webVerdicts?.total ?? 0);
+          if (page === 1) ctx.log(`Feed reports ${total} cases for this filter`);
+        } catch (e) {
+          stats.errors++;
+          stats.errorSample = stats.errorSample ?? String(e);
+          ctx.log(`  page ${page} failed: ${String(e).slice(0, 150)} — stopping`);
+          break;
+        }
+        if (items.length === 0) break;
+        seen += items.length;
+
+        const missing = items.filter((it) => !known.has(verdictUrl(it.id)));
+        if (missing.length > 0) {
+          ctx.log(`Page ${page}: ${missing.length} of ${items.length} missing — fetching`);
+          for (const it of missing) {
+            const before = stats.indexed;
+            await processItems([it]);
+            if (stats.indexed === before && courtToSourceKey(it.court ?? "")) {
+              stillEmpty.push(`${it.court} ${it.caseNumber ?? it.id} (${verdictUrl(it.id)})`);
+            }
+          }
+        }
+        if (page % 100 === 0) ctx.log(`  …page ${page}, ${seen} cases seen, ${stats.indexed} newly indexed`);
+        page++;
+      }
+
+      ctx.log(
+        `Gap sweep done: ${seen} cases seen, ${stats.indexed} newly indexed, ` +
+          `no-court-match=${noCourtMatch}, no-text=${noPdf}`
+      );
+      if (unmatchedCourts.size) {
+        ctx.log(`Courts with no source mapping (add them to courtToSourceKey): ${Array.from(unmatchedCourts).join(", ")}`);
+      }
+      if (stillEmpty.length) {
+        ctx.log(`${stillEmpty.length} cases in the feed still yielded no text:`);
+        for (const c of stillEmpty.slice(0, 50)) ctx.log(`  ${c}`);
+        if (stillEmpty.length > 50) ctx.log(`  …and ${stillEmpty.length - 50} more`);
+      }
       return stats;
     }
 

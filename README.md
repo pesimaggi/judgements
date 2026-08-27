@@ -80,7 +80,7 @@ court that would return nothing).
 
 | Source | Status | Language stored |
 |---|---|---|
-| Hæstiréttur Íslands, Landsréttur, Héraðsdómar | live | Icelandic |
+| Hæstiréttur Íslands, Landsréttur, Héraðsdómar, Endurupptökudómur | live | Icelandic |
 | EFTA Court | live | English |
 | Umboðsmaður Alþingis | live | Icelandic |
 
@@ -191,6 +191,43 @@ Two further traps with the scheduled service:
 - **Config as code is per service.** If a service's config path is not set to
   `railway.ingest.json`, it falls back to `railway.json` — which starts the web
   app, not the ingest.
+
+### Finishing the Icelandic archive
+
+The backfill left a tail behind. A case whose text could not be extracted was
+skipped and never revisited, and the weekly `recent` sweep stops after a run of
+already-known cases, so it never reaches back to them. Endurupptökudómur was
+missing entirely: `courtToSourceKey` had no branch for it, so all ~102 of its
+cases were counted as "no court match" and dropped.
+
+`INGEST_MODE=gaps` walks the whole feed and fetches only what is missing:
+
+```
+sh scripts/ingest-all.sh icelandic-gaps
+```
+
+The list queries go over GraphQL without the polite delay that rate-limits
+detail pages, so a full pass over 43k cases in pages of 20 (the API caps
+`pageSize` there) is minutes, and only genuine gaps cost a real fetch. Cases
+that still yield no text are logged individually — after this sweep they are
+the entire remaining difference between the feed's totals and ours.
+
+**The court filter values are not the names the API returns.** They were
+established by probing the live endpoint against island.is's own displayed
+totals, and the obvious guess is wrong for three of the four courts — and
+returns 0 rather than erroring:
+
+| Filter value sent | Total | The accented/ASCII counterpart |
+|---|---|---|
+| `Hæstiréttur` | 12,221 | `Haestirettur` → 0 |
+| `Landsrettur` | 6,420 | `Landsréttur` → 0 |
+| `Endurupptokudomur` | 102 | `Endurupptökudómur` → 0 |
+| *(none works)* | — | Héraðsdómur, in any form → 0 |
+
+The district courts have no working filter, so their total is derived:
+43,222 − 12,221 − 6,420 − 102 = **24,479**. A total of 0 is never written to
+`Source.totalAvailable`, because 0 means "we asked wrong", not "this court has
+no cases" — storing it is what produced the `6,321 / 0` progress bar.
 
 ### Running ingestion
 
@@ -325,6 +362,7 @@ npm run ingest -- --adapter=citations
 | `INGEST_RECHECK_KNOWN=1` | recent mode | Re-fetch known cases so amendments are picked up |
 | `INGEST_MAX_PAGES` | both sweeps | List pages per run (10 cases each) |
 | `INGEST_COURT` | backfill | Restrict to one court |
+| `INGEST_MODE=gaps` | icelandic-courts | Walk the whole feed, fetch only what is missing |
 | `INGEST_PROBE=1` | efta-court | Report what eftacourt.int serves, ingest nothing |
 | `EFTA_FETCH_DOCUMENTS=1` | efta-court | Also fetch decision PDFs — see the robots.txt note above |
 | `EFTA_CASES_SITEMAP` | efta-court | Override the case sitemap URL |

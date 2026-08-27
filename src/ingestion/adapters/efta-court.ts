@@ -319,6 +319,13 @@ export const eftaCourtAdapter: IngestionAdapter = {
         `(EFTA_FETCH_DOCUMENTS=${fetchDocuments ? "1" : "unset"})`
     );
 
+    // The sitemap is the Court's own count of its register, so it is an exact
+    // denominator for the progress bar rather than an estimate.
+    await prisma.source.updateMany({
+      where: { key: "eftacourt" },
+      data: { totalAvailable: cases.length },
+    });
+
     // One query rather than 461: a case page is only re-fetched when the
     // sitemap says it changed since we last stored it. Pending cases get a
     // new lastmod whenever their court diary moves, so they still refresh.

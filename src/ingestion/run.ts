@@ -8,6 +8,7 @@
  * Schedule with cron / a worker in production; the MVP runs on demand.
  */
 import { prisma } from "@/lib/db";
+import { ALL_SOURCES } from "@/lib/sources";
 import { politeFetchText, saveDocument, isDocumentKnown, type IngestionAdapter, type IngestContext } from "./adapter";
 import { icelandicCourtsAdapter } from "./adapters/icelandic-courts";
 import { eftaCourtAdapter } from "./adapters/efta-court";
@@ -40,6 +41,20 @@ async function main() {
   }
   const adapter = ADAPTERS[adapterKey];
   console.log(`Running adapter: ${adapter.name}${dryRun ? " (dry run)" : ""}`);
+
+  // db:deploy runs `prisma db push` and the search setup, but not the seed, so
+  // a source added since the last seed has no Source row — and without one the
+  // progress and status pages, which read that table, cannot show it at all.
+  // Upserting here keeps the registry in src/lib/sources.ts as the authority.
+  for (const key of adapter.sourceKeys) {
+    const def = ALL_SOURCES.find((s) => s.key === key);
+    if (!def) continue;
+    await prisma.source.upsert({
+      where: { key: def.key },
+      update: { name: def.name, officialBaseUrl: def.officialBaseUrl },
+      create: { key: def.key, name: def.name, officialBaseUrl: def.officialBaseUrl },
+    });
+  }
 
   const run = await prisma.ingestionRun.create({ data: { sourceKey: adapter.key } });
 

@@ -7,6 +7,13 @@ export interface SourceDef {
   /** Heading this source appears under in the source panel. */
   group: string;
   /**
+   * The ingestion adapter that feeds this source (src/ingestion/run.ts's
+   * registry key). Several sources can share one adapter, as the Icelandic
+   * courts do. Used to show a source the runs that actually produced it —
+   * IngestionRun rows are keyed by adapter, not by source.
+   */
+  adapterKey: string;
+  /**
    * "live"  — ingested and searchable; offered in the search UI.
    * "pilot" — the adapter is still being built. Registered here so ingestion,
    *   the search API and the schema all treat the key as legitimate, but kept
@@ -28,6 +35,7 @@ export const ALL_SOURCES: SourceDef[] = [
     officialBaseUrl: "https://island.is/domar",
     language: "is",
     group: ICELANDIC_COURTS,
+    adapterKey: "icelandic-courts",
     status: "live",
   },
   {
@@ -36,6 +44,7 @@ export const ALL_SOURCES: SourceDef[] = [
     officialBaseUrl: "https://island.is/domar",
     language: "is",
     group: ICELANDIC_COURTS,
+    adapterKey: "icelandic-courts",
     status: "live",
   },
   {
@@ -44,6 +53,20 @@ export const ALL_SOURCES: SourceDef[] = [
     officialBaseUrl: "https://island.is/domar",
     language: "is",
     group: ICELANDIC_COURTS,
+    adapterKey: "icelandic-courts",
+    status: "live",
+  },
+  {
+    // The court that decides whether a concluded case may be reopened. Small
+    // (about 100 cases) but it is a distinct court in the island.is feed, and
+    // was silently dropped for as long as courtToSourceKey had no branch for
+    // it — every one of its cases was counted as "no court match" and skipped.
+    key: "endurupptokudomur",
+    name: "Endurupptökudómur",
+    officialBaseUrl: "https://island.is/domar",
+    language: "is",
+    group: ICELANDIC_COURTS,
+    adapterKey: "icelandic-courts",
     status: "live",
   },
   {
@@ -57,6 +80,7 @@ export const ALL_SOURCES: SourceDef[] = [
     officialBaseUrl: "https://eftacourt.int",
     language: "en",
     group: EEA_EFTA,
+    adapterKey: "efta-court",
     status: "live",
   },
   {
@@ -68,6 +92,7 @@ export const ALL_SOURCES: SourceDef[] = [
     officialBaseUrl: "https://umbodsmadur.is",
     language: "is",
     group: OVERSIGHT,
+    adapterKey: "umbodsmadur",
     status: "live",
   },
 ];

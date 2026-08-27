@@ -16,6 +16,7 @@
 # Usage:
 #   sh scripts/ingest-all.sh                  # every adapter, in order
 #   sh scripts/ingest-all.sh efta-court       # just one
+#   sh scripts/ingest-all.sh icelandic-gaps   # finish the Icelandic archive
 #   sh scripts/ingest-all.sh efta-court umbodsmadur
 #
 # Per-adapter knobs, all overridable as Railway service variables. These are
@@ -55,6 +56,14 @@ for adapter in $ADAPTERS; do
       EFTA_FETCH_DOCUMENTS="${EFTA_FETCH_DOCUMENTS:-1}" \
       INGEST_MAX_CASES="${EFTA_MAX_CASES:-1000}" \
         npm run ingest -- --adapter=efta-court
+      ;;
+    icelandic-gaps)
+      # Not a separate adapter: the Icelandic one in gap mode, which walks the
+      # whole feed and fetches only what is missing. This is what finishes the
+      # archive after a backfill has left a tail of cases behind. Deliberately
+      # not in DEFAULT_ADAPTERS — it is a one-off, not weekly work.
+      INGEST_MODE=gaps \
+        npm run ingest -- --adapter=icelandic-courts
       ;;
     umbodsmadur)
       INGEST_MAX_CASES="${UMBODSMADUR_MAX_CASES:-600}" \
