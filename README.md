@@ -102,21 +102,29 @@ number is always read off the page.
 **What is stored, and the robots.txt question.** The Court publishes each
 decision as a PDF per language, and eftacourt.int's robots.txt disallows
 `/download/` and `/wp-content/uploads/` for every user agent — which is exactly
-where those PDFs live. So by default this adapter ingests the case **record**
-(metadata, subjects, the Court's summary, and the documents as links) and does
-not fetch the PDFs. That gives a complete, searchable EFTA case register
-without crawling a path the Court has asked crawlers to stay out of, but it is
-not full judgment text.
+where those PDFs live.
 
-`EFTA_FETCH_DOCUMENTS=1` additionally downloads the English decision PDF per
-case and appends its text, giving true full-text search. It is off by default
-deliberately — turn it on only with the Court's agreement, or on your own
-considered reading of that robots.txt.
+The adapter therefore keeps that step behind `EFTA_FETCH_DOCUMENTS=1`, off by
+default, so a clone of this repo does not crawl a disallowed path by accident.
+Without it, a case is stored as its **record** — metadata, subjects, the
+Court's own summary, and the documents as links — which is a complete,
+searchable case register but not judgment text. With it, the English decision
+PDF is downloaded per case and its text appended, giving true full-text search.
+
+**This deployment runs with it on**: the flag is set explicitly in
+`railway.ingest.json`, so the choice is recorded where it is made rather than
+buried in a default. EFTA case law is public and the corpus is ~460 documents,
+fetched once and then only when the Court republishes one. If you fork this,
+that is your decision to make again, not one to inherit.
 
 ```
 INGEST_PROBE=1 npm run ingest -- --adapter=efta-court   # what the site serves now
-npm run ingest -- --adapter=efta-court                  # the whole register
+EFTA_FETCH_DOCUMENTS=1 npm run ingest -- --adapter=efta-court   # the whole register
 ```
+
+The first full run fetches two documents per case at the shared
+`INGEST_DELAY_MS` and takes roughly 25 minutes; later runs skip everything the
+sitemap says is unchanged and finish in seconds.
 
 Runs are incremental: a case page is only re-fetched when the sitemap's
 `lastmod` is newer than the last time we stored it, so pending cases still
