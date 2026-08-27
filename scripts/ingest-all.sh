@@ -16,7 +16,19 @@
 # Usage:
 #   sh scripts/ingest-all.sh                  # every adapter, in order
 #   sh scripts/ingest-all.sh efta-court       # just one
+#   sh scripts/ingest-all.sh icelandic-gaps   # finish the Icelandic archive
 #   sh scripts/ingest-all.sh efta-court umbodsmadur
+#
+# On Railway there is no shell to type any of that into: a service runs its
+# start command and nothing else. So the same selection can be made with the
+# INGEST_ADAPTERS variable, which the dashboard can set without a code change:
+#
+#   INGEST_ADAPTERS="icelandic-gaps"          # one-off, finish the archive
+#   INGEST_ADAPTERS="efta-court umbodsmadur"  # just the new sources
+#   (unset)                                   # every adapter, in order
+#
+# Command-line arguments win over the variable, so a local run can still
+# override whatever the service has set.
 #
 # Per-adapter knobs, all overridable as Railway service variables. These are
 # read here rather than written inline into the start command, because an
@@ -35,7 +47,9 @@ set -u
 # cite, so lagasafn must have run first; and anything slow should come last, so
 # a deploy that gets cut short has already done the cheap sources.
 DEFAULT_ADAPTERS="icelandic-courts efta-court umbodsmadur lagasafn citations"
-ADAPTERS=${*:-$DEFAULT_ADAPTERS}
+ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
+
+echo "Running adapters: $ADAPTERS"
 
 failed=""
 
@@ -55,6 +69,14 @@ for adapter in $ADAPTERS; do
       EFTA_FETCH_DOCUMENTS="${EFTA_FETCH_DOCUMENTS:-1}" \
       INGEST_MAX_CASES="${EFTA_MAX_CASES:-1000}" \
         npm run ingest -- --adapter=efta-court
+      ;;
+    icelandic-gaps)
+      # Not a separate adapter: the Icelandic one in gap mode, which walks the
+      # whole feed and fetches only what is missing. This is what finishes the
+      # archive after a backfill has left a tail of cases behind. Deliberately
+      # not in DEFAULT_ADAPTERS — it is a one-off, not weekly work.
+      INGEST_MODE=gaps \
+        npm run ingest -- --adapter=icelandic-courts
       ;;
     umbodsmadur)
       INGEST_MAX_CASES="${UMBODSMADUR_MAX_CASES:-600}" \

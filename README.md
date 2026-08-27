@@ -80,7 +80,7 @@ court that would return nothing).
 
 | Source | Status | Language stored |
 |---|---|---|
-| Hæstiréttur Íslands, Landsréttur, Héraðsdómar | live | Icelandic |
+| Hæstiréttur Íslands, Landsréttur, Héraðsdómar, Endurupptökudómur | live | Icelandic |
 | EFTA Court | live | English |
 | Umboðsmaður Alþingis | live | Icelandic |
 
@@ -161,6 +161,127 @@ INGEST_MAX_CASES=20000 npm run ingest -- --adapter=umbodsmadur
 At the shared `INGEST_DELAY_MS` that is roughly five hours for the full
 archive. It is safe to interrupt and re-run — anything already stored is
 skipped on the next pass.
+
+### Two ingest services: scheduled and on demand
+
+There are two Railway config files for ingestion, and the difference matters:
+
+| File | `cronSchedule` | When it runs |
+|---|---|---|
+| `railway.ingest.json` | `0 6 * * 1` | **Only** Mondays 06:00 UTC |
+| `railway.ingest-once.json` | none | Every time you deploy it |
+
+**A Railway service with a `cronSchedule` does not run when you redeploy it.**
+Redeploying builds the image; the start command then waits for the next
+scheduled time. So a redeploy on a Thursday does nothing at all until the
+following Monday — no ingestion and no runtime logs, which reads exactly like
+a broken deploy but is the schedule working as designed.
+
+`railway.ingest-once.json` is the on-demand runner: no cron, so deploying it
+runs ingestion immediately, and `restartPolicyType: NEVER` stops it from
+looping. Point a second Railway service at this file (Settings → Config as
+code) and redeploy that service whenever you want a run now.
+
+Two further traps with the scheduled service:
+
+- **A run that never exits blocks every run after it.** Railway skips a
+  scheduled execution if the previous one is still going, so a deployment stuck
+  on `Active` silently stops the cron indefinitely. Check for one before
+  assuming the schedule is broken.
+- **Config as code is per service.** If a service's config path is not set to
+  `railway.ingest.json`, it falls back to `railway.json` — which starts the web
+  app, not the ingest.
+
+### Finishing the Icelandic archive
+
+The backfill left a tail behind. A case whose text could not be extracted was
+skipped and never revisited, and the weekly `recent` sweep stops after a run of
+already-known cases, so it never reaches back to them. Endurupptökudómur was
+missing entirely: `courtToSourceKey` had no branch for it, so all ~102 of its
+cases were counted as "no court match" and dropped.
+
+`INGEST_MODE=gaps` walks the feed court by court and fetches only what is
+missing:
+
+```
+sh scripts/ingest-all.sh icelandic-gaps                    # every court
+INGEST_COURT=hd-reykjavik npm run ingest -- --adapter=icelandic-courts   # one
+```
+
+The list queries go over GraphQL without the polite delay that rate-limits
+detail pages, so a full pass is minutes and only genuine gaps cost a real
+fetch. Cases that still yield no text are logged individually — after this
+sweep they are the entire remaining difference between the feed's totals and
+ours.
+
+#### The court filter values are slugs
+
+They are not the court names the API returns, and a value it does not
+recognise answers 0 rather than erroring — so a wrong guess is silent. The
+values were found by reading what island.is/domar's own page sends: filtering
+the UI to one district court issues
+`webVerdicts(input: { court: ["hd-reykjavik"] })`.
+
+| Filter value | Total | Court |
+|---|---|---|
+| `Hæstiréttur` | 12,221 | Hæstiréttur — the one court keyed by its display name; the `haestirettur` slug matches nothing |
+| `landsrettur` | 6,420 | Landsréttur |
+| `endurupptokudomur` | 102 | Endurupptökudómur |
+| `hd-reykjavik` | 13,050 | Héraðsdómur Reykjavíkur |
+| `hd-reykjanes` | 5,295 | Héraðsdómur Reykjaness |
+| `hd-sudurland` | 1,918 | Héraðsdómur Suðurlands |
+| `hd-nordurland-eystra` | 1,797 | Héraðsdómur Norðurlands eystra |
+| `hd-vesturland` | 914 | Héraðsdómur Vesturlands |
+| `hd-austurland` | 662 | Héraðsdómur Austurlands |
+| `hd-vestfirdir` | 469 | Héraðsdómur Vestfjarða |
+| `hd-nordurland-vestra` | 374 | Héraðsdómur Norðurlands vestra |
+
+These eleven partition the feed exactly: they sum to 43,222, which is what the
+unfiltered feed reports. `syncAvailableTotals` checks that on every run and
+says so when it stops holding, because that means a court has been added or a
+slug has changed and the progress bars are about to be quietly wrong. Nothing
+is derived by subtraction any more — that is what let one wrong filter value
+corrupt a second court's figure. A total of 0 is never stored: 0 means "we
+asked wrong", not "this court has no cases", and storing it is what produced
+the `6,321 / 0` bar.
+
+Sweeping per court is also what makes a complete pass possible. The unfiltered
+search will not paginate past roughly page 3,081 — the classic fixed
+result-window symptom — so no single unfiltered walk can reach the end of a 43k
+archive. Every filter above sits comfortably inside that window; the largest,
+`hd-reykjavik`, is about 653 pages of 20 (the API caps `pageSize` at 20).
+
+### Running ingestion on Railway
+
+Railway gives a service no shell — it runs its start command and nothing else.
+So there are three ways to run a particular ingest, in rough order of
+convenience:
+
+**1. Set `INGEST_ADAPTERS` on the on-demand service and redeploy.** The
+service pointed at `railway.ingest-once.json` has no `cronSchedule`, so
+deploying it runs immediately. Set the variable in the dashboard to pick what
+runs; no code change and no push:
+
+| `INGEST_ADAPTERS` | Runs |
+|---|---|
+| *(unset)* | every adapter, in order |
+| `icelandic-gaps` | the gap sweep that finishes the Icelandic archive |
+| `efta-court umbodsmadur` | just those two |
+
+**2. `railway run` — from a local checkout.** This runs on *your* machine with
+the service's variables injected, writing to the same Railway database. Good
+for the long one-offs, because nothing about a deploy can time it out:
+
+```
+railway run sh scripts/ingest-all.sh icelandic-gaps
+```
+
+**3. `railway ssh` — a shell in a running container.** Note this only works
+against a service that is actually running; a cron service sits idle between
+its scheduled fires, so there is usually nothing to attach to.
+
+Command-line arguments take precedence over `INGEST_ADAPTERS`, so a local run
+can override whatever the service has set.
 
 ### Running ingestion
 
@@ -295,6 +416,8 @@ npm run ingest -- --adapter=citations
 | `INGEST_RECHECK_KNOWN=1` | recent mode | Re-fetch known cases so amendments are picked up |
 | `INGEST_MAX_PAGES` | both sweeps | List pages per run (10 cases each) |
 | `INGEST_COURT` | backfill | Restrict to one court |
+| `INGEST_ADAPTERS` | ingest-all.sh | Which adapters to run, space-separated (Railway-settable) |
+| `INGEST_MODE=gaps` | icelandic-courts | Walk the feed court by court, fetch only what is missing |
 | `INGEST_PROBE=1` | efta-court | Report what eftacourt.int serves, ingest nothing |
 | `EFTA_FETCH_DOCUMENTS=1` | efta-court | Also fetch decision PDFs — see the robots.txt note above |
 | `EFTA_CASES_SITEMAP` | efta-court | Override the case sitemap URL |
