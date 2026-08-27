@@ -46,6 +46,9 @@ const HEADING_WORDS = [
   "Niðurstöður", "Forsendur", "Kröfur", "Kröfugerð", "Sératkvæði", "Reifun",
   "Útdráttur", "Ágrip", "Inngangur", "Refsing", "Sakarkostnaður",
   "Málskostnaður", "Áfrýjun", "Sönnunarfærsla", "Lagarök", "Ákæra",
+  // The two kinds of document Umboðsmaður Alþingis issues. Each heads the
+  // body of its record, which is what keeps the summary above it separate.
+  "Álit", "Bréf",
   // English, for the EFTA Court records composed by its adapter — that source
   // publishes in English and has no Icelandic heading to key off.
   "Summary", "Case details", "Documents",

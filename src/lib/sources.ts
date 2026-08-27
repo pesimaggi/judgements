@@ -18,6 +18,7 @@ export interface SourceDef {
 
 const ICELANDIC_COURTS = "Icelandic courts";
 const EEA_EFTA = "EEA / EFTA";
+const OVERSIGHT = "Eftirlit og kærunefndir";
 
 /** Every source the system knows about, live or not. */
 export const ALL_SOURCES: SourceDef[] = [
@@ -56,6 +57,17 @@ export const ALL_SOURCES: SourceDef[] = [
     officialBaseUrl: "https://eftacourt.int",
     language: "en",
     group: EEA_EFTA,
+    status: "live",
+  },
+  {
+    // Not a court: the Ombudsman issues álit (formal opinions) and bréf
+    // (letters closing a case). Both are stored, and which one a document is
+    // shows as the heading over its body.
+    key: "umbodsmadur",
+    name: "Umboðsmaður Alþingis",
+    officialBaseUrl: "https://umbodsmadur.is",
+    language: "is",
+    group: OVERSIGHT,
     status: "live",
   },
 ];
