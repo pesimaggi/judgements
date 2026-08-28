@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "cronSchedule": "0 */6 * * *",
+    "cronSchedule": "0 */3 * * *",
     "startCommand": "npm run db:deploy && npm run ingest:all",
     "restartPolicyType": "NEVER"
   }

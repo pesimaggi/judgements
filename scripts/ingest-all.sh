@@ -18,12 +18,14 @@
 #   sh scripts/ingest-all.sh efta-court       # just one
 #   sh scripts/ingest-all.sh icelandic-gaps   # finish the Icelandic archive
 #   sh scripts/ingest-all.sh stjornarradid-backfill   # carry the boards forward
+#   sh scripts/ingest-all.sh stjornarradid-priority   # the board being rushed
 #   sh scripts/ingest-all.sh efta-court umbodsmadur
 #
 # On Railway there is no shell to type any of that into: a service runs its
 # start command and nothing else. So the same selection can be made with the
 # INGEST_ADAPTERS variable, which the dashboard can set without a code change:
 #
+#   INGEST_ADAPTERS="stjornarradid-priority"  # only the board being rushed
 #   INGEST_ADAPTERS="icelandic-gaps"          # one-off, finish the archive
 #   INGEST_ADAPTERS="icelandic-retry"         # just re-attempt known gaps
 #   INGEST_ADAPTERS="logretta ulfljotur"      # just the new sources
@@ -47,23 +49,32 @@
 #   EFTA_MAX_CASES          default 1000  — the register is ~461 cases
 #   UMBODSMADUR_MAX_CASES   default 600   — full backfill is ~11,455; raise for a one-off
 #   STJORNARRADID_CASES     default 400   — cases the incremental pass may fetch per run
-#   STJORNARRADID_BACKFILL  default 1500  — cases the rolling backfill may fetch per run
+#   STJORNARRADID_BACKFILL  default 900   — cases the rolling backfill may fetch per
+#                                           run, shared across all 41 boards in list
+#                                           order; the priority pass below has its own
+#   STJORNARRADID_PRIORITY  default "kaerunefnd-husamala" — board key(s), comma
+#                                           separated, backfilled ahead of the rest;
+#                                           set empty to drop the priority pass
+#   STJORNARRADID_PRIORITY_CASES  default 1200 — cases that pass may fetch per run
 #   STJORNARRADID_RETRY     default 300   — cases the retry sweep re-attempts
 #   STJORNARRADID_BOARDS    unset         — comma-separated board keys; all 41 by default
 #   LOGRETTA_FETCH_PDFS     unset         — see README on the Prismic CDN's robots.txt
 #
 set -u
 
-# Order matters on two counts: citations links judgments to the provisions they
-# cite, so lagasafn must have run first; and anything slow should come last, so
-# a deploy that gets cut short has already done the cheap sources.
+# Order matters on three counts: citations links judgments to the provisions
+# they cite, so lagasafn must have run first; anything slow should come last, so
+# a deploy that gets cut short has already done the cheap sources; and the
+# priority board comes first, ahead of even the cheap sources, because being
+# first is the whole point of it — a run cut short must not be a run where the
+# board somebody is waiting on got nothing.
 #
 # icelandic-retry and icelandic-gaps are in the default chain deliberately.
 # Completeness used to depend on someone remembering to set INGEST_ADAPTERS by
 # hand, which is why Endurupptökudómur sat at 2 of 102 cases: the sweep that
 # would have found the other 100 was opt-in and nobody opted in. A source that
 # only closes its gaps when prompted does not close them.
-DEFAULT_ADAPTERS="icelandic-courts icelandic-retry icelandic-gaps efta-court umbodsmadur stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur lagasafn citations"
+DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps efta-court umbodsmadur stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur lagasafn citations"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"
@@ -136,6 +147,32 @@ for adapter in $ADAPTERS; do
       INGEST_MAX_CASES="${STJORNARRADID_RETRY:-300}" \
         npm run ingest -- --adapter=stjornarradid
       ;;
+    stjornarradid-priority)
+      # One board pulled to the front of the queue. The rolling backfill below
+      # walks ADR_BOARDS in order and shares one case budget across all 41, so
+      # a board partway down the list gets nothing until the ones above it are
+      # complete: Kærunefnd húsamála (2,013 cases) sits behind Kærunefnd
+      # útlendingamála (4,846) and Almannatryggingar (3,453), i.e. days of
+      # firings before its first case would be fetched. This pass gives it its
+      # own budget, ahead of everything else, so it finishes in a handful of
+      # runs instead.
+      #
+      # It shares the per-board cursor with the rolling backfill, so nothing is
+      # re-walked and the board keeps its progress when the pass is dropped.
+      # Set STJORNARRADID_PRIORITY empty (from the Railway dashboard, no code
+      # change) once the board is complete — and consider restoring
+      # STJORNARRADID_BACKFILL to 1500, which is what it was before this pass
+      # took a slice of the run's time.
+      priority_boards="${STJORNARRADID_PRIORITY-kaerunefnd-husamala}"
+      if [ -z "$priority_boards" ]; then
+        echo "STJORNARRADID_PRIORITY is empty — no priority board this run."
+      else
+        INGEST_MODE=backfill \
+        STJORNARRADID_BOARDS="$priority_boards" \
+        INGEST_MAX_CASES="${STJORNARRADID_PRIORITY_CASES:-1200}" \
+          npm run ingest -- --adapter=stjornarradid
+      fi
+      ;;
     stjornarradid-backfill)
       # The rolling backfill. ~23,700 rulings at the polite fetch rate is far
       # more than one run, so it is bounded and resumable: every board keeps
@@ -146,7 +183,7 @@ for adapter in $ADAPTERS; do
       # with INGEST_ADAPTERS="stjornarradid-backfill" and a much larger
       # STJORNARRADID_BACKFILL — see the README.
       INGEST_MODE=backfill \
-      INGEST_MAX_CASES="${STJORNARRADID_BACKFILL:-1500}" \
+      INGEST_MAX_CASES="${STJORNARRADID_BACKFILL:-900}" \
         npm run ingest -- --adapter=stjornarradid
       ;;
     logretta)
