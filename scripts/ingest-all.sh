@@ -17,6 +17,7 @@
 #   sh scripts/ingest-all.sh                  # every adapter, in order
 #   sh scripts/ingest-all.sh efta-court       # just one
 #   sh scripts/ingest-all.sh icelandic-gaps   # finish the Icelandic archive
+#   sh scripts/ingest-all.sh stjornarradid-backfill   # carry the boards forward
 #   sh scripts/ingest-all.sh efta-court umbodsmadur
 #
 # On Railway there is no shell to type any of that into: a service runs its
@@ -45,6 +46,10 @@
 #   EFTA_FETCH_DOCUMENTS    default 1     — see README on eftacourt.int robots.txt
 #   EFTA_MAX_CASES          default 1000  — the register is ~461 cases
 #   UMBODSMADUR_MAX_CASES   default 600   — full backfill is ~11,455; raise for a one-off
+#   STJORNARRADID_CASES     default 400   — cases the weekly incremental pass may fetch
+#   STJORNARRADID_BACKFILL  default 1500  — cases the rolling backfill may fetch per run
+#   STJORNARRADID_RETRY     default 300   — cases the retry sweep re-attempts
+#   STJORNARRADID_BOARDS    unset         — comma-separated board keys; all 41 by default
 #   LOGRETTA_FETCH_PDFS     unset         — see README on the Prismic CDN's robots.txt
 #
 set -u
@@ -58,7 +63,7 @@ set -u
 # hand, which is why Endurupptökudómur sat at 2 of 102 cases: the sweep that
 # would have found the other 100 was opt-in and nobody opted in. A source that
 # only closes its gaps when prompted does not close them.
-DEFAULT_ADAPTERS="icelandic-courts icelandic-retry icelandic-gaps efta-court umbodsmadur logretta ulfljotur lagasafn citations"
+DEFAULT_ADAPTERS="icelandic-courts icelandic-retry icelandic-gaps efta-court umbodsmadur stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur lagasafn citations"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"
@@ -114,6 +119,35 @@ for adapter in $ADAPTERS; do
     umbodsmadur)
       INGEST_MAX_CASES="${UMBODSMADUR_MAX_CASES:-600}" \
         npm run ingest -- --adapter=umbodsmadur
+      ;;
+    stjornarradid)
+      # The weekly pickup: each of the 41 boards' newest pages, stopping once
+      # a run of already-stored rulings appears. A quiet week is 41 list
+      # queries and no detail fetches at all.
+      INGEST_MODE=recent \
+      INGEST_MAX_CASES="${STJORNARRADID_CASES:-400}" \
+        npm run ingest -- --adapter=stjornarradid
+      ;;
+    stjornarradid-retry)
+      # The gap ledger and nothing else — one fetch per ruling we know exists
+      # but could not store. Cheap, and it is what recovers a case lost to a
+      # one-off 5xx rather than leaving it missing for good.
+      INGEST_MODE=retry \
+      INGEST_MAX_CASES="${STJORNARRADID_RETRY:-300}" \
+        npm run ingest -- --adapter=stjornarradid
+      ;;
+    stjornarradid-backfill)
+      # The rolling backfill. ~23,700 rulings at the polite fetch rate is far
+      # more than one run, so it is bounded and resumable: every board keeps
+      # its own cursor, successive runs carry the sweep forward, and a board
+      # that reaches its last page wraps around to re-verify.
+      #
+      # Seeding a fresh database is a one-off run of the on-demand service
+      # with INGEST_ADAPTERS="stjornarradid-backfill" and a much larger
+      # STJORNARRADID_BACKFILL — see the README.
+      INGEST_MODE=backfill \
+      INGEST_MAX_CASES="${STJORNARRADID_BACKFILL:-1500}" \
+        npm run ingest -- --adapter=stjornarradid
       ;;
     logretta)
       # Both journals list in a handful of API calls, so they run in full every

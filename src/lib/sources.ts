@@ -1,3 +1,5 @@
+import { ADR_BOARDS, boardListUrl } from "./adr-boards";
+
 export interface SourceDef {
   key: string;
   name: string;
@@ -37,6 +39,32 @@ const ICELANDIC_COURTS = "Icelandic courts";
 const EEA_EFTA = "EEA / EFTA";
 const OVERSIGHT = "Eftirlit og kærunefndir";
 const JOURNALS = "Ritrýnd fræðirit";
+const ADR = "Úrskurðarnefndir og ráðuneyti";
+
+/**
+ * The 41 administrative appeal bodies at stjornarradid.is, each its own
+ * source so a researcher can tick the one board they mean.
+ *
+ * Derived from src/lib/adr-boards.ts rather than written out here, because
+ * the adapter has to agree with this list exactly — the key it saves under
+ * and the key the search UI offers are the same string, and a hand-kept copy
+ * of forty-one of anything drifts.
+ *
+ * They are decisions, not scholarship: rulings in individual cases, which is
+ * what the citation job links to provisions. Their officialBaseUrl is the
+ * board's filtered listing on the site — most boards have no page of their
+ * own, so that listing is the closest thing to a board's home.
+ */
+const ADR_SOURCES: SourceDef[] = ADR_BOARDS.map((board) => ({
+  key: board.key,
+  name: board.name,
+  officialBaseUrl: boardListUrl(board),
+  language: "is",
+  group: ADR,
+  adapterKey: "stjornarradid",
+  kind: "decision" as const,
+  status: "live" as const,
+}));
 
 /** Every source the system knows about, live or not. */
 export const ALL_SOURCES: SourceDef[] = [
@@ -142,6 +170,7 @@ export const ALL_SOURCES: SourceDef[] = [
     kind: "scholarship",
     status: "live",
   },
+  ...ADR_SOURCES,
 ];
 
 /** Sources that are ingested and searchable — what the UI offers. */
