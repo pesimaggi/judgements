@@ -46,7 +46,7 @@
 #   EFTA_FETCH_DOCUMENTS    default 1     — see README on eftacourt.int robots.txt
 #   EFTA_MAX_CASES          default 1000  — the register is ~461 cases
 #   UMBODSMADUR_MAX_CASES   default 600   — full backfill is ~11,455; raise for a one-off
-#   STJORNARRADID_CASES     default 400   — cases the weekly incremental pass may fetch
+#   STJORNARRADID_CASES     default 400   — cases the incremental pass may fetch per run
 #   STJORNARRADID_BACKFILL  default 1500  — cases the rolling backfill may fetch per run
 #   STJORNARRADID_RETRY     default 300   — cases the retry sweep re-attempts
 #   STJORNARRADID_BOARDS    unset         — comma-separated board keys; all 41 by default
@@ -99,7 +99,7 @@ for adapter in $ADAPTERS; do
       ;;
     icelandic-gaps)
       # Not a separate adapter: the Icelandic one in gap mode, which walks the
-      # feed court by court and fetches only what is missing. The weekly
+      # feed court by court and fetches only what is missing. The scheduled
       # `recent` sweep stops after a run of already-known cases, so it can
       # never reach back to an older gap; this is what does.
       #
@@ -121,9 +121,9 @@ for adapter in $ADAPTERS; do
         npm run ingest -- --adapter=umbodsmadur
       ;;
     stjornarradid)
-      # The weekly pickup: each of the 41 boards' newest pages, stopping once
-      # a run of already-stored rulings appears. A quiet week is 41 list
-      # queries and no detail fetches at all.
+      # The scheduled pickup: each of the 41 boards' newest pages, stopping
+      # once a run of already-stored rulings appears. A firing with nothing new
+      # is 41 list queries and no detail fetches at all.
       INGEST_MODE=recent \
       INGEST_MAX_CASES="${STJORNARRADID_CASES:-400}" \
         npm run ingest -- --adapter=stjornarradid

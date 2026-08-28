@@ -19,7 +19,7 @@ This is a deliberately narrowed build: no CJEU. The three Icelandic courts publi
 - **Administrative case law** — the úrskurðarnefndir, kærunefndir and ministry appeal desks at stjornarradid.is, each board its own tickable source rather than one undifferentiated pile. For immigration, benefits, tenancy, procurement and freedom of information this is where the case law actually is, and a search of the courts alone would miss it. See *Úrskurðarnefndir og ráðuneyti* below.
 - **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`.
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
-- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs weekly and pulls only what's new; `lagasafn` ingests every in-force act; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `umbodsmadur` ingests the Ombudsman's opinions and letters; `stjornarradid` ingests the 41 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
+- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 6 hours and pulls only what's new; `lagasafn` ingests every in-force act; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `umbodsmadur` ingests the Ombudsman's opinions and letters; `stjornarradid` ingests the 41 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
 - **Scholarly commentary** — Tímarit Lögréttu and Vefrit Úlfljóts, searched alongside the case law rather than in a separate silo, so a query about an unsettled point returns both the judgments and the articles arguing about them. Articles are indexed in full but read at the journal that published them: their cards and pages link out rather than reproducing the text here.
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
 
@@ -47,8 +47,9 @@ Meilisearch adds typo tolerance (good for Icelandic spelling variants) out of th
 
 ## Ingestion cadence
 
-The Icelandic archive is backfilled, so the scheduled ingest service
-(`railway.ingest.json`) now runs **weekly** in incremental mode:
+The scheduled ingest service (`railway.ingest.json`) fires **every 6 hours**
+(00:00, 06:00, 12:00 and 18:00 UTC). The Icelandic archive runs in incremental
+mode:
 
 ```
 INGEST_MODE=recent INGEST_MAX_PAGES=40 npm run ingest -- --adapter=icelandic-courts
@@ -57,8 +58,10 @@ INGEST_MODE=recent INGEST_MAX_PAGES=40 npm run ingest -- --adapter=icelandic-cou
 `INGEST_MODE=recent` walks island.is's newest-first feed and stops once it has
 seen `INGEST_STOP_AFTER_KNOWN` (default 40) consecutive cases it already holds.
 Cases already stored are skipped *before* their detail page is fetched, which
-is the rate-limited, expensive part — so a week with nothing new costs a couple
-of list queries and no document fetches at all.
+is the rate-limited, expensive part — so a firing with nothing new costs a
+couple of list queries and no document fetches at all. That is what makes a
+6-hourly cadence cheap: the incremental passes idle, and the run's time goes to
+the rolling backfills that still have an archive to work through.
 
 The trade-off: a judgment that is amended after we stored it won't be noticed.
 Set `INGEST_RECHECK_KNOWN=1` to re-fetch and re-hash known cases, or run a
@@ -73,7 +76,7 @@ INGEST_COURT=Hæstiréttur npm run ingest -- --adapter=icelandic-courts
 
 Both resume from `IngestCursor`, so repeated runs continue where they stopped.
 
-The stjornarradid boards run on the same weekly schedule and the same three
+The stjornarradid boards run on the same 6-hourly schedule and the same three
 modes (`recent`, `backfill`, `retry`), each board with its own cursor. Their
 archive is the one still being backfilled — see *Úrskurðarnefndir og
 ráðuneyti* below for the knobs and the one-off seeding run.
@@ -167,7 +170,7 @@ tags.
 
 The walk runs newest first and skips ids already stored without an HTTP
 request, so the same pass both backfills history and picks up new cases. That
-makes the weekly run cheap; the initial backfill is the expensive one:
+makes the scheduled run cheap; the initial backfill is the expensive one:
 
 ```
 INGEST_MAX_CASES=20000 npm run ingest -- --adapter=umbodsmadur
@@ -486,14 +489,14 @@ There are two Railway config files for ingestion, and the difference matters:
 
 | File | `cronSchedule` | When it runs |
 |---|---|---|
-| `railway.ingest.json` | `0 6 * * 1` | **Only** Mondays 06:00 UTC |
+| `railway.ingest.json` | `0 */6 * * *` | **Only** at 00:00, 06:00, 12:00 and 18:00 UTC |
 | `railway.ingest-once.json` | none | Every time you deploy it |
 
 **A Railway service with a `cronSchedule` does not run when you redeploy it.**
 Redeploying builds the image; the start command then waits for the next
-scheduled time. So a redeploy on a Thursday does nothing at all until the
-following Monday — no ingestion and no runtime logs, which reads exactly like
-a broken deploy but is the schedule working as designed.
+scheduled time. So a redeploy does nothing at all until the next firing — up to 6 hours of no
+ingestion and no runtime logs, which reads exactly like a broken deploy but is
+the schedule working as designed.
 
 `railway.ingest-once.json` is the on-demand runner: no cron, so deploying it
 runs ingestion immediately, and `restartPolicyType: NEVER` stops it from
@@ -521,7 +524,7 @@ Every adapter used to give up on a case with `stats.skipped++` (or
 `stats.errors++`) and a line in the deploy log. That log is gone the moment the
 deployment rolls, so a case lost to a one-off 503 became indistinguishable from
 a case that genuinely has no extractable text — and **nothing ever went back
-for either**. The weekly `recent` sweep stops after a run of already-known
+for either**. The `recent` sweep stops after a run of already-known
 cases, so it cannot reach back to an older gap; the `gaps` sweep that could was
 opt-in and off by default. That is the whole mechanism. Endurupptökudómur sat
 at 2 of 102 cases not because its cases were unreachable — all 102 list and
@@ -550,7 +553,7 @@ stayed invisible.
 
 #### The three Icelandic passes
 
-All three are in the default weekly chain. Completeness that depends on
+All three are in the default chain of every firing. Completeness that depends on
 somebody remembering to set a variable is not completeness.
 
 | Pass | What it does | Cost |
@@ -568,7 +571,7 @@ re-verifying rather than going quiet. `ICELANDIC_GAP_PAGES` caps the pages per
 run (default 600); set it to `0` for an unbounded one-off pass.
 
 ```
-# Finish the archive now — one unbounded pass, then let the weekly chain hold it
+# Finish the archive now — one unbounded pass, then let the scheduled chain hold it
 INGEST_ADAPTERS="icelandic-gaps" ICELANDIC_GAP_PAGES=0   # on the ingest-once service
 
 # Or locally
@@ -759,7 +762,7 @@ src/
     adapter.ts                   adapter interface, polite fetch, save/upsert
     run.ts                       CLI runner, records IngestionRun rows
     adapters/
-      icelandic-courts.ts        GraphQL + embedded PDF/rich text; weekly incremental
+      icelandic-courts.ts        GraphQL + embedded PDF/rich text; scheduled incremental
       lagasafn.ts                in-force Icelandic acts; incremental by codex version
       efta-court.ts              EFTA Court case register, via cases-sitemap.xml
       umbodsmadur.ts             Umboðsmaður Alþingis, by walking the case id space
@@ -780,7 +783,7 @@ Every judgment is normalized into one shape (`src/lib/types.ts`), preserving the
 ## Running ingestion
 
 ```bash
-# what the weekly scheduled job runs — newest cases only, stops when caught up:
+# what the scheduled job runs — newest cases only, stops when caught up:
 INGEST_MODE=recent npm run ingest -- --adapter=icelandic-courts
 # backfill sweep, bounded (10 cases/page):
 INGEST_MAX_PAGES=2 npm run ingest -- --adapter=icelandic-courts
@@ -873,14 +876,16 @@ Ingestion used to run as part of the website's pre-deploy step, but a 200-page b
 1. In the same Railway project, **New Service** → **GitHub Repo** → select this same repo.
 2. In that service's **Settings** → **Config-as-code**, set the **Config File Path** to `railway.ingest.json` (instead of the default `railway.json`) — this is what makes it a distinct scheduled job rather than another copy of the website.
 3. Give it the same `DATABASE_URL` reference variable as the website service (and `SEARCH_PROVIDER`/Meilisearch variables too, if you're using Meilisearch instead of the default Postgres full-text search).
-4. `railway.ingest.json` sets `deploy.cronSchedule` to `0 6 * * 1` (Mondays 06:00 UTC) and a start command that chains the three adapters: new judgments (`INGEST_MODE=recent`), then acts (`lagasafn`), then `citations` to link whatever arrived. Railway spins up a container on that schedule, runs it to completion, then stops it until the next firing — no always-on dyno needed for this service.
+4. `railway.ingest.json` sets `deploy.cronSchedule` to `0 */6 * * *` (00:00, 06:00, 12:00 and 18:00 UTC) and a start command that chains the three adapters: new judgments (`INGEST_MODE=recent`), then acts (`lagasafn`), then `citations` to link whatever arrived. Railway spins up a container on that schedule, runs it to completion, then stops it until the next firing — no always-on dyno needed for this service.
 
    The acts step is deliberately left unbounded so that the first firing loads the whole corpus (~900 acts, ~22 minutes at the default delay) rather than splitting it across firings. Splitting it would be worse than slow: `citations` runs in the same firing, so acts arriving in a *later* firing would find every judgment already marked as scanned and would never be linked to. `LAGASAFN_MAX_ACTS` still exists for bounding a manual run.
 
-   After that first firing the step is nearly free: an act whose codex version still matches the index's is skipped without being fetched, so an unchanged Lagasafn release costs one request. The citations step only rescans judgments whose text changed, so a quiet week does almost nothing. The exception is deliberate: when `lagasafn` ingests an act the database has never held, it clears the citation watermark, so the citations step in the same firing re-links the whole corpus against it. Without that, a late-arriving act would never be linked to anything — the judgments' text has not changed, so they would never be rescanned.
+   After that first firing the step is nearly free: an act whose codex version still matches the index's is skipped without being fetched, so an unchanged Lagasafn release costs one request. The citations step only rescans judgments whose text changed, so a firing that brought in nothing new does almost nothing. The exception is deliberate: when `lagasafn` ingests an act the database has never held, it clears the citation watermark, so the citations step in the same firing re-links the whole corpus against it. Without that, a late-arriving act would never be linked to anything — the judgments' text has not changed, so they would never be rescanned.
 5. No manual redeploys needed after this. Progress is visible at `/admin/ingestion` on the website.
 
-This used to fire every 2 hours to backfill 2000 cases a run; with the archive backfilled, a weekly incremental run is all that's needed, and a week with nothing new does almost no work. If you ever need to backfill again — a fresh database, or a gap — drop `INGEST_MODE=recent` from the start command and raise `INGEST_MAX_PAGES`; the `IngestCursor` table means each firing continues where the last one stopped.
+The schedule has moved with how much is left to ingest. It fired every 2 hours during the original backfill, dropped to weekly once the Icelandic archive was complete, and is now **every 6 hours** again — the úrskurðarnefndir archive (~23,700 rulings) and the Icelandic gap sweep are still working through their cursors, and those rolling passes only advance when the service fires. Four firings a day is 28× the weekly throughput on the backfills while leaving comfortable headroom: the incremental passes are near-free when nothing is new, and even a worst-case run where every bounded pass fills up (1,500 board rulings, 600 gap pages, 600 Ombudsman cases, 500 + 300 retries at the 1.5 s polite delay) finishes well inside its 6-hour slot. Railway skips a firing whose predecessor is still running, so an overrun costs a slot rather than stacking runs.
+
+Once those archives are complete, weekly (`0 6 * * 1`) is enough again; to push harder in the meantime, `0 */3 * * *` or `0 */2 * * *` are the next steps up — watch `/admin/ingestion` for run durations first, and mind that the sources are being fetched politely at one request per 1.5 s. If you ever need to backfill from scratch — a fresh database, or a gap — drop `INGEST_MODE=recent` from the start command and raise `INGEST_MAX_PAGES`; the `IngestCursor` table means each firing continues where the last one stopped.
 
 Note: this repo uses `prisma db push` rather than `prisma migrate`, so there's no `prisma/migrations` folder — `npm run db:deploy` (not `prisma migrate deploy`) is the correct pre-deploy command here. If you later want real migration history for a production database, run `npx prisma migrate dev --name init` locally once, commit the generated `prisma/migrations` folder, and switch the pre-deploy command to `npx prisma migrate deploy && npm run db:setup-search`.
 
