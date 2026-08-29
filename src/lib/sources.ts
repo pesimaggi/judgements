@@ -44,7 +44,7 @@ const JOURNALS = "Ritrýnd fræðirit";
 const ADR = "Úrskurðarnefndir og ráðuneyti";
 
 /**
- * The 41 administrative appeal bodies at stjornarradid.is, each its own
+ * The 40 administrative appeal bodies at stjornarradid.is, each its own
  * source so a researcher can tick the one board they mean.
  *
  * Derived from src/lib/adr-boards.ts rather than written out here, because
@@ -57,13 +57,10 @@ const ADR = "Úrskurðarnefndir og ráðuneyti";
  * board's filtered listing on the site — most boards have no page of their
  * own, so that listing is the closest thing to a board's home.
  *
- * Félagsdómur is filtered out. It is in ADR_BOARDS because half its archive
- * is published on that site and reached the same way as a board's, but it is
- * a court, not an úrskurðarnefnd, and it is registered as one below — under
- * the courts, with the felagsdomur adapter that reads the other half from
- * the court's own site. One source key, one checkbox, two feeders.
+ * Félagsdómur is not among them, though it publishes on the same site: it is
+ * a court, and it is registered as one below. See FELAGSDOMUR_KEY.
  */
-const ADR_SOURCES: SourceDef[] = ADR_BOARDS.filter((b) => b.key !== FELAGSDOMUR_KEY).map((board) => ({
+const ADR_SOURCES: SourceDef[] = ADR_BOARDS.map((board) => ({
   key: board.key,
   name: board.name,
   officialBaseUrl: boardListUrl(board),
@@ -126,11 +123,10 @@ export const ALL_SOURCES: SourceDef[] = [
     // lög nr. 80/1938, not one of the úrskurðarnefndir it was grouped with
     // until now, and not in island.is's feed: it publishes for itself.
     //
-    // Its archive is split across two sites, and this one source holds both
-    // halves — see FELAGSDOMUR_KEY in src/lib/adr-boards.ts. adapterKey names
-    // the adapter that reads the live half at felagsdomur.is; the pre-2010
-    // half arrives with the stjornarradid run, so this source's row on
-    // /admin/ingestion shows the felagsdomur runs only.
+    // Its archive is split across two sites — felagsdomur.is from case year
+    // 2010, stjornarradid.is before that — and the felagsdomur adapter reads
+    // both, so this is one source with one checkbox, one record shape and one
+    // total. See FELAGSDOMUR_KEY in src/lib/adr-boards.ts.
     key: FELAGSDOMUR_KEY,
     name: "Félagsdómur",
     officialBaseUrl: "https://felagsdomur.is",

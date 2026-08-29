@@ -3,7 +3,13 @@ import type { AnyNode } from "domhandler";
 import pdfParse from "pdf-parse";
 import { prisma } from "@/lib/db";
 import { normalizeJudgmentText } from "@/lib/judgment-text";
-import { ADR_BOARDS, FELAGSDOMUR_KEY, boardListUrl } from "@/lib/adr-boards";
+import {
+  FELAGSDOMUR_COMMITTEE,
+  FELAGSDOMUR_KEY,
+  STJORNARRADID_BASE,
+  committeeListUrl,
+  decisionUrl,
+} from "@/lib/adr-boards";
 import {
   politeFetchBytes,
   type IngestionAdapter,
@@ -24,21 +30,43 @@ import {
  * saw it. It publishes for itself, on a Lisa CMS site of the same family as
  * landsrettur.is.
  *
- * ONE SOURCE, TWO SITES. The court's archive is split, and this adapter reads
- * only the live half:
+ * ONE COURT, TWO SITES. The court's archive is split, and this adapter reads
+ * both halves:
  *
- *   - case numbers from 2010 on (F-1/2010 … ), 200 of them, at felagsdomur.is
- *     — this adapter;
- *   - case numbers up to 2009 (107 of them, the last handed down 1 November
- *     2010), on stjornarradid.is under `Committee=Félagsdómur` — the
- *     stjornarradid adapter, which still lists Félagsdómur as one of its
- *     boards for exactly that reason.
+ *   - case numbers from 2010 on (F-1/2010 … ), 200 of them, at felagsdomur.is;
+ *   - case numbers up to 2009 (106 of them, the last handed down 1 November
+ *     2010), on stjornarradid.is under `Committee=Félagsdómur`.
  *
  * The two sets are disjoint: the split is by case *number*, not by decision
- * date, and stjornarradid.is says so itself with a placeholder entry reading
- * "Dómar Félagsdóms frá 2010 og til dagsins í dag eru á felagsdomur.is". So
- * both feed the one `felagsdomur` source and the reader gets one checkbox for
- * one court. See FELAGSDOMUR_KEY in src/lib/adr-boards.ts.
+ * date — which is why the older site still carries cases decided in 2010
+ * (nr. 6/2009, 9/2009, 11/2009, 10/2009) — and stjornarradid.is says so itself
+ * with a signpost entry reading "Dómar Félagsdóms frá 2010 og til dagsins í
+ * dag eru á felagsdomur.is".
+ *
+ * They are one court and they are stored as one. That is the whole reason this
+ * adapter reads the older half rather than leaving it to the stjornarradid
+ * adapter, which used to: read as a board, the pre-2010 cases came out visibly
+ * different from the rest of the same court — case numbers "10/2009" against
+ * "F-2/2026", titles "Mál nr. 10/2009: Dómur frá 1. nóvember 2010" against the
+ * parties, the parties themselves filed under a "Lykilorð" heading and indexed
+ * as a subject tag (that site's abstract field holds the parties for this
+ * court, not index terms), and the letter-spaced headings left uncollapsed.
+ * Same court, two shapes, one checkbox. Now there is one shape:
+ *
+ *   caseNumber   F-prefixed on both halves. felagsdomur.is labels its cases
+ *                "F-2/2026" and the older site does not, so the prefix is
+ *                added there. The judgments themselves print the bare form in
+ *                both eras ("í málinu nr. 10/2009", "Mál nr. 2/2026"), so that
+ *                form stays findable in the full text either way.
+ *   title,       the parties, on both halves. The older site publishes them in
+ *   caseName     the listing's abstract field; the newer one in the card.
+ *   subjectTags  the court's own index terms where it publishes them, which is
+ *                from about 2015 on. Empty for the older half rather than
+ *                filled with the parties.
+ *
+ * As a result the stjornarradid adapter must NOT list Félagsdómur among its
+ * boards, and does not: it is deliberately absent from ADR_BOARDS. See
+ * FELAGSDOMUR_KEY in src/lib/adr-boards.ts.
  *
  * VERIFIED against the live site (August 2026):
  *
@@ -67,14 +95,18 @@ import {
  *
  * ONE PASS, EVERY RUN. The other adapters carry cursors, page budgets and a
  * separate backfill mode because their archives run to thousands of cases.
- * This one is 200. Walking the whole listing costs ten list fetches and no
- * detail fetches at all when nothing is new — cheaper than a single board's
- * incremental page at stjornarradid — so there is no incremental mode to get
- * wrong and no cursor to strand. `INGEST_MODE=retry` still works the gap
- * ledger and nothing else.
+ * This one is 306. Walking both listings in full costs eleven fetches — ten
+ * pages of twenty at felagsdomur.is, and one page of two hundred at
+ * stjornarradid.is, which is the whole of the older half — and no case fetches
+ * at all when nothing is new. Cheaper than a single board's incremental page,
+ * so there is no incremental mode to get wrong and no cursor to strand.
+ * `INGEST_MODE=retry` still works the gap ledger and nothing else.
  */
 
 const BASE = (process.env.FELAGSDOMUR_BASE ?? "https://felagsdomur.is").replace(/\/$/, "");
+
+/** Where the older half lives. Same override the stjornarradid adapter takes. */
+const ARCHIVE_BASE = (process.env.STJORNARRADID_BASE ?? STJORNARRADID_BASE).replace(/\/$/, "");
 
 /** The page whose "Birta fleiri færslur" button drives the listing. */
 const LISTING_PATH = "/domar-og-urskurdir/";
@@ -127,6 +159,23 @@ function squish(text: string): string {
  */
 export function judgmentUrl(id: string, base = BASE): string {
   return `${base.replace(/\/$/, "")}${LISTING_PATH}domur-urskurdur/?id=${id}`;
+}
+
+/**
+ * "F-2/2026" — the court's own label for a case, from either site's wording.
+ *
+ * felagsdomur.is prints it that way already; the older site titles a case
+ * "Mál nr. 10/2009: Dómur frá 1. nóvember 2010" and prints no prefix. Both
+ * come through here so one court does not end up with two kinds of case
+ * number. Returns undefined when the text carries no case number at all,
+ * which is how the signpost entry in the older listing is recognised as not
+ * being a case.
+ */
+const CASE_NUMBER_RE = /\bF?-?(\d{1,3})\/(\d{4})\b/;
+
+export function caseNumberIn(text: string): string | undefined {
+  const m = CASE_NUMBER_RE.exec(text);
+  return m ? `F-${m[1]}/${m[2]}` : undefined;
 }
 
 /**
@@ -187,10 +236,19 @@ function unspaceHeadings(text: string): string {
  * is exact rather than approximate: the walk stops on an empty page, so it
  * has seen the whole listing by the time this is used.
  */
+/**
+ * Which of the court's two sites a case came from. It decides one thing only —
+ * where the text is read from — because everything else about a stored case is
+ * made the same on purpose. See "One court, two sites" in the header.
+ */
+type Origin = "felagsdomur" | "archive";
+
 interface ListItem {
+  origin: Origin;
+  /** The site's own id for the case: a `?id=` GUID, or a `?newsid=` one. */
   id: string;
   url: string;
-  /** "F-2/2026", as the court labels it. */
+  /** "F-2/2026" — always F-prefixed, on both halves. */
   caseNumber?: string;
   /** The parties, as the listing writes them over two or three lines. */
   parties: string;
@@ -279,9 +337,10 @@ function parseListing(html: string): ListItem[] {
     const summary = cleanAbstract(box.find(".case-abstract").first().text());
 
     items.push({
+      origin: "felagsdomur",
       id,
       url: judgmentUrl(id),
-      caseNumber: squish(link.find("h2").first().text()) || undefined,
+      caseNumber: caseNumberIn(squish(link.find("h2").first().text())),
       parties: squish(link.find("p.ellipsis").first().text()),
       date: listingDate(link),
       keywords: squish(link.find("p.keywords").first().text())
@@ -309,6 +368,113 @@ function listingUrl(pageItemId: string, offset: number): string {
   return `${BASE}/default.aspx?pageitemid=${pageItemId}&offset=${offset}&count=${PAGE_SIZE}`;
 }
 
+// ---------------------------------------------------------------------------
+// The older half, on stjornarradid.is.
+// ---------------------------------------------------------------------------
+
+/** "Sýni 1-107 af 107 niðurstöðum." — the archive's own count. */
+const ARCHIVE_TOTAL_RE = /af\s+([\d.]+)\s+niðurstöðum/;
+
+const MONTHS: Record<string, number> = {
+  janúar: 0, febrúar: 1, mars: 2, apríl: 3, maí: 4, júní: 5,
+  júlí: 6, ágúst: 7, september: 8, október: 9, nóvember: 10, desember: 11,
+};
+const LONG_DATE_RE = new RegExp(
+  `(\\d{1,2})\\.\\s*(${Object.keys(MONTHS).join("|")})\\s*(\\d{4})`,
+  "i"
+);
+
+function parseLongDate(text: string): Date | undefined {
+  const m = LONG_DATE_RE.exec(text);
+  if (!m) return undefined;
+  const month = MONTHS[m[2].toLowerCase()];
+  if (month === undefined) return undefined;
+  const date = new Date(Date.UTC(Number(m[3]), month, Number(m[1])));
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+/**
+ * One page of the archive listing. There is only ever one: the site returns
+ * 200 results a page and the archive is 107 entries.
+ *
+ * The fields are not where they are on the court's own site, and one of them
+ * is not what it is called. The listing's abstract field — index terms for
+ * every other body on that site — holds the *parties* for this court, which is
+ * exactly what the newer half puts on its cards, so it is read as parties and
+ * the case is stored with no subject tags rather than with the parties as one.
+ *
+ * The date comes from the title ("Dómur frá 1. nóvember 2010") in preference
+ * to the item's publication date: the two agree here, and the title's is the
+ * court's own statement of when it ruled.
+ */
+function parseArchiveListing(html: string): { items: ListItem[]; total?: number } {
+  const $ = load(html);
+  const items: ListItem[] = [];
+
+  $("li.news-item-list__items__item").each((_, el) => {
+    const item = $(el);
+    const link = item.find('a[href*="stakur-urskurdur"]').first();
+    const newsId = /[?&]newsid=([0-9a-f-]+)/i.exec(link.attr("href") ?? "")?.[1];
+    if (!newsId) return;
+    const title = squish(link.attr("title") || link.text());
+
+    // "Dómar Félagsdóms frá 2010 og til dagsins í dag eru á felagsdomur.is" —
+    // a signpost, not a case, and it has no case number to give it away as
+    // anything else. Skipped rather than fetched and then recorded as a gap:
+    // it is not a case we are missing, it is the site telling us where the
+    // rest of the court is, which we already know.
+    const caseNumber = caseNumberIn(title);
+    if (!caseNumber) return;
+
+    items.push({
+      origin: "archive",
+      id: newsId,
+      url: decisionUrl(newsId, ARCHIVE_BASE),
+      caseNumber,
+      parties: squish(item.find(".news-item-list__items_item__abstract").first().text()).replace(/\.$/, ""),
+      date:
+        parseLongDate(title) ??
+        parseLongDate(squish(item.find(".news-startdate").first().text())),
+      keywords: [],
+    });
+  });
+
+  const total = ARCHIVE_TOTAL_RE.exec($("body").text())?.[1];
+  return { items, total: total ? Number(total.replace(/\./g, "")) : undefined };
+}
+
+/**
+ * An archived judgment's text, from the page's own rich text.
+ *
+ * These pages carry the ruling inline — there is no PDF to prefer, unlike the
+ * newer half. One line per block node, which is the shape normalizeJudgmentText
+ * and the reading view expect; the headings are letter-spaced here too
+ * ("D Ó M U R:"), so they go through the same collapse.
+ */
+function parseArchiveText(html: string): string {
+  const $ = load(html);
+  const section = $("section.single-news__content").first();
+  if (!section.length) return "";
+
+  section.find("br").replaceWith("\n");
+  const blocks = section
+    .find("p, li, h2, h3, h4, h5, h6, blockquote")
+    .filter((_, el) => $(el).parents("p, li, blockquote").length === 0);
+
+  const lines: string[] = [];
+  const push = (text: string) => {
+    for (const line of text.split("\n")) {
+      const cleaned = squish(line);
+      if (cleaned) lines.push(unspaceLetterSpacing(cleaned));
+    }
+  };
+  blocks.each((_, el) => push($(el).text()));
+  // A few of the oldest rulings put their text straight in the container.
+  if (lines.length === 0) push(section.text());
+
+  return normalizeJudgmentText(lines.join("\n"));
+}
+
 /**
  * The judgment's text: its PDF, reflowed into paragraphs.
  *
@@ -321,6 +487,12 @@ async function fetchJudgmentText(
   ctx: IngestContext,
   item: ListItem
 ): Promise<{ text: string; pdfUrl?: string } | null> {
+  // The archived half publishes its rulings inline; there is no PDF for them.
+  if (item.origin === "archive") {
+    const text = parseArchiveText(await ctx.fetchText(item.url));
+    return text.length >= MIN_TEXT_CHARS ? { text } : null;
+  }
+
   const pdfUrl = pdfUrlFor(item.id);
   try {
     const { body } = await politeFetchBytes(pdfUrl);
@@ -370,41 +542,16 @@ function composeRecord(item: ListItem, body: string): string {
 /**
  * How many cases this court has, across both of its sites.
  *
- * Neither half is the whole archive, so neither adapter may claim the source's
- * total on its own — see FELAGSDOMUR_KEY. This adapter walks its own listing
- * to the end on every run, so it knows its own half exactly, and it reads the
- * other half's count off the one line stjornarradid.is prints on the board's
- * listing ("Sýni 1-107 af 107 niðurstöðum"). One extra request per run.
- *
- * If that request fails the total is left as it was rather than written short:
- * a progress bar reading 307/200 is worse than one that is a run out of date.
+ * Both numbers come out of the run's own walks, so there is nothing to
+ * coordinate and no second opinion to go stale: whatever the two listings
+ * offered this run is what the progress bar is measured against.
  */
-const STJORNARRADID_TOTAL_RE = /af\s+([\d.]+)\s+niðurstöðum/;
-
-async function recordTotal(ctx: IngestContext, ownCount: number): Promise<void> {
-  const board = ADR_BOARDS.find((b) => b.key === FELAGSDOMUR_KEY);
-  if (!board) return;
-
-  let archived: number;
-  try {
-    const html = await ctx.fetchText(boardListUrl(board));
-    const matched = STJORNARRADID_TOTAL_RE.exec(html)?.[1];
-    if (!matched) {
-      ctx.log(`Could not read the pre-2010 count from stjornarradid.is — total left unchanged.`);
-      return;
-    }
-    archived = Number(matched.replace(/\./g, ""));
-  } catch (e) {
-    ctx.log(`Pre-2010 count unavailable (${String(e).slice(0, 100)}) — total left unchanged.`);
-    return;
-  }
-
+async function recordTotal(ctx: IngestContext, total: number): Promise<void> {
   try {
     await prisma.source.updateMany({
       where: { key: FELAGSDOMUR_KEY },
-      data: { totalAvailable: ownCount + archived },
+      data: { totalAvailable: total },
     });
-    ctx.log(`Félagsdómur publishes ${ownCount} case(s) from 2010 and ${archived} before it.`);
   } catch {
     // Bookkeeping only — never fail a run over it.
   }
@@ -450,7 +597,10 @@ export const felagsdomurAdapter: IngestionAdapter = {
         await ctx.recordGap({
           ...identity,
           reason: "no-text",
-          detail: `neither ${pdfUrlFor(item.id)} nor the page's text layer yielded a judgment`,
+          detail:
+            item.origin === "archive"
+              ? "the page carried no section.single-news__content to read"
+              : `neither ${pdfUrlFor(item.id)} nor the page's text layer yielded a judgment`,
         });
         return;
       }
@@ -495,9 +645,13 @@ export const felagsdomurAdapter: IngestionAdapter = {
           ctx.log(`Reached INGEST_MAX_CASES=${maxFetches}; re-run to continue.`);
           break;
         }
-        const id = /[?&]id=([0-9a-f-]{36})/i.exec(gap.officialUrl)?.[1];
+        // The two halves' URLs carry different id parameters, and that is
+        // what says which site a stranded case came from.
+        const archived = /[?&]newsid=([0-9a-f-]+)/i.exec(gap.officialUrl)?.[1];
+        const id = archived ?? /[?&]id=([0-9a-f-]{36})/i.exec(gap.officialUrl)?.[1];
         if (!id) continue;
         await ingestOne({
+          origin: archived ? "archive" : "felagsdomur",
           id,
           url: gap.officialUrl,
           caseNumber: gap.caseNumber ?? undefined,
@@ -510,18 +664,8 @@ export const felagsdomurAdapter: IngestionAdapter = {
     }
 
     // -----------------------------------------------------------------------
-    // The listing walk. Always the whole listing — see the header.
+    // The listing walks. Always both listings in full — see the header.
     // -----------------------------------------------------------------------
-    const first = await ctx.fetchText(`${BASE}${LISTING_PATH}`);
-    const pageItemId = parsePageItemId(first);
-    if (!pageItemId) {
-      throw new Error(
-        `No button.moreVer[data-pageitemid] on ${BASE}${LISTING_PATH} — the listing's ` +
-          `endpoint could not be resolved, and walking it with a stale GUID would ` +
-          `return an empty list that reads as "nothing new".`
-      );
-    }
-
     const known = new Set(
       (
         await prisma.document.findMany({
@@ -530,29 +674,13 @@ export const felagsdomurAdapter: IngestionAdapter = {
         })
       ).map((d) => d.officialUrl)
     );
-    ctx.log(`${known.size} case(s) already stored from felagsdomur.is.`);
+    ctx.log(`${known.size} case(s) already stored.`);
 
     const seen = new Set<string>();
     let budgetSpent = false;
-    // Whether the walk reached the end of the listing. Only then is `seen` the
-    // court's whole published archive and safe to record as a total.
-    let walkComplete = false;
 
-    for (let page = 0; page < MAX_PAGES; page++) {
-      let items: ListItem[];
-      try {
-        items = parseListing(await ctx.fetchText(listingUrl(pageItemId, page * PAGE_SIZE)));
-      } catch (e) {
-        stats.errors++;
-        stats.errorSample = stats.errorSample ?? String(e);
-        ctx.log(`Listing page ${page} failed — ${String(e).slice(0, 150)}`);
-        break;
-      }
-      if (items.length === 0) {
-        walkComplete = true;
-        break;
-      }
-
+    /** Store whatever of a listing page we do not already hold. */
+    const takeItems = async (items: ListItem[]): Promise<void> => {
       for (const item of items) {
         // The listing's pages overlap by an item now and then; a case seen
         // twice in one walk must not be counted twice in the total.
@@ -572,18 +700,77 @@ export const felagsdomurAdapter: IngestionAdapter = {
         }
         await ingestOne(item);
       }
+    };
+
+    // --- the court's own site: case numbers from 2010 on --------------------
+    const first = await ctx.fetchText(`${BASE}${LISTING_PATH}`);
+    const pageItemId = parsePageItemId(first);
+    if (!pageItemId) {
+      throw new Error(
+        `No button.moreVer[data-pageitemid] on ${BASE}${LISTING_PATH} — the listing's ` +
+          `endpoint could not be resolved, and walking it with a stale GUID would ` +
+          `return an empty list that reads as "nothing new".`
+      );
     }
 
+    // Whether each walk reached the end. Only when both did is `seen` the
+    // court's whole published archive and safe to record as a total.
+    let liveComplete = false;
+    let liveCount = 0;
+
+    for (let page = 0; page < MAX_PAGES; page++) {
+      let items: ListItem[];
+      try {
+        items = parseListing(await ctx.fetchText(listingUrl(pageItemId, page * PAGE_SIZE)));
+      } catch (e) {
+        stats.errors++;
+        stats.errorSample = stats.errorSample ?? String(e);
+        ctx.log(`felagsdomur.is listing page ${page} failed — ${String(e).slice(0, 150)}`);
+        break;
+      }
+      if (items.length === 0) {
+        liveComplete = true;
+        break;
+      }
+      await takeItems(items);
+      liveCount = seen.size;
+    }
     ctx.log(
-      `Listing walked${walkComplete ? "" : " (incompletely)"}: ${seen.size} case(s) ` +
-        `published, ${fetches} fetched this run.`
+      `felagsdomur.is: ${liveCount} case(s) listed${liveComplete ? "" : " (walk did not reach the end)"}.`
     );
-    // Only when the walk reached the end of the listing. A run cut short by a
-    // failed page would otherwise record a total short of the archive, and the
-    // progress bar would read complete while cases were missing. A case that
-    // failed to *store* is a different thing and does not affect the count.
-    if (walkComplete) await recordTotal(ctx, seen.size);
-    else ctx.log(`Listing walk did not reach the end — total left unchanged.`);
+
+    // --- the archive: case numbers up to 2009 -------------------------------
+    // One page of 200 covers all 107 of it, so there is no walk to bound.
+    let archiveComplete = false;
+    let archiveTotal: number | undefined;
+    try {
+      const listing = parseArchiveListing(
+        await ctx.fetchText(committeeListUrl(FELAGSDOMUR_COMMITTEE, { base: ARCHIVE_BASE }))
+      );
+      await takeItems(listing.items);
+      archiveComplete = true;
+      // The site's count includes the signpost entry parseArchiveListing drops,
+      // so the cases it listed is the honest figure, not what the site says.
+      archiveTotal = listing.items.length;
+      ctx.log(
+        `stjornarradid.is: ${listing.items.length} case(s) listed` +
+          (listing.total !== undefined && listing.total !== listing.items.length
+            ? ` (the site says ${listing.total}, counting its "see felagsdomur.is" signpost)`
+            : "")
+      );
+    } catch (e) {
+      stats.errors++;
+      stats.errorSample = stats.errorSample ?? String(e);
+      ctx.log(`stjornarradid.is archive listing failed — ${String(e).slice(0, 150)}`);
+    }
+
+    ctx.log(`${seen.size} case(s) published in total, ${fetches} fetched this run.`);
+    if (liveComplete && archiveComplete) {
+      await recordTotal(ctx, seen.size);
+      ctx.log(`Félagsdómur publishes ${liveCount} case(s) from 2010 and ${archiveTotal} before it.`);
+    } else {
+      ctx.log(`One of the two listings was not walked to the end — total left unchanged.`);
+    }
 
     const open = await ctx.openGaps([FELAGSDOMUR_KEY]);
     if (open.length) {

@@ -5,7 +5,6 @@ import { prisma } from "@/lib/db";
 import { normalizeJudgmentText } from "@/lib/judgment-text";
 import {
   ADR_BOARDS,
-  FELAGSDOMUR_KEY,
   boardListUrl,
   decisionUrl,
   STJORNARRADID_BASE,
@@ -21,7 +20,7 @@ import {
 /**
  * Úrskurðir og álit — stjornarradid.is
  *
- * Iceland's administrative appeal bodies: 41 úrskurðarnefndir, kærunefndir,
+ * Iceland's administrative appeal bodies: 40 úrskurðarnefndir, kærunefndir,
  * matsnefndir and ministry appeal desks, publishing about 23,700 rulings
  * through one search page. This is the decision layer between an agency and
  * the courts, and for whole areas of law — immigration, tenancy, benefits,
@@ -29,7 +28,10 @@ import {
  *
  * They arrive together but they are not one body, so each board is its own
  * source (src/lib/adr-boards.ts) with its own checkbox and its own row on the
- * progress page. This adapter feeds all 41.
+ * progress page. This adapter feeds all 40.
+ *
+ * Félagsdómur is not one of them. It publishes here too, but it is a court and
+ * the felagsdomur adapter owns it end to end — see that file.
  *
  * VERIFIED against the live site (August 2026):
  *
@@ -490,16 +492,9 @@ function selectedBoards(ctx: IngestContext): AdrBoard[] {
  * The site's live count for a board, kept on its Source row so the progress
  * page compares what we hold against what exists rather than against the
  * figure someone wrote down once.
- *
- * Félagsdómur is the one board this may not do. It is a court whose archive is
- * split across two sites, and this site holds only the 107 cases up to 2009 —
- * writing that as the source's total would put the progress bar at 307/107
- * once the felagsdomur adapter has added the other 200. That adapter sums the
- * two and writes the total for both. See FELAGSDOMUR_KEY in
- * src/lib/adr-boards.ts.
  */
 async function recordTotal(board: AdrBoard, total: number | undefined): Promise<void> {
-  if (total === undefined || board.key === FELAGSDOMUR_KEY) return;
+  if (total === undefined) return;
   try {
     await prisma.source.updateMany({ where: { key: board.key }, data: { totalAvailable: total } });
   } catch {

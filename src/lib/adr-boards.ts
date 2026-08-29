@@ -41,6 +41,9 @@
  * was compiled (August 2026, ~23,700 cases in total). It is a rough target
  * for the progress page, not a contract — the adapter overwrites
  * Source.totalAvailable with the live count on every run.
+ *
+ * The site's dropdown has 41 entries and this list has 40. The one left out is
+ * Félagsdómur, which publishes here but is a court — see FELAGSDOMUR_KEY.
  */
 export interface AdrBoard {
   /** Our stable source key. Never change it once documents exist. */
@@ -58,23 +61,19 @@ export interface AdrBoard {
 }
 
 /**
- * Félagsdómur's source key, named because two adapters feed it and both have
- * to agree on the string.
+ * Félagsdómur's source key and the site's filter value for its archive.
  *
- * The court's archive is split across two sites and neither half is the whole
- * of it: rulings up to case year 2009 are on stjornarradid.is (107 of them,
- * ending 1 November 2010 with case nr. 10/2009), and everything numbered from
- * 2010 is on the court's own site at felagsdomur.is. The two sets are disjoint
- * — the split is by case number, not by decision date — so both feed one
- * source and one checkbox rather than splitting the court in two.
+ * Félagsdómur is a court, not an úrskurðarnefnd, so it is deliberately *not*
+ * in ADR_BOARDS and the stjornarradid adapter does not touch it. But half its
+ * archive is published on this site — the 107 cases numbered up to 2009 — and
+ * reached the same way a board's is, by `Committee=`. So the two identifiers
+ * live here, next to the URL builder they are passed to, and the felagsdomur
+ * adapter owns the court end to end: both halves, one record shape, one total.
  *
- * The consequence for bookkeeping: neither adapter may write
- * Source.totalAvailable on its own, since each can only see its own half.
- * The felagsdomur adapter adds the two together; the stjornarradid adapter
- * skips this board when it records totals. See src/ingestion/adapters/
- * felagsdomur.ts and recordTotal() in src/ingestion/adapters/stjornarradid.ts.
+ * See src/ingestion/adapters/felagsdomur.ts.
  */
 export const FELAGSDOMUR_KEY = "felagsdomur";
+export const FELAGSDOMUR_COMMITTEE = "Félagsdómur";
 
 /** Every board in the úrskurðir og álit collection, largest archive first. */
 export const ADR_BOARDS: AdrBoard[] = [
@@ -248,19 +247,6 @@ export const ADR_BOARDS: AdrBoard[] = [
     approxCases: 108,
   },
   {
-    // Not a board. Félagsdómur is a court — the labour court — and its source
-    // sits with the other courts in src/lib/sources.ts rather than in this
-    // list's group. It stays here because its pre-2010 archive is published
-    // *on this site* and reached the only way anything here is reached, by
-    // Committee=. See FELAGSDOMUR_KEY below.
-    key: FELAGSDOMUR_KEY,
-    name: "Félagsdómur",
-    committee: "Félagsdómur",
-    ministry: "Félags- og húsnæðismálaráðuneytið",
-    boardId: "dc04e614-4214-11e7-941a-005056bc530c",
-    approxCases: 107,
-  },
-  {
     key: "hollustuhaettanefnd",
     name: "Úrskurðarnefnd samkvæmt lögum um hollustuhætti og mengunarvarnir",
     committee: "Úrskurðarnefnd samkvæmt lögum um hollustuhætti og mengunarvarnir",
@@ -411,9 +397,24 @@ export function boardListUrl(
   board: AdrBoard,
   opts: { page?: number; base?: string } = {}
 ): string {
+  return committeeListUrl(board.committee, opts);
+}
+
+/**
+ * The same listing, addressed by the site's `Committee=` value alone.
+ *
+ * Split out because Félagsdómur's archive is reached this way but Félagsdómur
+ * is not an AdrBoard — see FELAGSDOMUR_KEY. Everything above about the exotic
+ * characters applies here: the value goes through URLSearchParams rather than
+ * being hand-escaped, so the U+066B and the non-breaking space survive.
+ */
+export function committeeListUrl(
+  committee: string,
+  opts: { page?: number; base?: string } = {}
+): string {
   const params = new URLSearchParams({
     SearchQuery: "",
-    Committee: board.committee,
+    Committee: committee,
     ContentTypes: "",
     Themes: "",
     Ministries: "",

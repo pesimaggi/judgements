@@ -48,18 +48,19 @@
 #   EFTA_FETCH_DOCUMENTS    default 1     — see README on eftacourt.int robots.txt
 #   EFTA_MAX_CASES          default 1000  — the register is ~461 cases
 #   UMBODSMADUR_MAX_CASES   default 600   — full backfill is ~11,455; raise for a one-off
-#   FELAGSDOMUR_MAX_CASES   default 300   — the court publishes 200; one run seeds
-#                                           the lot, and a quiet run fetches none
+#   FELAGSDOMUR_MAX_CASES   default 400   — the court publishes 306 across its two
+#                                           sites; one run seeds the lot, and a
+#                                           quiet run fetches none
 #   STJORNARRADID_CASES     default 400   — cases the incremental pass may fetch per run
 #   STJORNARRADID_BACKFILL  default 900   — cases the rolling backfill may fetch per
-#                                           run, shared across all 41 boards in list
+#                                           run, shared across all 40 boards in list
 #                                           order; the priority pass below has its own
 #   STJORNARRADID_PRIORITY  default "kaerunefnd-husamala" — board key(s), comma
 #                                           separated, backfilled ahead of the rest;
 #                                           set empty to drop the priority pass
 #   STJORNARRADID_PRIORITY_CASES  default 1200 — cases that pass may fetch per run
 #   STJORNARRADID_RETRY     default 300   — cases the retry sweep re-attempts
-#   STJORNARRADID_BOARDS    unset         — comma-separated board keys; all 41 by default
+#   STJORNARRADID_BOARDS    unset         — comma-separated board keys; all 40 by default
 #   LOGRETTA_FETCH_PDFS     unset         — see README on the Prismic CDN's robots.txt
 #
 set -u
@@ -130,12 +131,13 @@ for adapter in $ADAPTERS; do
       fi
       ;;
     felagsdomur)
-      # The labour court's own site. Its whole archive is 200 cases, so there
-      # is no backfill mode to schedule separately: every run walks the whole
-      # listing (ten list fetches) and fetches only what is missing, which on
-      # a quiet run is nothing at all. The default budget is above the size of
+      # The labour court, both halves of it: felagsdomur.is from case year 2010
+      # and stjornarradid.is before that. 306 cases in all, so there is no
+      # backfill mode to schedule separately: every run walks both listings in
+      # full (eleven fetches) and fetches only what is missing, which on a
+      # quiet run is nothing at all. The default budget is above the size of
       # the archive on purpose — a fresh database is seeded by one run.
-      INGEST_MAX_CASES="${FELAGSDOMUR_MAX_CASES:-300}" \
+      INGEST_MAX_CASES="${FELAGSDOMUR_MAX_CASES:-400}" \
         npm run ingest -- --adapter=felagsdomur
       ;;
     felagsdomur-retry)
@@ -149,9 +151,9 @@ for adapter in $ADAPTERS; do
         npm run ingest -- --adapter=umbodsmadur
       ;;
     stjornarradid)
-      # The scheduled pickup: each of the 41 boards' newest pages, stopping
+      # The scheduled pickup: each of the 40 boards' newest pages, stopping
       # once a run of already-stored rulings appears. A firing with nothing new
-      # is 41 list queries and no detail fetches at all.
+      # is 40 list queries and no detail fetches at all.
       INGEST_MODE=recent \
       INGEST_MAX_CASES="${STJORNARRADID_CASES:-400}" \
         npm run ingest -- --adapter=stjornarradid
@@ -166,7 +168,7 @@ for adapter in $ADAPTERS; do
       ;;
     stjornarradid-priority)
       # One board pulled to the front of the queue. The rolling backfill below
-      # walks ADR_BOARDS in order and shares one case budget across all 41, so
+      # walks ADR_BOARDS in order and shares one case budget across all 40, so
       # a board partway down the list gets nothing until the ones above it are
       # complete: Kærunefnd húsamála (2,013 cases) sits behind Kærunefnd
       # útlendingamála (4,846) and Almannatryggingar (3,453), i.e. days of
