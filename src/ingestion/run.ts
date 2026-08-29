@@ -24,6 +24,7 @@ import { umbodsmadurAdapter } from "./adapters/umbodsmadur";
 import { stjornarradidAdapter } from "./adapters/stjornarradid";
 import { felagsdomurAdapter } from "./adapters/felagsdomur";
 import { uuaAdapter } from "./adapters/uua";
+import { obyggdanefndAdapter } from "./adapters/obyggdanefnd";
 import { logrettaAdapter } from "./adapters/logretta";
 import { ulfljoturAdapter } from "./adapters/ulfljotur";
 import { lagasafnAdapter } from "./adapters/lagasafn";
@@ -36,6 +37,7 @@ const ADAPTERS: Record<string, IngestionAdapter> = {
   stjornarradid: stjornarradidAdapter,
   felagsdomur: felagsdomurAdapter,
   uua: uuaAdapter,
+  obyggdanefnd: obyggdanefndAdapter,
   logretta: logrettaAdapter,
   ulfljotur: ulfljoturAdapter,
   lagasafn: lagasafnAdapter,

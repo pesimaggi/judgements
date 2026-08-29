@@ -100,6 +100,20 @@ const EXTERNAL_ADR_SOURCES: SourceDef[] = [
     kind: "decision",
     status: "live",
   },
+  {
+    // The commission that decided what is þjóðlenda — public commons — and
+    // what is anybody's property, working the country through in twelve svæði
+    // from 1998 to its final report in March 2026. Eighty-four rulings, each a
+    // PDF of several hundred pages: by a wide margin the longest documents here.
+    key: "obyggdanefnd",
+    name: "Óbyggðanefnd",
+    officialBaseUrl: "https://obyggdanefnd.is/urskurdir/",
+    language: "is",
+    group: ADR,
+    adapterKey: "obyggdanefnd",
+    kind: "decision",
+    status: "live",
+  },
 ];
 
 /** Every source the system knows about, live or not. */

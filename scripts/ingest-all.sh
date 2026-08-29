@@ -55,6 +55,9 @@
 #                                           the archive is ~3,000, so a fresh
 #                                           database fills over about eight runs
 #   UUA_RETRY               default 200   — rulings the retry sweep re-attempts
+#   OBYGGDANEFND_MAX_CASES  default 12    — þjóðlendu úrskurðir per run. Small on
+#                                           purpose: each is a 1-5 MB PDF of
+#                                           several hundred pages
 #   STJORNARRADID_CASES     default 400   — cases the incremental pass may fetch per run
 #   STJORNARRADID_BACKFILL  default 900   — cases the rolling backfill may fetch per
 #                                           run, shared across all 40 boards in list
@@ -81,7 +84,7 @@ set -u
 # hand, which is why Endurupptökudómur sat at 2 of 102 cases: the sweep that
 # would have found the other 100 was opt-in and nobody opted in. A source that
 # only closes its gaps when prompted does not close them.
-DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur lagasafn citations"
+DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur lagasafn citations"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"
@@ -169,6 +172,16 @@ for adapter in $ADAPTERS; do
       INGEST_MODE=retry \
       INGEST_MAX_CASES="${UUA_RETRY:-200}" \
         npm run ingest -- --adapter=uua
+      ;;
+    obyggdanefnd)
+      # Óbyggðanefnd's þjóðlendu úrskurðir, on its own site. Only 84 of them,
+      # but each is a PDF of several hundred pages, so the budget is small and
+      # a full backfill takes a handful of runs. No retry pass is scheduled:
+      # its only outstanding gaps are the 2000-01 rulings whose PDFs carry no
+      # usable text at all, and re-fetching 2.6 MB apiece to fail again every
+      # three hours would be waste. Run it by hand if that ever changes.
+      INGEST_MAX_CASES="${OBYGGDANEFND_MAX_CASES:-12}" \
+        npm run ingest -- --adapter=obyggdanefnd
       ;;
     stjornarradid)
       # The scheduled pickup: each of the 40 boards' newest pages, stopping
