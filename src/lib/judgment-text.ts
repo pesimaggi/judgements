@@ -126,6 +126,43 @@ function cleanChars(text: string): string {
 }
 
 /**
+ * Collapses a letter-spaced heading back into words.
+ *
+ * Icelandic courts and boards like to set a heading with a space between every
+ * letter — "F É L A G S D Ó M U R", "D Ó M S O R Ð:", "Ú R S K U R Ð U R
+ * Á F R Ý J U N A R N E F N D A R" — and pdf-parse reproduces that faithfully.
+ * Left alone it survives into the stored text, where it is unreadable,
+ * unsearchable (nothing tokenises to "Félagsdómur") and not recognised as the
+ * heading it is.
+ *
+ * Words inside such a line are separated by a run of two or more spaces, which
+ * is what makes the two levels recoverable. Deliberately narrow: every token
+ * must be a single *letter*, so a line of initials, digits or dates is left
+ * alone, and a line with any ordinary word in it is not touched at all —
+ * "Helgi I. Jónsson" and "a) b) c)" come back untouched.
+ */
+export function unspaceLetterSpacing(line: string): string {
+  const trimmed = line.trim();
+  if (trimmed.length > 120 || !trimmed.includes(" ")) return line;
+
+  // "D Ó M S O R Ð:" — the punctuation rides on the last letter, so it is set
+  // aside and put back rather than failing the all-single-letters test.
+  const tail = /[.:,;]+$/.exec(trimmed)?.[0] ?? "";
+  const body = tail ? trimmed.slice(0, -tail.length).trimEnd() : trimmed;
+
+  const words = body.split(/ {2,}/);
+  let letters = 0;
+  for (const word of words) {
+    const tokens = word.split(" ");
+    if (!tokens.every((t) => t.length === 1 && /\p{L}/u.test(t))) return line;
+    letters += tokens.length;
+  }
+  // Two letters apart is an initial or a typo, not letter-spacing.
+  if (letters < 4) return line;
+  return words.map((w) => w.replace(/ /g, "")).join(" ") + tail;
+}
+
+/**
  * Reflows pdf-parse's line-per-visual-line output into paragraphs.
  *
  * A line continues the current paragraph unless something says otherwise:
@@ -134,7 +171,8 @@ function cleanChars(text: string): string {
  * width (i.e. it was a paragraph's last line, not a wrapped one).
  */
 export function normalizeJudgmentText(raw: string): string {
-  const lines = cleanChars(raw).split("\n");
+  // Before anything else: a letter-spaced heading is one word, not eleven.
+  const lines = cleanChars(raw).split("\n").map(unspaceLetterSpacing);
 
   const shortLine = (typicalLineWidth(lines) || 80) * 0.85;
 

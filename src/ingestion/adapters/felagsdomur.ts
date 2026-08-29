@@ -2,7 +2,7 @@ import { load, type Cheerio } from "cheerio";
 import type { AnyNode } from "domhandler";
 import pdfParse from "pdf-parse";
 import { prisma } from "@/lib/db";
-import { normalizeJudgmentText } from "@/lib/judgment-text";
+import { normalizeJudgmentText, unspaceLetterSpacing } from "@/lib/judgment-text";
 import {
   FELAGSDOMUR_COMMITTEE,
   FELAGSDOMUR_KEY,
@@ -190,52 +190,6 @@ function pdfUrlFor(id: string, base = BASE): string {
   return `${base.replace(/\/$/, "")}/Cache/Verdicts/${id}.pdf`;
 }
 
-/**
- * Collapses a letter-spaced heading back into words.
- *
- * Félagsdómur sets its two main headings with a space between every letter:
- * "F É L A G S D Ó M U R" and "D ó m u r   F é l a g s d ó m s". pdf-parse
- * reproduces that faithfully, and left alone it survives into the stored text,
- * where it is unreadable, unsearchable (no token matches "Félagsdómur") and
- * not recognised as the heading it is.
- *
- * Words inside such a line are separated by a run of two or more spaces, which
- * is what makes the two levels recoverable. Deliberately narrow: every token
- * must be a single *letter*, so a line of initials, digits or dates is left
- * alone, and a line with any ordinary word in it is not touched at all.
- */
-export function unspaceLetterSpacing(line: string): string {
-  const trimmed = line.trim();
-  if (trimmed.length > 120 || !trimmed.includes(" ")) return line;
-
-  // "D Ó M S O R Ð:" — the punctuation rides on the last letter, so it is set
-  // aside and put back rather than failing the all-single-letters test.
-  const tail = /[.:,;]+$/.exec(trimmed)?.[0] ?? "";
-  const body = tail ? trimmed.slice(0, -tail.length).trimEnd() : trimmed;
-
-  const words = body.split(/ {2,}/);
-  let letters = 0;
-  for (const word of words) {
-    const tokens = word.split(" ");
-    if (!tokens.every((t) => t.length === 1 && /\p{L}/u.test(t))) return line;
-    letters += tokens.length;
-  }
-  // Two letters apart is an initial or a typo, not letter-spacing.
-  if (letters < 4) return line;
-  return words.map((w) => w.replace(/ /g, "")).join(" ") + tail;
-}
-
-/** Every line of a PDF de-letter-spaced, before the text is reflowed. */
-function unspaceHeadings(text: string): string {
-  return text.split("\n").map(unspaceLetterSpacing).join("\n");
-}
-
-/**
- * "Leitin skilaði 200 niðurstöðum" is on the search pane, not here, so the
- * count of cases the court publishes is what the walk actually listed. That
- * is exact rather than approximate: the walk stops on an empty page, so it
- * has seen the whole listing by the time this is used.
- */
 /**
  * Which of the court's two sites a case came from. It decides one thing only —
  * where the text is read from — because everything else about a stored case is
@@ -497,7 +451,7 @@ async function fetchJudgmentText(
   try {
     const { body } = await politeFetchBytes(pdfUrl);
     const { text } = await pdfParse(body);
-    const reflowed = normalizeJudgmentText(unspaceHeadings(text));
+    const reflowed = normalizeJudgmentText(text);
     if (looksLikeIcelandic(reflowed)) return { text: reflowed, pdfUrl };
     ctx.log(
       `  ${item.caseNumber ?? item.id}: PDF extracted ${reflowed.length} chars with no ` +
@@ -508,7 +462,7 @@ async function fetchJudgmentText(
   }
 
   const html = await ctx.fetchText(item.url);
-  const fallback = normalizeJudgmentText(unspaceHeadings(load(html)("#verdict-text").first().text()));
+  const fallback = normalizeJudgmentText(load(html)("#verdict-text").first().text());
   return fallback.length >= MIN_TEXT_CHARS ? { text: fallback } : null;
 }
 

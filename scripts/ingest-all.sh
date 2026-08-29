@@ -58,6 +58,7 @@
 #   OBYGGDANEFND_MAX_CASES  default 12    — þjóðlendu úrskurðir per run. Small on
 #                                           purpose: each is a 1-5 MB PDF of
 #                                           several hundred pages
+#   NEYTENDAMAL_MAX_CASES   default 120   — the board has published ~228
 #   STJORNARRADID_CASES     default 400   — cases the incremental pass may fetch per run
 #   STJORNARRADID_BACKFILL  default 900   — cases the rolling backfill may fetch per
 #                                           run, shared across all 40 boards in list
@@ -84,7 +85,7 @@ set -u
 # hand, which is why Endurupptökudómur sat at 2 of 102 cases: the sweep that
 # would have found the other 100 was opt-in and nobody opted in. A source that
 # only closes its gaps when prompted does not close them.
-DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur lagasafn citations"
+DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur lagasafn citations"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"
@@ -182,6 +183,15 @@ for adapter in $ADAPTERS; do
       # three hours would be waste. Run it by hand if that ever changes.
       INGEST_MAX_CASES="${OBYGGDANEFND_MAX_CASES:-12}" \
         npm run ingest -- --adapter=obyggdanefnd
+      ;;
+    neytendamal)
+      # Áfrýjunarnefnd neytendamála, on Neytendastofa's site rather than
+      # through stjornarradid.is. ~228 rulings, one index page, one PDF each,
+      # so two runs seed it and a quiet run costs one index fetch. No retry
+      # pass is scheduled: the only outstanding gaps are two PDFs that extract
+      # nothing at all, and re-fetching them every three hours is waste.
+      INGEST_MAX_CASES="${NEYTENDAMAL_MAX_CASES:-120}" \
+        npm run ingest -- --adapter=neytendamal
       ;;
     stjornarradid)
       # The scheduled pickup: each of the 40 boards' newest pages, stopping

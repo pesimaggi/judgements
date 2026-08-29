@@ -114,6 +114,19 @@ const EXTERNAL_ADR_SOURCES: SourceDef[] = [
     kind: "decision",
     status: "live",
   },
+  {
+    // Consumer-law appeals: misleading advertising, price marking, unfair
+    // commercial practices, product safety. It publishes on the site of the
+    // agency whose decisions it reviews rather than through stjornarradid.is.
+    key: "afryjunarnefnd-neytendamala",
+    name: "Áfrýjunarnefnd neytendamála",
+    officialBaseUrl: "https://www.neytendastofa.is/akvardanir/urskurdir-afryjunarnefndar-neyte/",
+    language: "is",
+    group: ADR,
+    adapterKey: "neytendamal",
+    kind: "decision",
+    status: "live",
+  },
 ];
 
 /** Every source the system knows about, live or not. */
