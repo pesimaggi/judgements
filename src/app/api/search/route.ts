@@ -16,11 +16,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  // Hard rule: no courts selected → no search. All sources are opt-in.
+  // Hard rule: no sources selected → no search. All sources are opt-in.
   const sources = (body.sources ?? []).filter((s) => SOURCE_KEYS.has(s));
   if (sources.length === 0) {
     return NextResponse.json(
-      { error: "Select one or more courts to search." },
+      { error: "Select one or more sources to search." },
       { status: 400 }
     );
   }

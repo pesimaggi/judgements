@@ -37,9 +37,18 @@ interface Act {
   actCaseCount: number;
 }
 
-/** "12 dómar vísa til þessa ákvæðis" — Icelandic pluralisation is 1 vs many. */
+/**
+ * "12 úrlausnir vísa til þessa ákvæðis" — Icelandic pluralisation is 1 vs many.
+ *
+ * "Úrlausn", not "dómur". Most of what cites a provision here is not a
+ * judgment: the app holds six courts and forty úrskurðarnefndir, and the
+ * boards outnumber the courts by an order of magnitude. "Úrlausn" is the term
+ * that covers a dómur and an úrskurður alike, so the count says something true
+ * whatever the reader clicks through to. (Feminine: *ein úrlausn vísar*,
+ * *tvær úrlausnir vísa*.)
+ */
 function caseBadgeLabel(n: number): string {
-  return n === 1 ? "1 dómur vísar til þessa ákvæðis" : `${n} dómar vísa til þessa ákvæðis`;
+  return n === 1 ? "1 úrlausn vísar til þessa ákvæðis" : `${n} úrlausnir vísa til þessa ákvæðis`;
 }
 
 export default function ActPage({ params }: { params: { slug: string } }) {
@@ -145,7 +154,7 @@ export default function ActPage({ params }: { params: { slug: string } }) {
             {chapters.length > 0 ? ` · ${chapters.length} kaflar` : ""}
           </span>
           <span>
-            {act.actCaseCount} {act.actCaseCount === 1 ? "dómur vísar" : "dómar vísa"} til laganna
+            {act.actCaseCount} {act.actCaseCount === 1 ? "úrlausn vísar" : "úrlausnir vísa"} til laganna
             {provisionsWithCases > 0 ? ` · ${provisionsWithCases} greinar með tilvísunum` : ""}
           </span>
           <a
@@ -251,7 +260,7 @@ export default function ActPage({ params }: { params: { slug: string } }) {
                           {openProvision === p.id && <ProvisionCases provisionId={p.id} />}
                         </div>
                       ) : (
-                        <p className="mt-3 text-xs text-inkSoft">Engir dómar vísa til þessa ákvæðis.</p>
+                        <p className="mt-3 text-xs text-inkSoft">Engar úrlausnir vísa til þessa ákvæðis.</p>
                       )}
                     </article>
                   ))}

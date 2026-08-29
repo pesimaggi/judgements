@@ -78,7 +78,7 @@ export function ProvisionCases({ provisionId }: { provisionId: string }) {
     <div className="mt-2 space-y-2">
       {citationCount > total && (
         <p className="text-[11px] text-inkSoft">
-          {total} {total === 1 ? "dómur" : "dómar"} · {citationCount} tilvísanir alls
+          {total} {total === 1 ? "úrlausn" : "úrlausnir"} · {citationCount} tilvísanir alls
         </p>
       )}
 
@@ -150,7 +150,7 @@ export function ProvisionCases({ provisionId }: { provisionId: string }) {
             Previous
           </button>
           <span className="text-inkSoft">
-            Page {page} of {totalPages} · {total} {total === 1 ? "dómur" : "dómar"}
+            Page {page} of {totalPages} · {total} {total === 1 ? "úrlausn" : "úrlausnir"}
           </span>
           <button
             type="button"

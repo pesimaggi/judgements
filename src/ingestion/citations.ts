@@ -13,10 +13,11 @@
  *
  * Scholarly journals are deliberately left out. An article citing 26. gr.
  * skaðabótalaga is worth finding, but CaseProvisionLink is modelled as *a
- * judgment citing a provision* and the act reader counts its rows as "dómar" —
- * so feeding articles into it would quietly make every one of those counts
- * wrong. Journal articles stay fully searchable; linking them to provisions
- * needs a link type and a label of their own first.
+ * decision in a case citing a provision* and the act reader counts its rows as
+ * "úrlausnir" — so feeding articles into it would quietly make every one of
+ * those counts wrong. An article is not an úrlausn: nobody decided anything.
+ * Journal articles stay fully searchable; linking them to provisions needs a
+ * link type and a label of their own first.
  *
  * Incremental and resumable, like the other pipelines here: a judgment is
  * rescanned only when its text has changed since the last scan, which is one

@@ -9,11 +9,11 @@ This is a deliberately narrowed build: no CJEU. The three Icelandic courts publi
 ## What's in the MVP
 
 - **Search UI** — main search bar, left-side panel with every source as an opt-in checkbox, filters (date range, year, sort), result cards with highlighted snippets, and paginated results (15 per page). Sources are grouped, and a group of more than eight (the 40 úrskurðarnefndir) folds down to one line showing how many of it are ticked, so a long list cannot bury the courts above it. A group with something already ticked opens itself — a filter you cannot see is a filter you will forget you set.
-- **Strict opt-in courts** — nothing is selected when the app opens, the Search button is disabled until at least one court is ticked, selected courts are shown as removable chips above the results, and the API itself returns `400 Select one or more courts to search.` if called without sources.
+- **Strict opt-in sources** — nothing is selected when the app opens, the Search button is disabled until at least one source is ticked, selected sources are shown as removable chips above the results, and the API itself returns `400 Select one or more sources to search.` if called without sources. The UI says *sources*, not *courts*: the panel is six courts, the Ombudsman, forty appeal boards and two journals, and calling all of that "courts" was wrong on three counts out of four.
 - **Case summaries** — where a judgment carries its own `Útdráttur` section, result cards offer it behind a disclosure arrow, so you can read the court's own summary without opening the full text.
 - **Full document page** — structured metadata, the judgment typeset as readable prose (headings, paragraphs, numbered clauses, quoted passages) with highlighted hits, search-within-document, copyable citation, official-source link, related cases via case-number citation extraction.
 - **Icelandic acts (lög)** — the in-force text of Icelandic law from [Lagasafn](https://www.althingi.is/lagas/), parsed into chapters (kaflar), provisions (greinar) and paragraphs (málsgreinar), with an act reader at `/log/{actNumber}-{year}`.
-- **Provision-level case linking** — each provision shows how many judgments cite it ("12 dómar vísa til þessa ákvæðis"), expanding to the citing cases with the sentence the citation was found in, so you can see *why* a case matched before opening it.
+- **Provision-level case linking** — each provision shows how many decisions cite it ("12 úrlausnir vísa til þessa ákvæðis"), expanding to the citing cases with the sentence the citation was found in, so you can see *why* a case matched before opening it.
 - **Act catalogue** — `/log` lists every ingested act with its provision count and how many judgments cite it, searchable by title, short name or number, and sortable by most-cited.
 - **Specific search** — alongside the keyword search, two live lookups that narrow the results, each accepting several selections that combine as AND: an act/provision box that takes the citation as it is written ("lög um aðbúnað og hollustuhætti" finds the cases about the act; "57. gr. a. laga um aðbúnað og hollustuhætti" narrows to the cases citing that article), and a subject-tag box. Acts match on title, citation number, or the short names judgments actually use — "vaxtalög" finds lög nr. 38/2001.
 - **Administrative case law** — the úrskurðarnefndir, kærunefndir and ministry appeal desks at stjornarradid.is, each board its own tickable source rather than one undifferentiated pile. For immigration, benefits, tenancy, procurement and freedom of information this is where the case law actually is, and a search of the courts alone would miss it. See *Úrskurðarnefndir og ráðuneyti* below.
@@ -87,10 +87,20 @@ offered in the search UI) or `pilot` (adapter still being built — a valid
 source key for ingestion and the API, but hidden from the UI so nobody ticks a
 court that would return nothing).
 
-Each source is also a `kind`: a `decision` (a court judgment, an ombudsman
-opinion) or `scholarship` (a journal article). The distinction is not cosmetic
-— it decides what the citation job scans, and therefore what the act reader is
-allowed to call "dómar". See *Ritrýnd fræðirit* below.
+Each source is also a `kind`: a `decision` (a court judgment, a board's
+úrskurður, an ombudsman opinion) or `scholarship` (a journal article). The
+distinction is not cosmetic — it decides what the citation job scans, and
+therefore what the act reader is allowed to count. See *Ritrýnd fræðirit*
+below.
+
+**A note on vocabulary.** The app began as three courts and its copy said so:
+the search UI talked about "courts" and the act reader counted "dómar". It is
+now six courts, the Ombudsman, forty appeal boards and two journals, and most
+of what it holds is neither a court nor a dómur. So the UI says **sources**
+where it used to say courts, and the act reader counts **úrlausnir** — the
+Icelandic term that covers a dómur and an úrskurður alike — where it used to
+say dómar. The source keys, the `?sources=` query and the database columns are
+unchanged; this is copy, not schema.
 
 | Source | Status | Language stored |
 |---|---|---|
@@ -503,10 +513,11 @@ Search snippets are unaffected; those are cut server-side and are what a search
 engine is for.
 
 **The `citations` adapter skips them.** `CaseProvisionLink` is modelled as *a
-judgment citing a provision*, and the act reader counts its rows as "dómar" —
-"12 dómar vísa til þessa ákvæðis". An article citing 26. gr. skaðabótalaga is
-worth finding, but feeding it into that table would quietly make every one of
-those counts wrong. Linking articles to provisions needs a link type and a
+decision in a case citing a provision*, and the act reader counts its rows as
+"úrlausnir" — "12 úrlausnir vísa til þessa ákvæðis". An article citing 26. gr.
+skaðabótalaga is worth finding, but an article is not an úrlausn — nobody
+decided anything — and feeding it into that table would quietly make every one
+of those counts wrong. Linking articles to provisions needs a link type and a
 label of its own first.
 
 #### Tímarit Lögréttu

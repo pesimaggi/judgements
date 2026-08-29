@@ -16,12 +16,14 @@ export interface SourceDef {
    */
   adapterKey: string;
   /**
-   * "decision"    — a ruling in an individual case: a court judgment, or an
-   *   ombudsman opinion. These are what the citation job links to provisions
-   *   and what the act reader counts as "dómar".
+   * "decision"    — a ruling in an individual case: a court judgment, an
+   *   úrskurður of an appeal board, an ombudsman opinion. These are what the
+   *   citation job links to provisions and what the act reader counts as
+   *   "úrlausnir" — the term that covers all three, which "dómar" did not
+   *   once the boards were ingested and started outnumbering the courts.
    * "scholarship" — a peer-reviewed article in a legal journal. Searchable
    *   like everything else, but deliberately kept out of the provision
-   *   citation job, whose model and UI both say "dómar" — see
+   *   citation job, whose model and UI both say "úrlausnir" — see
    *   src/ingestion/citations.ts.
    */
   kind: "decision" | "scholarship";

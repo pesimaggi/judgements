@@ -20,7 +20,7 @@ type Sort = "title" | "number" | "cases" | "provisions";
 const SORT_LABELS: { value: Sort; label: string }[] = [
   { value: "title", label: "Heiti (A–Ö)" },
   { value: "number", label: "Nýjust fyrst" },
-  { value: "cases", label: "Flestir dómar" },
+  { value: "cases", label: "Flestar úrlausnir" },
   { value: "provisions", label: "Flestar greinar" },
 ];
 
@@ -92,7 +92,7 @@ export default function ActIndexPage() {
             <>
               {totals.acts.toLocaleString("is-IS")} lög ·{" "}
               {totals.provisions.toLocaleString("is-IS")} greinar ·{" "}
-              {totals.linkedProvisions.toLocaleString("is-IS")} greinar sem dómar vísa til.
+              {totals.linkedProvisions.toLocaleString("is-IS")} greinar sem úrlausnir vísa til.
             </>
           )}
         </p>
@@ -136,7 +136,7 @@ export default function ActIndexPage() {
             onChange={(e) => setCitedOnly(e.target.checked)}
             className="h-4 w-4 rounded border-line accent-accent"
           />
-          Aðeins lög sem dómar vísa til
+          Aðeins lög sem úrlausnir vísa til
         </label>
       </div>
 
@@ -168,7 +168,7 @@ export default function ActIndexPage() {
             <span className="w-24 shrink-0 text-right text-[11px]">
               {a.citingCases > 0 ? (
                 <span className="rounded-full bg-accentSoft px-2 py-0.5 font-medium text-accent">
-                  {a.citingCases} {a.citingCases === 1 ? "dómur" : "dómar"}
+                  {a.citingCases} {a.citingCases === 1 ? "úrlausn" : "úrlausnir"}
                 </span>
               ) : (
                 <span className="text-inkSoft">—</span>
