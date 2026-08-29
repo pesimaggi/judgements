@@ -48,6 +48,8 @@
 #   EFTA_FETCH_DOCUMENTS    default 1     — see README on eftacourt.int robots.txt
 #   EFTA_MAX_CASES          default 1000  — the register is ~461 cases
 #   UMBODSMADUR_MAX_CASES   default 600   — full backfill is ~11,455; raise for a one-off
+#   FELAGSDOMUR_MAX_CASES   default 300   — the court publishes 200; one run seeds
+#                                           the lot, and a quiet run fetches none
 #   STJORNARRADID_CASES     default 400   — cases the incremental pass may fetch per run
 #   STJORNARRADID_BACKFILL  default 900   — cases the rolling backfill may fetch per
 #                                           run, shared across all 41 boards in list
@@ -74,7 +76,7 @@ set -u
 # hand, which is why Endurupptökudómur sat at 2 of 102 cases: the sweep that
 # would have found the other 100 was opt-in and nobody opted in. A source that
 # only closes its gaps when prompted does not close them.
-DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps efta-court umbodsmadur stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur lagasafn citations"
+DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur lagasafn citations"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"
@@ -126,6 +128,21 @@ for adapter in $ADAPTERS; do
         INGEST_MAX_PAGES="$gap_pages" \
           npm run ingest -- --adapter=icelandic-courts
       fi
+      ;;
+    felagsdomur)
+      # The labour court's own site. Its whole archive is 200 cases, so there
+      # is no backfill mode to schedule separately: every run walks the whole
+      # listing (ten list fetches) and fetches only what is missing, which on
+      # a quiet run is nothing at all. The default budget is above the size of
+      # the archive on purpose — a fresh database is seeded by one run.
+      INGEST_MAX_CASES="${FELAGSDOMUR_MAX_CASES:-300}" \
+        npm run ingest -- --adapter=felagsdomur
+      ;;
+    felagsdomur-retry)
+      # The gap ledger and nothing else, as for the other sources. Costs one
+      # request per outstanding case and nothing when there are none.
+      INGEST_MODE=retry \
+        npm run ingest -- --adapter=felagsdomur
       ;;
     umbodsmadur)
       INGEST_MAX_CASES="${UMBODSMADUR_MAX_CASES:-600}" \

@@ -22,6 +22,7 @@ import { icelandicCourtsAdapter } from "./adapters/icelandic-courts";
 import { eftaCourtAdapter } from "./adapters/efta-court";
 import { umbodsmadurAdapter } from "./adapters/umbodsmadur";
 import { stjornarradidAdapter } from "./adapters/stjornarradid";
+import { felagsdomurAdapter } from "./adapters/felagsdomur";
 import { logrettaAdapter } from "./adapters/logretta";
 import { ulfljoturAdapter } from "./adapters/ulfljotur";
 import { lagasafnAdapter } from "./adapters/lagasafn";
@@ -32,6 +33,7 @@ const ADAPTERS: Record<string, IngestionAdapter> = {
   "efta-court": eftaCourtAdapter,
   umbodsmadur: umbodsmadurAdapter,
   stjornarradid: stjornarradidAdapter,
+  felagsdomur: felagsdomurAdapter,
   logretta: logrettaAdapter,
   ulfljotur: ulfljoturAdapter,
   lagasafn: lagasafnAdapter,

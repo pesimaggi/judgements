@@ -1,4 +1,4 @@
-import { ADR_BOARDS, boardListUrl } from "./adr-boards";
+import { ADR_BOARDS, FELAGSDOMUR_KEY, boardListUrl } from "./adr-boards";
 
 export interface SourceDef {
   key: string;
@@ -54,8 +54,14 @@ const ADR = "Úrskurðarnefndir og ráðuneyti";
  * what the citation job links to provisions. Their officialBaseUrl is the
  * board's filtered listing on the site — most boards have no page of their
  * own, so that listing is the closest thing to a board's home.
+ *
+ * Félagsdómur is filtered out. It is in ADR_BOARDS because half its archive
+ * is published on that site and reached the same way as a board's, but it is
+ * a court, not an úrskurðarnefnd, and it is registered as one below — under
+ * the courts, with the felagsdomur adapter that reads the other half from
+ * the court's own site. One source key, one checkbox, two feeders.
  */
-const ADR_SOURCES: SourceDef[] = ADR_BOARDS.map((board) => ({
+const ADR_SOURCES: SourceDef[] = ADR_BOARDS.filter((b) => b.key !== FELAGSDOMUR_KEY).map((board) => ({
   key: board.key,
   name: board.name,
   officialBaseUrl: boardListUrl(board),
@@ -109,6 +115,26 @@ export const ALL_SOURCES: SourceDef[] = [
     language: "is",
     group: ICELANDIC_COURTS,
     adapterKey: "icelandic-courts",
+    kind: "decision",
+    status: "live",
+  },
+  {
+    // Félagsdómur — the labour court, which rules on collective agreements
+    // and the legality of industrial action. A court in its own right under
+    // lög nr. 80/1938, not one of the úrskurðarnefndir it was grouped with
+    // until now, and not in island.is's feed: it publishes for itself.
+    //
+    // Its archive is split across two sites, and this one source holds both
+    // halves — see FELAGSDOMUR_KEY in src/lib/adr-boards.ts. adapterKey names
+    // the adapter that reads the live half at felagsdomur.is; the pre-2010
+    // half arrives with the stjornarradid run, so this source's row on
+    // /admin/ingestion shows the felagsdomur runs only.
+    key: FELAGSDOMUR_KEY,
+    name: "Félagsdómur",
+    officialBaseUrl: "https://felagsdomur.is",
+    language: "is",
+    group: ICELANDIC_COURTS,
+    adapterKey: "felagsdomur",
     kind: "decision",
     status: "live",
   },

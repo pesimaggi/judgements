@@ -57,6 +57,25 @@ export interface AdrBoard {
   approxCases: number;
 }
 
+/**
+ * Félagsdómur's source key, named because two adapters feed it and both have
+ * to agree on the string.
+ *
+ * The court's archive is split across two sites and neither half is the whole
+ * of it: rulings up to case year 2009 are on stjornarradid.is (107 of them,
+ * ending 1 November 2010 with case nr. 10/2009), and everything numbered from
+ * 2010 is on the court's own site at felagsdomur.is. The two sets are disjoint
+ * — the split is by case number, not by decision date — so both feed one
+ * source and one checkbox rather than splitting the court in two.
+ *
+ * The consequence for bookkeeping: neither adapter may write
+ * Source.totalAvailable on its own, since each can only see its own half.
+ * The felagsdomur adapter adds the two together; the stjornarradid adapter
+ * skips this board when it records totals. See src/ingestion/adapters/
+ * felagsdomur.ts and recordTotal() in src/ingestion/adapters/stjornarradid.ts.
+ */
+export const FELAGSDOMUR_KEY = "felagsdomur";
+
 /** Every board in the úrskurðir og álit collection, largest archive first. */
 export const ADR_BOARDS: AdrBoard[] = [
   {
@@ -229,7 +248,12 @@ export const ADR_BOARDS: AdrBoard[] = [
     approxCases: 108,
   },
   {
-    key: "felagsdomur",
+    // Not a board. Félagsdómur is a court — the labour court — and its source
+    // sits with the other courts in src/lib/sources.ts rather than in this
+    // list's group. It stays here because its pre-2010 archive is published
+    // *on this site* and reached the only way anything here is reached, by
+    // Committee=. See FELAGSDOMUR_KEY below.
+    key: FELAGSDOMUR_KEY,
     name: "Félagsdómur",
     committee: "Félagsdómur",
     ministry: "Félags- og húsnæðismálaráðuneytið",

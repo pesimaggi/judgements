@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { normalizeJudgmentText } from "@/lib/judgment-text";
 import {
   ADR_BOARDS,
+  FELAGSDOMUR_KEY,
   boardListUrl,
   decisionUrl,
   STJORNARRADID_BASE,
@@ -489,9 +490,16 @@ function selectedBoards(ctx: IngestContext): AdrBoard[] {
  * The site's live count for a board, kept on its Source row so the progress
  * page compares what we hold against what exists rather than against the
  * figure someone wrote down once.
+ *
+ * Félagsdómur is the one board this may not do. It is a court whose archive is
+ * split across two sites, and this site holds only the 107 cases up to 2009 —
+ * writing that as the source's total would put the progress bar at 307/107
+ * once the felagsdomur adapter has added the other 200. That adapter sums the
+ * two and writes the total for both. See FELAGSDOMUR_KEY in
+ * src/lib/adr-boards.ts.
  */
 async function recordTotal(board: AdrBoard, total: number | undefined): Promise<void> {
-  if (total === undefined) return;
+  if (total === undefined || board.key === FELAGSDOMUR_KEY) return;
   try {
     await prisma.source.updateMany({ where: { key: board.key }, data: { totalAvailable: total } });
   } catch {

@@ -66,12 +66,14 @@ const HEADING_WORDS = [
 ];
 
 /**
- * Optional tail on a heading: "Dómur Hæstaréttar", "Málsástæður og lagarök",
- * "Kröfur aðila". Courts write these as one heading, so they are matched as
- * one rather than leaving "Hæstaréttar." stranded as a paragraph.
+ * Optional tail on a heading: "Dómur Hæstaréttar", "Dómur Félagsdóms",
+ * "Málsástæður og lagarök", "Kröfur aðila". Courts write these as one heading,
+ * so they are matched as one rather than leaving "Hæstaréttar." stranded as a
+ * paragraph. "Félagsdóms" is named rather than left to the `[LOWER]+dóms`
+ * catch-all, which only matches a tail that is lowercase throughout.
  */
 const HEADING_SUFFIX =
-  `(?:\\s+(?:Hæstaréttar|Landsréttar|Héraðsdóms|héraðsdóms|[${LOWER}]+dóms))?` +
+  `(?:\\s+(?:Hæstaréttar|Landsréttar|Héraðsdóms|héraðsdóms|Félagsdóms|[${LOWER}]+dóms))?` +
   `(?:\\s+(?:og|aðila|málsins)\\s+[${LOWER}]+)?`;
 
 const HEADING_RE = new RegExp(
@@ -164,6 +166,19 @@ export function normalizeJudgmentText(raw: string): string {
     } else {
       current = current ? `${current} ${line}` : line;
     }
+
+    // A line that is nothing but a heading ends there. Without this it starts
+    // a paragraph and then swallows the text under it — "Lykilorð
+    // Kjarasamningur. Viðbótarmenntun.", "Dómur Félagsdóms Mál þetta var
+    // dómtekið 3. júní 2026." — which costs the heading twice over: it does
+    // not render as one, and extractSummary reads to the *next* heading, so a
+    // summary whose closing heading was swallowed runs on into the judgment.
+    //
+    // Deliberately not extended to SECTION_MARKER_RE. That also matches a bare
+    // "1" or "12", and modern judgments carry their clause numbers on lines of
+    // their own — cutting after those would strand every numbered clause's
+    // text from its number.
+    if (HEADING_RE.test(line)) { flush(); previousWasShortEnd = false; continue; }
 
     previousWasShortEnd =
       /[.:!?…”"»)]$/.test(line) && line.length < shortLine;

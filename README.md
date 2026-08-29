@@ -4,11 +4,11 @@ An MVP search engine for **Icelandic court judgments only** — Hæstiréttur Í
 
 > **Disclaimer shown throughout the app:** This is an unofficial research tool. Always verify text against the official source.
 
-This is a deliberately narrowed build: no CJEU. The three Icelandic courts published at [island.is/domar](https://island.is/domar), searched properly — plus the EFTA Court, Umboðsmaður Alþingis, the 41 administrative appeal boards that publish at [stjornarradid.is](https://www.stjornarradid.is/gogn/urskurdir-og-alit-/), and two peer-reviewed Icelandic legal journals for the commentary on them.
+This is a deliberately narrowed build: no CJEU. The three Icelandic courts published at [island.is/domar](https://island.is/domar), searched properly — plus Endurupptökudómur and [Félagsdómur](https://felagsdomur.is/domar-og-urskurdir/), the EFTA Court, Umboðsmaður Alþingis, the 40 administrative appeal boards that publish at [stjornarradid.is](https://www.stjornarradid.is/gogn/urskurdir-og-alit-/), and two peer-reviewed Icelandic legal journals for the commentary on them.
 
 ## What's in the MVP
 
-- **Search UI** — main search bar, left-side panel with every source as an opt-in checkbox, filters (date range, year, sort), result cards with highlighted snippets, and paginated results (15 per page). Sources are grouped, and a group of more than eight (the 41 úrskurðarnefndir) folds down to one line showing how many of it are ticked, so a long list cannot bury the courts above it. A group with something already ticked opens itself — a filter you cannot see is a filter you will forget you set.
+- **Search UI** — main search bar, left-side panel with every source as an opt-in checkbox, filters (date range, year, sort), result cards with highlighted snippets, and paginated results (15 per page). Sources are grouped, and a group of more than eight (the 40 úrskurðarnefndir) folds down to one line showing how many of it are ticked, so a long list cannot bury the courts above it. A group with something already ticked opens itself — a filter you cannot see is a filter you will forget you set.
 - **Strict opt-in courts** — nothing is selected when the app opens, the Search button is disabled until at least one court is ticked, selected courts are shown as removable chips above the results, and the API itself returns `400 Select one or more courts to search.` if called without sources.
 - **Case summaries** — where a judgment carries its own `Útdráttur` section, result cards offer it behind a disclosure arrow, so you can read the court's own summary without opening the full text.
 - **Full document page** — structured metadata, the judgment typeset as readable prose (headings, paragraphs, numbered clauses, quoted passages) with highlighted hits, search-within-document, copyable citation, official-source link, related cases via case-number citation extraction.
@@ -19,7 +19,7 @@ This is a deliberately narrowed build: no CJEU. The three Icelandic courts publi
 - **Administrative case law** — the úrskurðarnefndir, kærunefndir and ministry appeal desks at stjornarradid.is, each board its own tickable source rather than one undifferentiated pile. For immigration, benefits, tenancy, procurement and freedom of information this is where the case law actually is, and a search of the courts alone would miss it. See *Úrskurðarnefndir og ráðuneyti* below.
 - **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`.
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
-- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force act; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `umbodsmadur` ingests the Ombudsman's opinions and letters; `stjornarradid` ingests the 41 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
+- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force act; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court's own register at felagsdomur.is; `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
 - **Scholarly commentary** — Tímarit Lögréttu and Vefrit Úlfljóts, searched alongside the case law rather than in a separate silo, so a query about an unsettled point returns both the judgments and the articles arguing about them. Articles are indexed in full but read at the journal that published them: their cards and pages link out rather than reproducing the text here.
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
 
@@ -95,11 +95,110 @@ allowed to call "dómar". See *Ritrýnd fræðirit* below.
 | Source | Status | Language stored |
 |---|---|---|
 | Hæstiréttur Íslands, Landsréttur, Héraðsdómar, Endurupptökudómur | live | Icelandic |
+| Félagsdómur | live | Icelandic |
 | EFTA Court | live | English |
 | Umboðsmaður Alþingis | live | Icelandic |
-| 41 úrskurðarnefndir, kærunefndir and ministry appeal desks (stjornarradid.is) | live | Icelandic |
+| 40 úrskurðarnefndir, kærunefndir and ministry appeal desks (stjornarradid.is) | live | Icelandic |
 | Tímarit Lögréttu | live | Icelandic |
 | Úlfljótur (vefrit) | live | Icelandic |
+
+### Félagsdómur
+
+The labour court. It rules on collective agreements and on the legality of
+industrial action under lög nr. 80/1938 and nr. 94/1986 — a court in its own
+right, not one of the úrskurðarnefndir, and it is grouped with the courts.
+
+It was in the app before this, but only as one of the stjornarradid boards, and
+only 107 cases of it. **Its archive is split across two sites**, and neither
+half is the whole of it:
+
+| Where | What | Adapter |
+|---|---|---|
+| [felagsdomur.is](https://felagsdomur.is/domar-og-urskurdir/) | case numbers from 2010 on — 200 judgments and úrskurðir, F-1/2010 to the present | `felagsdomur` |
+| [stjornarradid.is](https://www.stjornarradid.is/gogn/urskurdir-og-alit-/), `Committee=Félagsdómur` | case numbers up to 2009 — 107 cases, the last handed down 1 November 2010 | `stjornarradid` |
+
+The two sets are disjoint: the split is by case *number*, not by decision date,
+which is why the older site still carries cases decided in 2010 (nr. 6/2009,
+9/2009, 11/2009, 10/2009) and why nothing is stored twice. stjornarradid.is
+says as much itself, with a placeholder entry in the listing reading "Dómar
+Félagsdóms frá 2010 og til dagsins í dag eru á felagsdomur.is".
+
+That placeholder is counted in the older site's 107 but is a signpost, not a
+case: it has no ruling on its page, so it sits in the gap ledger as one
+permanent `no-text` row. Expect this source to read 306 of 307 rather than
+complete. It is left there rather than special-cased away — a rule broad enough
+to drop it would be broad enough to drop a real case whose page failed to
+render, which is exactly what the ledger exists to catch.
+
+**Both halves feed the one `felagsdomur` source**, so the reader gets one
+checkbox for one court rather than the court split in two by an accident of
+publishing. `FELAGSDOMUR_KEY` in `src/lib/adr-boards.ts` is the string the two
+adapters agree on. The one thing that has to be coordinated is the progress
+bar's denominator: neither adapter can see the whole archive, so the
+`felagsdomur` adapter writes `Source.totalAvailable` as the sum of the two
+(200 + 107 = 307) and the stjornarradid adapter skips this one board when it
+records board totals. Without that the bar would read 307 / 107.
+
+#### How it is read
+
+Verified against the live site (August 2026):
+
+- **robots.txt** disallows `/extensions/`, `/lisa/` and `/Domar` for every
+  user-agent. Nothing the adapter fetches is under any of them: the listing is
+  `/domar-og-urskurdir/` and `/default.aspx`, and the judgments are
+  `/Cache/Verdicts/*.pdf`.
+
+- **The listing** is the page's own "Birta fleiri færslur" endpoint —
+  `/default.aspx?pageitemid=…&offset=N&count=M`, server-rendered HTML with no
+  session and no `__VIEWSTATE`. It carries everything about a case except its
+  text: case number, parties, date, the court's own index terms, and its
+  útdráttur where one has been written. `pageitemid` is a CMS GUID, so it is
+  read off the button rather than hardcoded — a re-deploy changes it, and a
+  stale GUID returns an empty list, which is indistinguishable from "nothing
+  new". The server caps a page at about 22 items whatever `count` asks for, so
+  the walk uses 20.
+
+- **The text is the PDF**, at `/Cache/Verdicts/<id>.pdf`, derived from the
+  case's id so a judgment costs exactly one request. The detail page does carry
+  a text layer of its own, but it is visibly lossy — whole words are dropped
+  from it — so it is only the fallback for a case whose PDF cannot be had.
+
+- **Letter-spaced headings.** Félagsdómur sets its headings with a space
+  between every letter: `F É L A G S D Ó M U R`, `D ó m u r   F é l a g s d ó m s`,
+  `D Ó M S O R Ð:`. pdf-parse reproduces that faithfully, and left alone it is
+  unreadable, unsearchable (nothing tokenises to "Félagsdómur") and not
+  recognised as a heading. `unspaceLetterSpacing` collapses it, narrowly: every
+  token in the line has to be a single letter, so initials, dates and ordinary
+  prose are untouched.
+
+- **The date is the listing's**, and deliberately not re-read from the
+  judgment. This court publishes as it decides, and across a sample spanning
+  the whole archive the listing's date agreed with the date the judgment gives
+  itself in every case. Going looking would be strictly worse: the older
+  judgments put the year and the day in different clauses ("Ár 2010,
+  mánudaginn 21. mars, var í Félagsdómi …"), so the first full date in the
+  opening is as likely to be the day the case was taken to judgment as the day
+  it was decided.
+
+- **Útdráttur.** 15 of the 200 have one; the rest of the listing's abstracts
+  read "Útdráttur birtur síðar", which is a promise rather than a summary and
+  is dropped. Judgments from about 2020 print their own `Lykilorð` and
+  `Útdráttur` at the head of the PDF, so the listing's copies are prepended
+  only when the judgment does not already carry them.
+
+#### Running it
+
+```
+npm run ingest -- --adapter=felagsdomur                 # the whole listing
+INGEST_MODE=retry npm run ingest -- --adapter=felagsdomur   # gap ledger only
+```
+
+There is no backfill mode, and that is not an omission. The other adapters
+carry cursors and a separate sweep because their archives run to thousands of
+cases; this one is 200. Every run walks the whole listing — ten list fetches —
+and fetches only what is missing, which on a quiet run is nothing at all: a
+no-op run takes about ten seconds and makes thirteen requests. A fresh database
+is seeded by one run.
 
 ### EFTA Court
 
@@ -181,7 +280,7 @@ skipped on the next pass.
 
 ### Úrskurðarnefndir og ráðuneyti
 
-Iceland's administrative appeal bodies — the **41** úrskurðarnefndir,
+Iceland's administrative appeal bodies — the **40** úrskurðarnefndir,
 kærunefndir, matsnefndir and ministry appeal desks that publish at
 [stjornarradid.is/gogn/urskurdir-og-alit-](https://www.stjornarradid.is/gogn/urskurdir-og-alit-/).
 About **23,700 rulings**, which is more than everything else in the app put
@@ -201,7 +300,10 @@ a ruling of Kærunefnd útboðsmála and one of Mannanafnanefnd have nothing to 
 with each other, and a researcher wants to tick the one they mean. So every
 board gets its own key, its own checkbox and its own row on the progress page.
 `src/lib/adr-boards.ts` is the registry, and `src/lib/sources.ts` derives the
-41 `SourceDef`s from it rather than keeping a second copy in step by hand.
+40 `SourceDef`s from it rather than keeping a second copy in step by hand. The
+registry has 41 entries: the forty-first is Félagsdómur, which publishes half
+its archive here but is a court and is registered as one — see *Félagsdómur*
+below.
 
 Three identifiers are in play there, and they are not interchangeable:
 
@@ -303,9 +405,11 @@ One board's page is a pointer rather than a ruling — Matsnefnd samkvæmt lögu
 um lax- og silungsveiði says its newer decisions are on Fiskistofa's site.
 Those stay open gaps too, correctly: we do not hold them.
 
-Note that **Félagsdómur**, the Labour Court, is in this collection and so is
-ingested here. It is a court, not an appeal board; it is grouped with the rest
-because that is where the state publishes it.
+**Félagsdómur** is in this collection too, and this adapter still ingests it —
+but only the 107 cases numbered up to 2009, which are all this site holds. It
+is a court, not an appeal board, so its source lives with the courts and its
+other half is read from the court's own site by a separate adapter. See
+*Félagsdómur* below.
 
 #### Running it
 
@@ -650,6 +754,10 @@ corrupt a second court's figure. A total of 0 is never stored: 0 means "we
 asked wrong", not "this court has no cases", and storing it is what produced
 the `6,321 / 0` bar.
 
+Félagsdómur is not among them, and no filter value reaches it: the labour court
+is not in this feed at all. It publishes for itself, and has its own adapter —
+see *Félagsdómur* above.
+
 Sweeping per court is also what makes a complete pass possible. The unfiltered
 search will not paginate past roughly page 3,081 — the classic fixed
 result-window symptom — so no single unfiltered walk can reach the end of a 43k
@@ -792,7 +900,9 @@ src/
       lagasafn.ts                in-force Icelandic acts; incremental by codex version
       efta-court.ts              EFTA Court case register, via cases-sitemap.xml
       umbodsmadur.ts             Umboðsmaður Alþingis, by walking the case id space
-      stjornarradid.ts           41 úrskurðarnefndir and ministry appeal desks,
+      felagsdomur.ts             Félagsdómur's own register at felagsdomur.is;
+                                 one listing walk per run, judgments from PDF
+      stjornarradid.ts           40 úrskurðarnefndir and ministry appeal desks,
                                  board by board through the site's own search
       logretta.ts                Tímarit Lögréttu, via the site's own Prismic API
       ulfljotur.ts               Vefrit Úlfljóts, via the WordPress.com REST API
@@ -853,6 +963,9 @@ npm run ingest -- --adapter=citations
 | `INGEST_MAX_CASES` | stjornarradid | Decision pages fetched per run (default 500) |
 | `INGEST_MAX_PAGES` | stjornarradid | List pages per run (200 rulings each) |
 | `STJORNARRADID_BOARDS` | stjornarradid | Comma-separated board keys to run; all 41 by default |
+| `INGEST_MAX_CASES` | felagsdomur | Judgments fetched per run (default 300; the court publishes 200) |
+| `INGEST_MODE=retry` | felagsdomur | Work the gap ledger and nothing else |
+| `FELAGSDOMUR_BASE` | felagsdomur | Override the site base URL |
 | `STJORNARRADID_BASE` | stjornarradid | Override the site base URL |
 | `LAGASAFN_MAX_ACTS` | lagasafn | Acts fetched per run; the rest resume next run |
 | `LAGASAFN_ONLY` | lagasafn | Ingest a single act, e.g. `91/1991` — bypasses the cursor |
