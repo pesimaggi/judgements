@@ -102,7 +102,7 @@ function SearchPageInner() {
   }) {
     const tags = opts?.tagsOverride ?? activeTags;
     const legalFilter = opts?.legalOverride ?? legal;
-    // No court ticked → search every court rather than blocking the search.
+    // Nothing ticked → search every source rather than blocking the search.
     const activeSources =
       opts?.sourcesOverride ?? (selected.size > 0 ? Array.from(selected) : sources.map((s) => s.key));
     if (activeSources.length === 0) return; // sources not loaded yet
@@ -152,7 +152,7 @@ function SearchPageInner() {
   }
 
   // Clicking a tag (e.g. from a result card) lands here as /?tag=fasteign —
-  // search every court for that tag immediately, no manual court selection needed.
+  // search every source for that tag immediately, no manual selection needed.
   useEffect(() => {
     const tag = searchParams.get("tag");
     if (!tag || sources.length === 0) return;
@@ -211,7 +211,7 @@ function SearchPageInner() {
       </form>
 
       <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-inkSoft">
-        {selected.size === 0 && <span>No courts ticked — searching will use all of them.</span>}
+        {selected.size === 0 && <span>No sources ticked — searching will use all of them.</span>}
         <button onClick={() => setShowFilters(!showFilters)} className="hover:text-ink">
           {showFilters ? "▾ Hide filters" : "▸ Date & sort filters"}
         </button>
@@ -243,7 +243,7 @@ function SearchPageInner() {
       )}
 
       <div className="mt-4 flex flex-col gap-5 lg:flex-row">
-        {/* Sidebar: court selection for keyword search, and — alongside it,
+        {/* Sidebar: source selection for keyword search, and — alongside it,
             not replacing it — the act/provision lookup. */}
         <div className="w-full shrink-0 space-y-4 lg:w-72">
           <SourcePanel
@@ -296,7 +296,7 @@ function SearchPageInner() {
                   key={k}
                   onClick={() => setSelected((s) => toggle(s, k))}
                   className="rounded-full bg-ink px-2.5 py-0.5 text-xs font-medium text-white hover:opacity-80"
-                  title="Remove this court"
+                  title="Remove this source"
                 >
                   {sources.find((s) => s.key === k)?.name ?? k} ✕
                 </button>
@@ -346,7 +346,7 @@ function SearchPageInner() {
                 ))}
                 {results.hits.length === 0 && (
                   <p className="rounded-lg border border-line bg-white p-6 text-sm text-inkSoft">
-                    No matches in the selected courts. Try fewer words, a broader date range, or additional courts.
+                    No matches in the selected sources. Try fewer words, a broader date range, or additional sources.
                   </p>
                 )}
               </div>

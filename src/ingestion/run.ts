@@ -22,6 +22,10 @@ import { icelandicCourtsAdapter } from "./adapters/icelandic-courts";
 import { eftaCourtAdapter } from "./adapters/efta-court";
 import { umbodsmadurAdapter } from "./adapters/umbodsmadur";
 import { stjornarradidAdapter } from "./adapters/stjornarradid";
+import { felagsdomurAdapter } from "./adapters/felagsdomur";
+import { uuaAdapter } from "./adapters/uua";
+import { obyggdanefndAdapter } from "./adapters/obyggdanefnd";
+import { neytendamalAdapter } from "./adapters/neytendamal";
 import { logrettaAdapter } from "./adapters/logretta";
 import { ulfljoturAdapter } from "./adapters/ulfljotur";
 import { lagasafnAdapter } from "./adapters/lagasafn";
@@ -32,6 +36,10 @@ const ADAPTERS: Record<string, IngestionAdapter> = {
   "efta-court": eftaCourtAdapter,
   umbodsmadur: umbodsmadurAdapter,
   stjornarradid: stjornarradidAdapter,
+  felagsdomur: felagsdomurAdapter,
+  uua: uuaAdapter,
+  obyggdanefnd: obyggdanefndAdapter,
+  neytendamal: neytendamalAdapter,
   logretta: logrettaAdapter,
   ulfljotur: ulfljoturAdapter,
   lagasafn: lagasafnAdapter,

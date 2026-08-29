@@ -156,7 +156,7 @@ export class PostgresSearchProvider implements SearchProvider {
 
     let matchParts: Prisma.Sql[];
     if (indexedMatchParts.length === 0) {
-      // Empty query with filters only: allow browsing within selected courts.
+      // Empty query with filters only: allow browsing within selected sources.
       matchParts = [Prisma.sql`TRUE`];
     } else {
       matchParts = indexedMatchParts;

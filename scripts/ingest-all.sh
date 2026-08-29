@@ -48,16 +48,27 @@
 #   EFTA_FETCH_DOCUMENTS    default 1     — see README on eftacourt.int robots.txt
 #   EFTA_MAX_CASES          default 1000  — the register is ~461 cases
 #   UMBODSMADUR_MAX_CASES   default 600   — full backfill is ~11,455; raise for a one-off
+#   FELAGSDOMUR_MAX_CASES   default 400   — the court publishes 306 across its two
+#                                           sites; one run seeds the lot, and a
+#                                           quiet run fetches none
+#   UUA_MAX_CASES           default 400   — rulings uua.is may be asked for per run;
+#                                           the archive is ~3,000, so a fresh
+#                                           database fills over about eight runs
+#   UUA_RETRY               default 200   — rulings the retry sweep re-attempts
+#   OBYGGDANEFND_MAX_CASES  default 12    — þjóðlendu úrskurðir per run. Small on
+#                                           purpose: each is a 1-5 MB PDF of
+#                                           several hundred pages
+#   NEYTENDAMAL_MAX_CASES   default 120   — the board has published ~228
 #   STJORNARRADID_CASES     default 400   — cases the incremental pass may fetch per run
 #   STJORNARRADID_BACKFILL  default 900   — cases the rolling backfill may fetch per
-#                                           run, shared across all 41 boards in list
+#                                           run, shared across all 40 boards in list
 #                                           order; the priority pass below has its own
 #   STJORNARRADID_PRIORITY  default "kaerunefnd-husamala" — board key(s), comma
 #                                           separated, backfilled ahead of the rest;
 #                                           set empty to drop the priority pass
 #   STJORNARRADID_PRIORITY_CASES  default 1200 — cases that pass may fetch per run
 #   STJORNARRADID_RETRY     default 300   — cases the retry sweep re-attempts
-#   STJORNARRADID_BOARDS    unset         — comma-separated board keys; all 41 by default
+#   STJORNARRADID_BOARDS    unset         — comma-separated board keys; all 40 by default
 #   LOGRETTA_FETCH_PDFS     unset         — see README on the Prismic CDN's robots.txt
 #
 set -u
@@ -74,7 +85,7 @@ set -u
 # hand, which is why Endurupptökudómur sat at 2 of 102 cases: the sweep that
 # would have found the other 100 was opt-in and nobody opted in. A source that
 # only closes its gaps when prompted does not close them.
-DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps efta-court umbodsmadur stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur lagasafn citations"
+DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur lagasafn citations"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"
@@ -127,14 +138,65 @@ for adapter in $ADAPTERS; do
           npm run ingest -- --adapter=icelandic-courts
       fi
       ;;
+    felagsdomur)
+      # The labour court, both halves of it: felagsdomur.is from case year 2010
+      # and stjornarradid.is before that. 306 cases in all, so there is no
+      # backfill mode to schedule separately: every run walks both listings in
+      # full (eleven fetches) and fetches only what is missing, which on a
+      # quiet run is nothing at all. The default budget is above the size of
+      # the archive on purpose — a fresh database is seeded by one run.
+      INGEST_MAX_CASES="${FELAGSDOMUR_MAX_CASES:-400}" \
+        npm run ingest -- --adapter=felagsdomur
+      ;;
+    felagsdomur-retry)
+      # The gap ledger and nothing else, as for the other sources. Costs one
+      # request per outstanding case and nothing when there are none.
+      INGEST_MODE=retry \
+        npm run ingest -- --adapter=felagsdomur
+      ;;
     umbodsmadur)
       INGEST_MAX_CASES="${UMBODSMADUR_MAX_CASES:-600}" \
         npm run ingest -- --adapter=umbodsmadur
       ;;
+    uua)
+      # Úrskurðarnefnd umhverfis- og auðlindamála, which publishes on its own
+      # site rather than through stjornarradid.is. ~3,000 rulings, so it is
+      # bounded like the other archives — but it needs no cursor and no
+      # separate backfill pass: its whole index is one page, so every run sees
+      # the entire archive, diffs it against what is stored and spends its
+      # budget on the oldest thing missing. A quiet run is one index fetch.
+      INGEST_MAX_CASES="${UUA_MAX_CASES:-400}" \
+        npm run ingest -- --adapter=uua
+      ;;
+    uua-retry)
+      # The gap ledger and nothing else, as for the other sources.
+      INGEST_MODE=retry \
+      INGEST_MAX_CASES="${UUA_RETRY:-200}" \
+        npm run ingest -- --adapter=uua
+      ;;
+    obyggdanefnd)
+      # Óbyggðanefnd's þjóðlendu úrskurðir, on its own site. Only 84 of them,
+      # but each is a PDF of several hundred pages, so the budget is small and
+      # a full backfill takes a handful of runs. No retry pass is scheduled:
+      # its only outstanding gaps are the 2000-01 rulings whose PDFs carry no
+      # usable text at all, and re-fetching 2.6 MB apiece to fail again every
+      # three hours would be waste. Run it by hand if that ever changes.
+      INGEST_MAX_CASES="${OBYGGDANEFND_MAX_CASES:-12}" \
+        npm run ingest -- --adapter=obyggdanefnd
+      ;;
+    neytendamal)
+      # Áfrýjunarnefnd neytendamála, on Neytendastofa's site rather than
+      # through stjornarradid.is. ~228 rulings, one index page, one PDF each,
+      # so two runs seed it and a quiet run costs one index fetch. No retry
+      # pass is scheduled: the only outstanding gaps are two PDFs that extract
+      # nothing at all, and re-fetching them every three hours is waste.
+      INGEST_MAX_CASES="${NEYTENDAMAL_MAX_CASES:-120}" \
+        npm run ingest -- --adapter=neytendamal
+      ;;
     stjornarradid)
-      # The scheduled pickup: each of the 41 boards' newest pages, stopping
+      # The scheduled pickup: each of the 40 boards' newest pages, stopping
       # once a run of already-stored rulings appears. A firing with nothing new
-      # is 41 list queries and no detail fetches at all.
+      # is 40 list queries and no detail fetches at all.
       INGEST_MODE=recent \
       INGEST_MAX_CASES="${STJORNARRADID_CASES:-400}" \
         npm run ingest -- --adapter=stjornarradid
@@ -149,7 +211,7 @@ for adapter in $ADAPTERS; do
       ;;
     stjornarradid-priority)
       # One board pulled to the front of the queue. The rolling backfill below
-      # walks ADR_BOARDS in order and shares one case budget across all 41, so
+      # walks ADR_BOARDS in order and shares one case budget across all 40, so
       # a board partway down the list gets nothing until the ones above it are
       # complete: Kærunefnd húsamála (2,013 cases) sits behind Kærunefnd
       # útlendingamála (4,846) and Almannatryggingar (3,453), i.e. days of

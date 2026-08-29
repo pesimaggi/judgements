@@ -1,4 +1,4 @@
-import { ADR_BOARDS, boardListUrl } from "./adr-boards";
+import { ADR_BOARDS, FELAGSDOMUR_KEY, boardListUrl } from "./adr-boards";
 
 export interface SourceDef {
   key: string;
@@ -16,12 +16,14 @@ export interface SourceDef {
    */
   adapterKey: string;
   /**
-   * "decision"    — a ruling in an individual case: a court judgment, or an
-   *   ombudsman opinion. These are what the citation job links to provisions
-   *   and what the act reader counts as "dómar".
+   * "decision"    — a ruling in an individual case: a court judgment, an
+   *   úrskurður of an appeal board, an ombudsman opinion. These are what the
+   *   citation job links to provisions and what the act reader counts as
+   *   "úrlausnir" — the term that covers all three, which "dómar" did not
+   *   once the boards were ingested and started outnumbering the courts.
    * "scholarship" — a peer-reviewed article in a legal journal. Searchable
    *   like everything else, but deliberately kept out of the provision
-   *   citation job, whose model and UI both say "dómar" — see
+   *   citation job, whose model and UI both say "úrlausnir" — see
    *   src/ingestion/citations.ts.
    */
   kind: "decision" | "scholarship";
@@ -42,7 +44,7 @@ const JOURNALS = "Ritrýnd fræðirit";
 const ADR = "Úrskurðarnefndir og ráðuneyti";
 
 /**
- * The 41 administrative appeal bodies at stjornarradid.is, each its own
+ * The 40 administrative appeal bodies at stjornarradid.is, each its own
  * source so a researcher can tick the one board they mean.
  *
  * Derived from src/lib/adr-boards.ts rather than written out here, because
@@ -54,6 +56,9 @@ const ADR = "Úrskurðarnefndir og ráðuneyti";
  * what the citation job links to provisions. Their officialBaseUrl is the
  * board's filtered listing on the site — most boards have no page of their
  * own, so that listing is the closest thing to a board's home.
+ *
+ * Félagsdómur is not among them, though it publishes on the same site: it is
+ * a court, and it is registered as one below. See FELAGSDOMUR_KEY.
  */
 const ADR_SOURCES: SourceDef[] = ADR_BOARDS.map((board) => ({
   key: board.key,
@@ -65,6 +70,64 @@ const ADR_SOURCES: SourceDef[] = ADR_BOARDS.map((board) => ({
   kind: "decision" as const,
   status: "live" as const,
 }));
+
+/**
+ * Appeal bodies that publish on their own sites rather than through
+ * stjornarradid.is.
+ *
+ * They belong in the same group as the forty above — a researcher looking for
+ * planning appeals does not care which server they are on — but they cannot be
+ * derived from ADR_BOARDS, because that list is defined by the one thing they
+ * do not share: a `Committee=` value on the ministries' site. So each has its
+ * own adapter and its own entry here.
+ *
+ * There are more of these than are listed: Yfirskattanefnd, Óbyggðanefnd,
+ * Áfrýjunarnefnd neytendamála, Áfrýjunarnefnd samkeppnismála, the two FME
+ * nefndir and several smaller ones all publish for themselves and are not yet
+ * ingested. See "Boards that publish elsewhere" in the README.
+ */
+const EXTERNAL_ADR_SOURCES: SourceDef[] = [
+  {
+    // Planning, building and environmental appeals — and the largest body in
+    // the app after Kærunefnd útlendingamála. About 3,000 rulings back to
+    // 1998, published as one HTML index and one page per ruling.
+    key: "uua",
+    name: "Úrskurðarnefnd umhverfis- og auðlindamála",
+    officialBaseUrl: "https://uua.is/listi-yfir-urskurdi",
+    language: "is",
+    group: ADR,
+    adapterKey: "uua",
+    kind: "decision",
+    status: "live",
+  },
+  {
+    // The commission that decided what is þjóðlenda — public commons — and
+    // what is anybody's property, working the country through in twelve svæði
+    // from 1998 to its final report in March 2026. Eighty-four rulings, each a
+    // PDF of several hundred pages: by a wide margin the longest documents here.
+    key: "obyggdanefnd",
+    name: "Óbyggðanefnd",
+    officialBaseUrl: "https://obyggdanefnd.is/urskurdir/",
+    language: "is",
+    group: ADR,
+    adapterKey: "obyggdanefnd",
+    kind: "decision",
+    status: "live",
+  },
+  {
+    // Consumer-law appeals: misleading advertising, price marking, unfair
+    // commercial practices, product safety. It publishes on the site of the
+    // agency whose decisions it reviews rather than through stjornarradid.is.
+    key: "afryjunarnefnd-neytendamala",
+    name: "Áfrýjunarnefnd neytendamála",
+    officialBaseUrl: "https://www.neytendastofa.is/akvardanir/urskurdir-afryjunarnefndar-neyte/",
+    language: "is",
+    group: ADR,
+    adapterKey: "neytendamal",
+    kind: "decision",
+    status: "live",
+  },
+];
 
 /** Every source the system knows about, live or not. */
 export const ALL_SOURCES: SourceDef[] = [
@@ -109,6 +172,25 @@ export const ALL_SOURCES: SourceDef[] = [
     language: "is",
     group: ICELANDIC_COURTS,
     adapterKey: "icelandic-courts",
+    kind: "decision",
+    status: "live",
+  },
+  {
+    // Félagsdómur — the labour court, which rules on collective agreements
+    // and the legality of industrial action. A court in its own right under
+    // lög nr. 80/1938, not one of the úrskurðarnefndir it was grouped with
+    // until now, and not in island.is's feed: it publishes for itself.
+    //
+    // Its archive is split across two sites — felagsdomur.is from case year
+    // 2010, stjornarradid.is before that — and the felagsdomur adapter reads
+    // both, so this is one source with one checkbox, one record shape and one
+    // total. See FELAGSDOMUR_KEY in src/lib/adr-boards.ts.
+    key: FELAGSDOMUR_KEY,
+    name: "Félagsdómur",
+    officialBaseUrl: "https://felagsdomur.is",
+    language: "is",
+    group: ICELANDIC_COURTS,
+    adapterKey: "felagsdomur",
     kind: "decision",
     status: "live",
   },
@@ -171,6 +253,7 @@ export const ALL_SOURCES: SourceDef[] = [
     status: "live",
   },
   ...ADR_SOURCES,
+  ...EXTERNAL_ADR_SOURCES,
 ];
 
 /** Sources that are ingested and searchable — what the UI offers. */

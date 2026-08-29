@@ -41,6 +41,9 @@
  * was compiled (August 2026, ~23,700 cases in total). It is a rough target
  * for the progress page, not a contract — the adapter overwrites
  * Source.totalAvailable with the live count on every run.
+ *
+ * The site's dropdown has 41 entries and this list has 40. The one left out is
+ * Félagsdómur, which publishes here but is a court — see FELAGSDOMUR_KEY.
  */
 export interface AdrBoard {
   /** Our stable source key. Never change it once documents exist. */
@@ -56,6 +59,21 @@ export interface AdrBoard {
   /** Cases the site reported for this board when the list was compiled. */
   approxCases: number;
 }
+
+/**
+ * Félagsdómur's source key and the site's filter value for its archive.
+ *
+ * Félagsdómur is a court, not an úrskurðarnefnd, so it is deliberately *not*
+ * in ADR_BOARDS and the stjornarradid adapter does not touch it. But half its
+ * archive is published on this site — the 107 cases numbered up to 2009 — and
+ * reached the same way a board's is, by `Committee=`. So the two identifiers
+ * live here, next to the URL builder they are passed to, and the felagsdomur
+ * adapter owns the court end to end: both halves, one record shape, one total.
+ *
+ * See src/ingestion/adapters/felagsdomur.ts.
+ */
+export const FELAGSDOMUR_KEY = "felagsdomur";
+export const FELAGSDOMUR_COMMITTEE = "Félagsdómur";
 
 /** Every board in the úrskurðir og álit collection, largest archive first. */
 export const ADR_BOARDS: AdrBoard[] = [
@@ -229,14 +247,6 @@ export const ADR_BOARDS: AdrBoard[] = [
     approxCases: 108,
   },
   {
-    key: "felagsdomur",
-    name: "Félagsdómur",
-    committee: "Félagsdómur",
-    ministry: "Félags- og húsnæðismálaráðuneytið",
-    boardId: "dc04e614-4214-11e7-941a-005056bc530c",
-    approxCases: 107,
-  },
-  {
     key: "hollustuhaettanefnd",
     name: "Úrskurðarnefnd samkvæmt lögum um hollustuhætti og mengunarvarnir",
     committee: "Úrskurðarnefnd samkvæmt lögum um hollustuhætti og mengunarvarnir",
@@ -387,9 +397,24 @@ export function boardListUrl(
   board: AdrBoard,
   opts: { page?: number; base?: string } = {}
 ): string {
+  return committeeListUrl(board.committee, opts);
+}
+
+/**
+ * The same listing, addressed by the site's `Committee=` value alone.
+ *
+ * Split out because Félagsdómur's archive is reached this way but Félagsdómur
+ * is not an AdrBoard — see FELAGSDOMUR_KEY. Everything above about the exotic
+ * characters applies here: the value goes through URLSearchParams rather than
+ * being hand-escaped, so the U+066B and the non-breaking space survive.
+ */
+export function committeeListUrl(
+  committee: string,
+  opts: { page?: number; base?: string } = {}
+): string {
   const params = new URLSearchParams({
     SearchQuery: "",
-    Committee: board.committee,
+    Committee: committee,
     ContentTypes: "",
     Themes: "",
     Ministries: "",

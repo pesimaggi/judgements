@@ -20,7 +20,7 @@ import {
 /**
  * Úrskurðir og álit — stjornarradid.is
  *
- * Iceland's administrative appeal bodies: 41 úrskurðarnefndir, kærunefndir,
+ * Iceland's administrative appeal bodies: 40 úrskurðarnefndir, kærunefndir,
  * matsnefndir and ministry appeal desks, publishing about 23,700 rulings
  * through one search page. This is the decision layer between an agency and
  * the courts, and for whole areas of law — immigration, tenancy, benefits,
@@ -28,7 +28,10 @@ import {
  *
  * They arrive together but they are not one body, so each board is its own
  * source (src/lib/adr-boards.ts) with its own checkbox and its own row on the
- * progress page. This adapter feeds all 41.
+ * progress page. This adapter feeds all 40.
+ *
+ * Félagsdómur is not one of them. It publishes here too, but it is a court and
+ * the felagsdomur adapter owns it end to end — see that file.
  *
  * VERIFIED against the live site (August 2026):
  *
