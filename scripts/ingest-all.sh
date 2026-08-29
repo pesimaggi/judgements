@@ -51,6 +51,10 @@
 #   FELAGSDOMUR_MAX_CASES   default 400   — the court publishes 306 across its two
 #                                           sites; one run seeds the lot, and a
 #                                           quiet run fetches none
+#   UUA_MAX_CASES           default 400   — rulings uua.is may be asked for per run;
+#                                           the archive is ~3,000, so a fresh
+#                                           database fills over about eight runs
+#   UUA_RETRY               default 200   — rulings the retry sweep re-attempts
 #   STJORNARRADID_CASES     default 400   — cases the incremental pass may fetch per run
 #   STJORNARRADID_BACKFILL  default 900   — cases the rolling backfill may fetch per
 #                                           run, shared across all 40 boards in list
@@ -77,7 +81,7 @@ set -u
 # hand, which is why Endurupptökudómur sat at 2 of 102 cases: the sweep that
 # would have found the other 100 was opt-in and nobody opted in. A source that
 # only closes its gaps when prompted does not close them.
-DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur lagasafn citations"
+DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur lagasafn citations"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"
@@ -149,6 +153,22 @@ for adapter in $ADAPTERS; do
     umbodsmadur)
       INGEST_MAX_CASES="${UMBODSMADUR_MAX_CASES:-600}" \
         npm run ingest -- --adapter=umbodsmadur
+      ;;
+    uua)
+      # Úrskurðarnefnd umhverfis- og auðlindamála, which publishes on its own
+      # site rather than through stjornarradid.is. ~3,000 rulings, so it is
+      # bounded like the other archives — but it needs no cursor and no
+      # separate backfill pass: its whole index is one page, so every run sees
+      # the entire archive, diffs it against what is stored and spends its
+      # budget on the oldest thing missing. A quiet run is one index fetch.
+      INGEST_MAX_CASES="${UUA_MAX_CASES:-400}" \
+        npm run ingest -- --adapter=uua
+      ;;
+    uua-retry)
+      # The gap ledger and nothing else, as for the other sources.
+      INGEST_MODE=retry \
+      INGEST_MAX_CASES="${UUA_RETRY:-200}" \
+        npm run ingest -- --adapter=uua
       ;;
     stjornarradid)
       # The scheduled pickup: each of the 40 boards' newest pages, stopping

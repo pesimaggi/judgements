@@ -19,7 +19,7 @@ This is a deliberately narrowed build: no CJEU. The three Icelandic courts publi
 - **Administrative case law** — the úrskurðarnefndir, kærunefndir and ministry appeal desks at stjornarradid.is, each board its own tickable source rather than one undifferentiated pile. For immigration, benefits, tenancy, procurement and freedom of information this is where the case law actually is, and a search of the courts alone would miss it. See *Úrskurðarnefndir og ráðuneyti* below.
 - **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`.
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
-- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force act; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court, both halves of it; `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
+- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force act; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court, both halves of it; `uua` ingests Úrskurðarnefnd umhverfis- og auðlindamála (~3,000 planning and environmental rulings, on its own site); `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
 - **Scholarly commentary** — Tímarit Lögréttu and Vefrit Úlfljóts, searched alongside the case law rather than in a separate silo, so a query about an unsettled point returns both the judgments and the articles arguing about them. Articles are indexed in full but read at the journal that published them: their cards and pages link out rather than reproducing the text here.
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
 
@@ -109,6 +109,7 @@ unchanged; this is copy, not schema.
 | EFTA Court | live | English |
 | Umboðsmaður Alþingis | live | Icelandic |
 | 40 úrskurðarnefndir, kærunefndir and ministry appeal desks (stjornarradid.is) | live | Icelandic |
+| Úrskurðarnefnd umhverfis- og auðlindamála (uua.is) | live | Icelandic |
 | Tímarit Lögréttu | live | Icelandic |
 | Úlfljótur (vefrit) | live | Icelandic |
 
@@ -502,6 +503,97 @@ Seeding a fresh database is a one-off run of the on-demand ingest service with
 `STJORNARRADID_BACKFILL`. At the shared `INGEST_DELAY_MS` the full 23,700 is
 roughly ten hours, and it is safe to interrupt and re-run — the cursors and the
 already-stored check pick it up where it stopped.
+
+### Boards that publish elsewhere
+
+Not every appeal board publishes through stjornarradid.is. A good many keep
+their own register, and those are invisible to the `stjornarradid` adapter
+because the one thing it is built on — a `Committee=` value on the ministries'
+site — is exactly what they do not have. They belong in the same group in the
+source panel (a researcher looking for planning appeals does not care which
+server the rulings are on), so `EXTERNAL_ADR_SOURCES` in `src/lib/sources.ts`
+registers them alongside the forty, each with an adapter of its own.
+
+#### Úrskurðarnefnd umhverfis- og auðlindamála
+
+Planning, building and environmental appeals: byggingarleyfi, framkvæmdaleyfi,
+deiliskipulag, starfsleyfi and, lately, fish farming. **About 3,000 rulings
+back to 1998** — the largest single body in the app after Kærunefnd
+útlendingamála, and it was missing entirely. The board is the successor to
+úrskurðarnefnd skipulags- og byggingarmála and carries that body's rulings as
+its own archive, which is why the older ones open "kom úrskurðarnefnd
+skipulags- og byggingarmála saman til fundar".
+
+Verified against the live site (August 2026):
+
+- **robots.txt** is `User-agent: *` with no `Disallow` line at all.
+
+- **The whole index is one page.** `/listi-yfir-urskurdi` is a single
+  server-rendered table of every ruling the board has published — 2,995 rows,
+  about 3.7 MB. That is what makes the adapter simple: there is no pagination
+  to walk and no cursor to keep, so every run sees the entire archive, diffs it
+  against what is stored, and spends its budget on the oldest thing missing.
+  Bounded by `INGEST_MAX_CASES` like the other archives, and resumable without
+  any state of its own.
+
+- **One fetch per ruling**, carried inline on its page — no PDF, no attachment,
+  no JavaScript.
+
+Three things about the data were not what they looked like:
+
+- **The case number is in the link, not the column.** The index's first two
+  columns are headed "Úrskurð. númer" and "Ártal" and they are the board's own
+  ruling sequence, not the case number: for the oldest row the table says 3 /
+  1998 while the ruling says "Fyrir var tekið málið nr. 2/1998". The real
+  reference is in the link text, in both schemes the board has used —
+  `2/1998 Laugavegur` and `UUA2606010 Sjókvíaeldi í Arnarfirði`.
+
+- **Sixty-odd rulings decide several cases at once**, and write the numbers as
+  prose sharing a year: `125 og 127/2021 Háafell`, `63, 73 og 75/2021
+  Hringtún`, `85, 92, 96/2019 og 9/2020 Hagasel`. All of them are expanded (the
+  bare numbers take the year from the first full reference to their right) and
+  written into the record, so the ruling is findable by any one of its numbers;
+  the first is what the card shows.
+
+- **The opening line is often not in a paragraph.** "Árið 2017, fimmtudaginn
+  19. janúar, kom úrskurðarnefnd …" is the only place a ruling states its own
+  date, and on many pages it is a loose text node with no element around it. A
+  sweep for `p, li, h2…` skips it silently and the ruling loses its date, so
+  the text is read by walking the tree — every text node is text, every
+  block-level element is a line break — rather than by collecting blocks.
+
+The board has also written that opening four ways over thirty years: with and
+without the comma after the year, with and without the point after the day, and
+with no weekday at all. All four are matched. Sampled across the whole archive,
+every ruling now yields a date and a case number.
+
+```
+npm run ingest -- --adapter=uua                    # oldest missing first
+INGEST_MODE=retry npm run ingest -- --adapter=uua  # gap ledger only
+```
+
+#### Still missing
+
+These publish for themselves too and are not yet ingested, roughly in the order
+they are worth doing:
+
+| Body | Where | Note |
+|---|---|---|
+| Yfirskattanefnd | [yskn.is](https://yskn.is/) | Tax appeals, by year back to 1973. The largest archive still missing. `/urskurdir/` is an *úrval*; the full set is behind `Leit í úrskurðum`. |
+| Óbyggðanefnd | [obyggdanefnd.is](https://obyggdanefnd.is/urskurdir/) | 287 PDFs on one page. |
+| Áfrýjunarnefnd neytendamála | [neytendastofa.is](https://www.neytendastofa.is/?PageID=674) | 230 PDFs on one page. |
+| Áfrýjunarnefnd samkeppnismála | [samkeppni.is](https://www.samkeppni.is/urlausnir/urskurdir/) | Searchable table, JavaScript-driven. |
+| Áfrýjunarnefnd hugverkaréttinda | [hugverk.is](https://www.hugverk.is/utgafa/urskurdir-og-akvardanir) | JavaScript-driven listing. |
+| Úrskurðarnefnd í vátryggingamálum; Úrskurðarnefnd um viðskipti við fjármálafyrirtæki | [fme.is](https://www.fme.is/eftirlitsstarfssemi/urskurdarnefndir/) | Both pages return ~6 kB of shell; needs a look before costing. |
+| Málskotsnefnd Menntasjóðs | [menntasjodur.is](https://menntasjodur.is/msnm/malskotsnefnd/) | JavaScript-rendered. |
+| Nefnd um dómarastörf | domstolasyslan.is | Register not located. |
+| Matsnefnd um lax- og silungsveiði | fiskistofa.is | **Partial today**: the 15 older rulings come through stjornarradid; the newer ones are on Fiskistofa. |
+
+A further group has no findable register at all — Kærunefnd vöru og
+þjónustukaupa, Álitsnefnd um trúfélög, Úrskurðarnefnd sanngirnisbóta,
+Ferðakostnaðarnefnd, Úrskurðarnefnd um Viðlagatryggingu, Úrskurðarnefnd
+fjarskipta- og póstmála and Úrskurðarnefnd um skólagöngu fósturbarna. They are
+listed on Stjórnarráðið's own page of nefndir with no link to any decisions.
 
 ### Ritrýnd fræðirit
 
@@ -935,6 +1027,8 @@ src/
                                  one listing walk per run, judgments from PDF
       stjornarradid.ts           40 úrskurðarnefndir and ministry appeal desks,
                                  board by board through the site's own search
+      uua.ts                     Úrskurðarnefnd umhverfis- og auðlindamála,
+                                 from its one-page index at uua.is
       logretta.ts                Tímarit Lögréttu, via the site's own Prismic API
       ulfljotur.ts               Vefrit Úlfljóts, via the WordPress.com REST API
     citations.ts                 judgments → provisions; incremental by text hash
@@ -998,6 +1092,9 @@ npm run ingest -- --adapter=citations
 | `INGEST_MODE=retry` | felagsdomur | Work the gap ledger and nothing else |
 | `FELAGSDOMUR_BASE` | felagsdomur | Override the site base URL |
 | `STJORNARRADID_BASE` | stjornarradid | Override the site base URL |
+| `INGEST_MAX_CASES` | uua | Rulings fetched per run (default 400; the archive is ~3,000) |
+| `INGEST_MODE=retry` | uua | Work the gap ledger and nothing else |
+| `UUA_BASE` | uua | Override the site base URL |
 | `LAGASAFN_MAX_ACTS` | lagasafn | Acts fetched per run; the rest resume next run |
 | `LAGASAFN_ONLY` | lagasafn | Ingest a single act, e.g. `91/1991` — bypasses the cursor |
 | `LAGASAFN_FORCE=1` | lagasafn | Re-parse and rewrite even when nothing has changed. Needed after any change to the parser: a normal run short-circuits on the codex version before the parser ever runs, so a fix would not reach acts already stored |

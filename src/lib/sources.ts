@@ -71,6 +71,37 @@ const ADR_SOURCES: SourceDef[] = ADR_BOARDS.map((board) => ({
   status: "live" as const,
 }));
 
+/**
+ * Appeal bodies that publish on their own sites rather than through
+ * stjornarradid.is.
+ *
+ * They belong in the same group as the forty above — a researcher looking for
+ * planning appeals does not care which server they are on — but they cannot be
+ * derived from ADR_BOARDS, because that list is defined by the one thing they
+ * do not share: a `Committee=` value on the ministries' site. So each has its
+ * own adapter and its own entry here.
+ *
+ * There are more of these than are listed: Yfirskattanefnd, Óbyggðanefnd,
+ * Áfrýjunarnefnd neytendamála, Áfrýjunarnefnd samkeppnismála, the two FME
+ * nefndir and several smaller ones all publish for themselves and are not yet
+ * ingested. See "Boards that publish elsewhere" in the README.
+ */
+const EXTERNAL_ADR_SOURCES: SourceDef[] = [
+  {
+    // Planning, building and environmental appeals — and the largest body in
+    // the app after Kærunefnd útlendingamála. About 3,000 rulings back to
+    // 1998, published as one HTML index and one page per ruling.
+    key: "uua",
+    name: "Úrskurðarnefnd umhverfis- og auðlindamála",
+    officialBaseUrl: "https://uua.is/listi-yfir-urskurdi",
+    language: "is",
+    group: ADR,
+    adapterKey: "uua",
+    kind: "decision",
+    status: "live",
+  },
+];
+
 /** Every source the system knows about, live or not. */
 export const ALL_SOURCES: SourceDef[] = [
   {
@@ -195,6 +226,7 @@ export const ALL_SOURCES: SourceDef[] = [
     status: "live",
   },
   ...ADR_SOURCES,
+  ...EXTERNAL_ADR_SOURCES,
 ];
 
 /** Sources that are ingested and searchable — what the UI offers. */
