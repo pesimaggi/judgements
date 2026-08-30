@@ -54,8 +54,11 @@ const HEADING_WORDS = [
   // the terms run straight into the "Útdráttur" that follows them.
   "Lykilorð", "Úrskurðarorð", "Úrskurðarnefnd", "Ákvörðun",
   // English, for the EFTA Court records composed by its adapter — that source
-  // publishes in English and has no Icelandic heading to key off.
-  "Summary", "Case details", "Documents",
+  // publishes in English and has no Icelandic heading to key off. "History"
+  // and "Document" head the two sections the EEA-Lex and ESA adapters add:
+  // the dated steps an act took into the Agreement, and the body of an ESA
+  // document below the case details that introduce it.
+  "Summary", "Case details", "Documents", "History", "Document",
   // Journal articles. "Höfundur", "Heimild", "Efnisorð" and "Meginmál" head
   // the sections the journal adapters compose; "Abstract", "Efnisyfirlit" and
   // "Heimildaskrá" are the article's own, written by its author. Each one
