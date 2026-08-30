@@ -51,7 +51,11 @@
 #                                           run; the in-force register is ~9,164, so a
 #                                           fresh database fills over about a month of
 #                                           three-hourly firings
-#   EEALEX_RETRY            default 100   — factsheets the retry sweep re-attempts
+#   EEALEX_RETRY            default 100   — records the retry sweep re-attempts
+#   EEALEX_DECISIONS        default 300   — Joint Committee Decisions per run. Each
+#                                           is one small PDF, and the pass costs no
+#                                           listing walk at all — the acts already
+#                                           stored say which decisions exist
 #   ESA_CASES               default 300   — ESA documents (one PDF each) per run; the
 #                                           database holds ~6,725
 #   ESA_RETRY               default 100   — documents the retry sweep re-attempts
@@ -93,7 +97,7 @@ set -u
 # hand, which is why Endurupptökudómur sat at 2 of 102 cases: the sweep that
 # would have found the other 100 was opt-in and nobody opted in. A source that
 # only closes its gaps when prompted does not close them.
-DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-lex eea-lex-retry eftasurv eftasurv-retry lagasafn citations"
+DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-lex eea-lex-decisions eea-lex-retry eftasurv eftasurv-retry lagasafn citations"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"
@@ -267,9 +271,20 @@ for adapter in $ADAPTERS; do
       INGEST_MAX_CASES="${EEALEX_CASES:-300}" \
         npm run ingest -- --adapter=eea-lex
       ;;
+    eea-lex-decisions)
+      # The decisions themselves — the actual text of each Joint Committee
+      # Decision, one small PDF each. It walks nothing: the acts stored by the
+      # pass above name every decision and link its English text, so this is
+      # one query and then a bounded run of fetches. It also retires a decision
+      # once no act in force names it any more, and clears the factsheets that
+      # were filed under the decisions source before the two were told apart.
+      INGEST_MODE=decisions \
+      INGEST_MAX_CASES="${EEALEX_DECISIONS:-300}" \
+        npm run ingest -- --adapter=eea-lex
+      ;;
     eea-lex-retry)
-      # The gap ledger and nothing else — one fetch per factsheet we know
-      # exists but could not read, and no listing walk in front of it.
+      # The gap ledger and nothing else — one fetch per record we know exists
+      # but could not read, acts and decisions alike, and no walk in front.
       INGEST_MODE=retry \
       INGEST_MAX_CASES="${EEALEX_RETRY:-100}" \
         npm run ingest -- --adapter=eea-lex

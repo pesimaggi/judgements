@@ -210,20 +210,41 @@ export const ALL_SOURCES: SourceDef[] = [
     status: "live",
   },
   {
-    // The decisions by which EU acts enter the EEA Agreement, from EFTA's own
-    // EEA-Lex register — and only those **in force**: EEA-Lex separates acts
-    // incorporated and still in force from acts incorporated but superseded,
-    // and this source carries the first set alone. An act that later falls out
-    // of force leaves the register, and its record is retired with it, so a
-    // hit here is never a decision that has since been overtaken.
+    // The decisions by which EU acts enter the EEA Agreement — one record per
+    // decision, carrying the decision's own text: "DECISION OF THE EEA JOINT
+    // COMMITTEE No 25/2010 of 12 March 2010 amending Annex II … to the EEA
+    // Agreement". A JCD has no page of its own on efta.int; it is published as
+    // a PDF per language, so the English PDF is the officialUrl, as the ruling
+    // PDF already is for Óbyggðanefnd and for ESA.
     //
-    // One record per incorporated act, which is how EEA-Lex itself is
-    // organised: the act's English title, the Joint Committee Decision that
-    // took it in, the Annex or Protocol it landed in, and the dates it moved
-    // through. `officialUrl` is the factsheet, from which the decision's own
-    // text can be opened in English, Icelandic, Norwegian or German.
+    // Only decisions still doing something are here. Which those are is read
+    // off the acts source below, which is filtered to the acts in force: a
+    // decision appears once the first act it incorporated is ingested, and is
+    // retired once the last one falls out of force.
     key: "eea-joint-committee",
     name: "Sameiginlega EES-nefndin (EEA Joint Committee)",
+    officialBaseUrl:
+      "https://www.efta.int/about-efta/legal-documents/adopted-joint-committee-decisions",
+    language: "en",
+    group: EEA_EFTA,
+    adapterKey: "eea-lex",
+    kind: "decision",
+    status: "live",
+  },
+  {
+    // The other half of EEA-Lex: the register of **EU acts in force in the
+    // EEA**, one record per act. EEA-Lex separates acts incorporated and still
+    // in force from acts incorporated but superseded, and this source carries
+    // the first set alone; an act that later falls out of force leaves the
+    // register, and its record is retired with it.
+    //
+    // It is a different document from the decision that incorporated it, and
+    // it is worth its own source: the factsheet carries the act's title in
+    // Icelandic and Norwegian as well as English, and those titles are
+    // searchable nowhere else in this app. `officialUrl` is the factsheet,
+    // from which the act and the decision can both be opened in any language.
+    key: "eea-lex",
+    name: "EEA-Lex (EU-gerðir í gildi á EES-svæðinu)",
     officialBaseUrl: "https://www.efta.int/eea-lex",
     language: "en",
     group: EEA_EFTA,
