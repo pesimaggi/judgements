@@ -45,6 +45,17 @@ export interface IngestContext {
   recordGap(gap: GapRecord): Promise<void>;
   /** Open (unresolved) gaps for these sources, oldest attempt first. */
   openGaps(sources: string[]): Promise<OpenGap[]>;
+  /**
+   * Delete stored documents a source no longer publishes, by official URL.
+   * Returns how many rows went.
+   *
+   * Only one source needs this so far, and it needs it to be honest: EEA-Lex
+   * is ingested filtered to the acts *in force*, and an act that falls out of
+   * force leaves that listing. Keeping its record would turn "in force" into
+   * "was in force when we first saw it". Every other source publishes an
+   * archive that only grows, and must never call this.
+   */
+  retire(source: string, officialUrls: string[]): Promise<number>;
   log(msg: string): void;
 }
 
@@ -81,6 +92,20 @@ let lastFetch = 0;
 
 const RETRY_BASE_MS = Number(process.env.INGEST_RETRY_BASE_MS ?? 3000);
 const MAX_RETRIES = 3;
+const TOO_MANY_REQUESTS = 429;
+
+/** How long a 429's Retry-After asks us to wait, in ms. Capped, and undefined
+ *  if the header is absent or is a date we cannot read. */
+function retryAfterMs(res: Response): number | undefined {
+  const header = res.headers.get("retry-after");
+  if (!header) return undefined;
+  const seconds = Number(header.trim());
+  const ms = Number.isFinite(seconds)
+    ? seconds * 1000
+    : Date.parse(header) - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return undefined;
+  return Math.min(ms, 60_000);
+}
 
 /**
  * Rate-limited fetch. One request at a time, min INGEST_DELAY_MS between
@@ -89,8 +114,10 @@ const MAX_RETRIES = 3;
  *
  * Retries a few times with backoff on 5xx (observed to be transient — a
  * case page can 503 once and succeed seconds later, likely a rarely-cached
- * page being rendered on demand upstream); 4xx (e.g. a genuine 404) fails
- * immediately since retrying won't change the outcome.
+ * page being rendered on demand upstream) and on 429, where the server is
+ * explicitly asking for a slower pace and says how long to wait. Other 4xx
+ * (e.g. a genuine 404) fail immediately since retrying won't change the
+ * outcome.
  */
 export async function politeFetchText(url: string): Promise<string> {
   const { body, contentType } = await politeFetchBytes(url);
@@ -116,10 +143,14 @@ export async function politeFetchBytes(
         contentType: res.headers.get("content-type"),
       };
     }
-    if (res.status < 500 || attempt >= MAX_RETRIES) {
+    const retryable = res.status >= 500 || res.status === TOO_MANY_REQUESTS;
+    if (!retryable || attempt >= MAX_RETRIES) {
       throw new Error(`HTTP ${res.status} for ${url}`);
     }
-    await new Promise((r) => setTimeout(r, RETRY_BASE_MS * 2 ** attempt));
+    // A 429 usually carries Retry-After, and a server that has told us how
+    // long to wait deserves to be taken at its word rather than backed off
+    // against a schedule of our own.
+    await new Promise((r) => setTimeout(r, retryAfterMs(res) ?? RETRY_BASE_MS * 2 ** attempt));
   }
 }
 
@@ -221,6 +252,36 @@ async function resolveIngestGap(source: string, officialUrl: string): Promise<vo
   } catch {
     // Bookkeeping only — never fail a successful save over it.
   }
+}
+
+/**
+ * Deletes stored documents for a source, by official URL. Their citation
+ * links go with them (both link tables cascade on the document), and so do
+ * their gap rows: a case the source has withdrawn is not a case we are still
+ * missing.
+ *
+ * Chunked, because the caller's list is a whole source's worth of URLs and a
+ * single `IN` of several thousand strings is a query nobody wants to debug.
+ */
+export async function retireDocuments(source: string, officialUrls: string[]): Promise<number> {
+  const CHUNK = 500;
+  let removed = 0;
+  for (let i = 0; i < officialUrls.length; i += CHUNK) {
+    const batch = officialUrls.slice(i, i + CHUNK);
+    const rows = await prisma.document.findMany({
+      where: { source, officialUrl: { in: batch } },
+      select: { id: true },
+    });
+    if (rows.length === 0) continue;
+    await prisma.document.deleteMany({ where: { id: { in: rows.map((r) => r.id) } } });
+    await prisma.ingestGap.deleteMany({ where: { source, officialUrl: { in: batch } } });
+    if (process.env.SEARCH_PROVIDER === "meilisearch") {
+      const { deleteDocumentsFromMeilisearch } = await import("@/lib/search/meilisearch");
+      await deleteDocumentsFromMeilisearch(rows.map((r) => r.id));
+    }
+    removed += rows.length;
+  }
+  return removed;
 }
 
 export async function saveDocument(doc: NormalizedDocument): Promise<"indexed" | "skipped"> {

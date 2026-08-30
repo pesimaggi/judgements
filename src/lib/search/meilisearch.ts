@@ -172,6 +172,19 @@ export async function syncDocumentToMeilisearch(doc: any) {
 }
 
 /**
+ * Drop documents from the Meilisearch index (called from ingestion when a
+ * source withdraws something it had published). Deleting from Postgres alone
+ * would leave the record searchable here, which is the one place a reader
+ * would still find it.
+ */
+export async function deleteDocumentsFromMeilisearch(ids: string[]) {
+  if (ids.length === 0) return;
+  const provider = new MeilisearchProvider();
+  const index = await provider.ensureIndex();
+  await index.deleteDocuments(ids);
+}
+
+/**
  * Document ids citing the requested act or provision.
  *
  * DISTINCT because a judgment cites the same provision more than once as a

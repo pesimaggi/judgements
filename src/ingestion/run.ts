@@ -15,11 +15,14 @@ import {
   isDocumentKnown,
   recordIngestGap,
   openIngestGaps,
+  retireDocuments,
   type IngestionAdapter,
   type IngestContext,
 } from "./adapter";
 import { icelandicCourtsAdapter } from "./adapters/icelandic-courts";
 import { eftaCourtAdapter } from "./adapters/efta-court";
+import { eeaLexAdapter } from "./adapters/eea-lex";
+import { eftaSurvAdapter } from "./adapters/eftasurv";
 import { umbodsmadurAdapter } from "./adapters/umbodsmadur";
 import { stjornarradidAdapter } from "./adapters/stjornarradid";
 import { felagsdomurAdapter } from "./adapters/felagsdomur";
@@ -34,6 +37,8 @@ import { citationsAdapter } from "./citations";
 const ADAPTERS: Record<string, IngestionAdapter> = {
   "icelandic-courts": icelandicCourtsAdapter,
   "efta-court": eftaCourtAdapter,
+  "eea-lex": eeaLexAdapter,
+  eftasurv: eftaSurvAdapter,
   umbodsmadur: umbodsmadurAdapter,
   stjornarradid: stjornarradidAdapter,
   felagsdomur: felagsdomurAdapter,
@@ -95,6 +100,14 @@ async function main() {
     // every case it declined to fetch as a gap it had failed on.
     recordGap: dryRun ? async () => {} : recordIngestGap,
     openGaps: openIngestGaps,
+    // A dry run must not delete either: it has saved nothing, so every stored
+    // document would look like one the source had withdrawn.
+    retire: dryRun
+      ? async (source, urls) => {
+          console.log(`[dry-run] would retire ${urls.length} document(s) from ${source}`);
+          return 0;
+        }
+      : retireDocuments,
     log: (msg: string) => console.log(`[${adapter.key}] ${msg}`),
   };
 

@@ -47,6 +47,14 @@
 #   ICELANDIC_RETRY_CASES   default 500   — cases the retry sweep re-attempts
 #   EFTA_FETCH_DOCUMENTS    default 1     — see README on eftacourt.int robots.txt
 #   EFTA_MAX_CASES          default 1000  — the register is ~461 cases
+#   EEALEX_CASES            default 300   — factsheets efta.int may be asked for per
+#                                           run; the in-force register is ~9,164, so a
+#                                           fresh database fills over about a month of
+#                                           three-hourly firings
+#   EEALEX_RETRY            default 100   — factsheets the retry sweep re-attempts
+#   ESA_CASES               default 300   — ESA documents (one PDF each) per run; the
+#                                           database holds ~6,725
+#   ESA_RETRY               default 100   — documents the retry sweep re-attempts
 #   UMBODSMADUR_MAX_CASES   default 600   — full backfill is ~11,455; raise for a one-off
 #   FELAGSDOMUR_MAX_CASES   default 400   — the court publishes 306 across its two
 #                                           sites; one run seeds the lot, and a
@@ -85,7 +93,7 @@ set -u
 # hand, which is why Endurupptökudómur sat at 2 of 102 cases: the sweep that
 # would have found the other 100 was opt-in and nobody opted in. A source that
 # only closes its gaps when prompted does not close them.
-DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur lagasafn citations"
+DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-lex eea-lex-retry eftasurv eftasurv-retry lagasafn citations"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"
@@ -247,6 +255,40 @@ for adapter in $ADAPTERS; do
       INGEST_MODE=backfill \
       INGEST_MAX_CASES="${STJORNARRADID_BACKFILL:-900}" \
         npm run ingest -- --adapter=stjornarradid
+      ;;
+    eea-lex)
+      # The EEA Joint Committee's decisions, filtered to the acts in force.
+      # Every run walks the whole filtered listing — 153 pages — because that
+      # walk does two jobs at once: it says what is missing, and it says what
+      # has fallen out of force since the last run so the record can be
+      # retired. Detail fetches are bounded; the listing walk is not, and must
+      # not be, or a partial view would look like a wave of withdrawals (the
+      # adapter refuses to retire anything on an incomplete walk).
+      INGEST_MAX_CASES="${EEALEX_CASES:-300}" \
+        npm run ingest -- --adapter=eea-lex
+      ;;
+    eea-lex-retry)
+      # The gap ledger and nothing else — one fetch per factsheet we know
+      # exists but could not read, and no listing walk in front of it.
+      INGEST_MODE=retry \
+      INGEST_MAX_CASES="${EEALEX_RETRY:-100}" \
+        npm run ingest -- --adapter=eea-lex
+      ;;
+    eftasurv)
+      # The EFTA Surveillance Authority's public document database: ~6,725
+      # documents, one PDF each. Enumerated in full every run through the
+      # site's own JSON API (135 calls), then bounded detail fetches on the
+      # oldest thing missing, as for the other archives here.
+      INGEST_MAX_CASES="${ESA_CASES:-300}" \
+        npm run ingest -- --adapter=eftasurv
+      ;;
+    eftasurv-retry)
+      # The gap ledger and nothing else. Worth scheduling for this source,
+      # unlike the two PDF boards: over 6,725 fetches a handful will fail
+      # transiently, and this is what recovers them.
+      INGEST_MODE=retry \
+      INGEST_MAX_CASES="${ESA_RETRY:-100}" \
+        npm run ingest -- --adapter=eftasurv
       ;;
     logretta)
       # Both journals list in a handful of API calls, so they run in full every

@@ -210,6 +210,50 @@ export const ALL_SOURCES: SourceDef[] = [
     status: "live",
   },
   {
+    // The decisions by which EU acts enter the EEA Agreement, from EFTA's own
+    // EEA-Lex register — and only those **in force**: EEA-Lex separates acts
+    // incorporated and still in force from acts incorporated but superseded,
+    // and this source carries the first set alone. An act that later falls out
+    // of force leaves the register, and its record is retired with it, so a
+    // hit here is never a decision that has since been overtaken.
+    //
+    // One record per incorporated act, which is how EEA-Lex itself is
+    // organised: the act's English title, the Joint Committee Decision that
+    // took it in, the Annex or Protocol it landed in, and the dates it moved
+    // through. `officialUrl` is the factsheet, from which the decision's own
+    // text can be opened in English, Icelandic, Norwegian or German.
+    key: "eea-joint-committee",
+    name: "Sameiginlega EES-nefndin (EEA Joint Committee)",
+    officialBaseUrl: "https://www.efta.int/eea-lex",
+    language: "en",
+    group: EEA_EFTA,
+    adapterKey: "eea-lex",
+    kind: "decision",
+    status: "live",
+  },
+  {
+    // ESA is the enforcement half of the EEA: it polices whether Iceland,
+    // Liechtenstein and Norway actually apply the acts the Joint Committee
+    // incorporated. Its public document database is the record of that work —
+    // College decisions, letters of formal notice, reasoned opinions, closure
+    // decisions, the states' replies — and it is the middle of a chain the app
+    // already carries at both ends: incorporation above, and the EFTA Court's
+    // judgment when a case gets that far.
+    //
+    // English is the Authority's working language and what it publishes in; a
+    // minority of documents are a state's own reply in its own language, and
+    // are stored as published.
+    key: "eftasurv",
+    name: "EFTA Surveillance Authority",
+    officialBaseUrl:
+      "https://www.eftasurv.int/esa-at-a-glance/publications/public-access-to-documents/public-documents",
+    language: "en",
+    group: EEA_EFTA,
+    adapterKey: "eftasurv",
+    kind: "decision",
+    status: "live",
+  },
+  {
     // Not a court: the Ombudsman issues álit (formal opinions) and bréf
     // (letters closing a case). Both are stored, and which one a document is
     // shows as the heading over its body.
