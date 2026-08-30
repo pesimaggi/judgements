@@ -1,15 +1,44 @@
 import { load, type CheerioAPI } from "cheerio";
+import pdfParse from "pdf-parse";
 import { prisma } from "@/lib/db";
-import { type IngestionAdapter, type IngestContext, type IngestStats } from "../adapter";
+import { normalizeJudgmentText } from "@/lib/judgment-text";
+import {
+  politeFetchBytes,
+  type IngestionAdapter,
+  type IngestContext,
+  type IngestStats,
+} from "../adapter";
 
 /**
- * EEA-Lex — the decisions of the EEA Joint Committee that are in force.
+ * EEA-Lex — the decisions of the EEA Joint Committee that are in force, and
+ * the EU acts they brought into the EEA Agreement.
  *
  * efta.int/eea-lex is EFTA's register of EU acts and their standing under the
  * EEA Agreement. Every act that has been taken into the Agreement has a
  * factsheet naming the **Joint Committee Decision (JCD)** that incorporated
  * it, the Annex or Protocol it landed in, the dates it moved through, and the
  * JCD's own text in each language.
+ *
+ * TWO SOURCES, ONE ADAPTER, because they are two different documents:
+ *
+ *   `eea-joint-committee` — the **decisions**. One record per JCD, carrying
+ *     the decision's own text: "DECISION OF THE EEA JOINT COMMITTEE No 25/2010
+ *     of 12 March 2010 amending Annex II … to the EEA Agreement". This is the
+ *     legal instrument, and it is what someone looking for a decision of the
+ *     Joint Committee is looking for.
+ *
+ *   `eea-lex` — the **acts**. One record per incorporated EU act, from its
+ *     EEA-Lex factsheet: the act's title in English, Icelandic, Norwegian and
+ *     German, which decision took it in, the Annex it landed in, and the dates
+ *     it moved through. This is the register of what EU law is in force in the
+ *     EEA, and the Icelandic titles in it are searchable nowhere else here.
+ *
+ * The decisions are derived from the acts rather than from a listing of their
+ * own: every factsheet names its JCD and links that decision's English text,
+ * so grouping the stored factsheets by decision yields both the set of
+ * decisions **and** the in-force filter, with no second walk of the site. A
+ * decision appears once the first act it incorporated has been ingested, and
+ * is retired once the last one falls out of force.
  *
  * ONLY WHAT IS IN FORCE. The register's Case Status facet separates
  * "Incorporated into the EEA Agreement and in force" (9,164 acts) from
@@ -98,11 +127,23 @@ const PAGE_SIZE = Number(process.env.EEALEX_PAGE_SIZE ?? 60);
 /** The label the active facet carries, and the text the count sits beside. */
 const IN_FORCE_LABEL = "Incorporated into the EEA Agreement and in force";
 
-export const EEALEX_SOURCE_KEY = "eea-joint-committee";
-export const EEALEX_NAME = "Sameiginlega EES-nefndin (EEA Joint Committee)";
+/** The decisions themselves — one record per Joint Committee Decision. */
+export const DECISIONS_SOURCE_KEY = "eea-joint-committee";
+export const DECISIONS_NAME = "Sameiginlega EES-nefndin (EEA Joint Committee)";
+
+/** The register of EU acts in force in the EEA — one record per factsheet. */
+export const ACTS_SOURCE_KEY = "eea-lex";
+export const ACTS_NAME = "EEA-Lex";
 
 /** Below this a composed record is treated as a parse failure, not a record. */
 const MIN_RECORD_CHARS = 120;
+
+/**
+ * Below this a decision PDF is recorded as a gap rather than stored. The
+ * shortest real JCD measured runs to about 1,700 characters; 600 leaves room
+ * for one shorter than any seen without accepting an empty extraction.
+ */
+const MIN_DECISION_CHARS = 600;
 
 /**
  * The retirement guard. A run may retire up to MAX_RETIRE_SHARE of what is
@@ -361,16 +402,23 @@ export function decisionDate(sheet: Factsheet): Date | undefined {
  */
 export function fallbackYear(sheet: Factsheet): number | undefined {
   const jcd = jcdNumber(sheet);
-  const fromJcd = jcd ? /\/(\d{2,4})$/.exec(jcd)?.[1] : undefined;
-  if (fromJcd) {
-    const n = Number(fromJcd);
-    if (fromJcd.length === 4) return n;
-    // The Agreement entered into force in 1994, so a two-digit year of 90+
-    // is last century.
-    return n >= 90 ? 1900 + n : 2000 + n;
-  }
+  const fromJcd = jcd ? decisionYear(jcd) : undefined;
+  if (fromJcd) return fromJcd;
   const fromCelex = /^\d(\d{4})/.exec(sheet.celex)?.[1];
   return fromCelex ? Number(fromCelex) : undefined;
+}
+
+/**
+ * The year in a decision's number: "7/94" → 1994, "25/2010" → 2010. The
+ * Agreement entered into force in 1994, so a two-digit year of 90 or more is
+ * last century.
+ */
+export function decisionYear(number: string): number | undefined {
+  const raw = /\/(\d{2,4})$/.exec(number)?.[1];
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (raw.length === 4) return n;
+  return n >= 90 ? 1900 + n : 2000 + n;
 }
 
 /** Every link on the page, from both the document list and the history. */
@@ -435,12 +483,154 @@ export function composeRecord(sheet: Factsheet): string {
   return lines.join("\n");
 }
 
-async function recordTotal(total: number): Promise<void> {
+// ---------------------------------------------------------------------------
+// The decisions.
+//
+// A JCD has no page of its own on efta.int — it is published as a PDF, one per
+// language, under /sites/default/files/…/adopted-joint-committee-decisions/.
+// So the English PDF is the decision's `officialUrl`, exactly as the ruling
+// PDF is for Óbyggðanefnd and for the Surveillance Authority's documents.
+//
+// Which decisions exist, and which are in force, is read off the acts already
+// stored: each factsheet carries its JCD number in `caseNumber` and that
+// decision's English PDF in `pdfUrl`. Grouping them is one query and no
+// fetches, and it inherits the in-force filter from the acts pass for free.
+// ---------------------------------------------------------------------------
+
+/** A decision to fetch, assembled from the acts that name it. */
+export interface DecisionSeed {
+  /** "7/1994" — the number as EEA-Lex writes it, normalised. */
+  number: string;
+  /** The decision's English text: its publication, and its identity here. */
+  url: string;
+  /** The JCD adoption date off the factsheets, if the PDF does not say. */
+  date?: Date;
+  /** Annexes and Protocols the acts it incorporated landed in. */
+  areas: string[];
+}
+
+/**
+ * "7/1994" → 1994007, so decisions sort oldest first and in number order
+ * within a year. A number that will not parse sorts last rather than throwing.
+ */
+function decisionRank(number: string): number {
+  const m = /^(\d+)\/(\d{2,4})$/.exec(number);
+  const year = m ? decisionYear(number) : undefined;
+  if (!m || year === undefined) return Number.MAX_SAFE_INTEGER;
+  return year * 1000 + Math.min(Number(m[1]), 999);
+}
+
+/** Every decision named by an act we have stored, oldest first. */
+export async function decisionSeeds(): Promise<DecisionSeed[]> {
+  const acts = await prisma.document.findMany({
+    where: { source: ACTS_SOURCE_KEY, caseNumber: { not: null }, pdfUrl: { not: null } },
+    select: { caseNumber: true, pdfUrl: true, date: true, subjectTags: true },
+  });
+
+  const byNumber = new Map<string, DecisionSeed>();
+  for (const act of acts) {
+    const number = act.caseNumber as string;
+    const seed = byNumber.get(number);
+    if (!seed) {
+      byNumber.set(number, {
+        number,
+        url: act.pdfUrl as string,
+        date: act.date ?? undefined,
+        areas: [...act.subjectTags],
+      });
+      continue;
+    }
+    // Several acts name the same decision. Keep the first URL and date seen
+    // and union the areas: one decision commonly amends more than one Annex.
+    if (!seed.date && act.date) seed.date = act.date;
+    for (const area of act.subjectTags) if (!seed.areas.includes(area)) seed.areas.push(area);
+  }
+
+  return [...byNumber.values()].sort((a, b) => decisionRank(a.number) - decisionRank(b.number));
+}
+
+const MONTHS =
+  "January|February|March|April|May|June|July|August|September|October|November|December";
+
+/**
+ * The decision's own heading, which every JCD from 1994 to 2026 opens with:
+ *
+ *   DECISION OF THE EEA JOINT COMMITTEE No 25/2010 of 12 March 2010
+ *   amending Annex II (Technical regulations, standards, testing and
+ *   certification) to the EEA Agreement
+ *
+ * It gives the decision's date and its subject in the Committee's own words,
+ * which beats both the factsheet's dates and anything we could compose. The
+ * subject runs to the recitals, so it is closed on "THE EEA JOINT COMMITTEE,"
+ * — the address that opens every one of them.
+ *
+ * The space after "COMMITTEE" is optional because the extraction loses it on
+ * some years ("EEA JOINT COMMITTEENo 1/2026"), and the year is matched at two
+ * digits as well as four because the early decisions are headed "No 7/94".
+ */
+const DECISION_HEADING_RE = new RegExp(
+  `DECISION\\s+OF\\s+THE\\s+EEA\\s+JOINT\\s+COMMITTEE\\s*No\\s*(\\d{1,3})\\s*/\\s*(\\d{2,4})\\s*` +
+    `of\\s+(\\d{1,2})\\s+(${MONTHS})\\s+(\\d{4})\\s*([\\s\\S]{0,400}?)(?=THE\\s+EEA\\s+JOINT\\s+COMMITTEE\\s*,)`,
+  "i"
+);
+
+/** How much of a decision to look for its heading in. It is the first thing. */
+const HEADING_SCAN_CHARS = 6000;
+
+export interface DecisionHeading {
+  /** "12 March 2010", as a date. */
+  date?: Date;
+  /** "amending Annex II (Technical regulations, …) to the EEA Agreement" */
+  subject: string;
+}
+
+export function parseDecisionHeading(text: string): DecisionHeading | null {
+  const m = DECISION_HEADING_RE.exec(text.slice(0, HEADING_SCAN_CHARS));
+  if (!m) return null;
+  const month = MONTHS.split("|").findIndex((name) => name.toLowerCase() === m[4].toLowerCase());
+  const date = month < 0 ? undefined : new Date(Date.UTC(Number(m[5]), month, Number(m[3])));
+  return {
+    date: date && !Number.isNaN(date.getTime()) ? date : undefined,
+    // The newer decisions carry the Official Journal's own reference in
+    // brackets after the subject — "[2026/933]" — which is a filing number,
+    // not part of what the decision is about.
+    subject: squish(m[6]).replace(/\s*\[\d{4}\/\d+\]\s*$/, ""),
+  };
+}
+
+/**
+ * The decision as stored text: the Committee's own heading, the Annexes the
+ * acts it carried landed in, and then the decision itself.
+ *
+ * The list of acts the decision carried is deliberately *not* part of this
+ * record. It would grow as the acts backfill advances, and every growth would
+ * change the text and so cost another fetch of a PDF whose content had not
+ * changed at all. The linkage is not lost by leaving it out: each act's own
+ * record names its decision, so "which decision brought in Directive
+ * 2009/9/EC" is a search away.
+ *
+ * The Annexes are in for the same reason in reverse — they are what a reader
+ * browses by, and they change far less often than the act list. A decision is
+ * composed once, when its PDF is first fetched, so an Annex learned from an
+ * act ingested later is not folded in. That is the price of never re-fetching
+ * a decision whose text has not changed, and it is worth paying: the decision
+ * names its own Annex in the heading above, which is the copy that matters.
+ */
+export function composeDecision(seed: DecisionSeed, heading: DecisionHeading | null, body: string): string {
+  const lines: string[] = [`Decision of the EEA Joint Committee No ${seed.number}`];
+  if (heading?.subject) lines.push(heading.subject);
+
+  const details: string[] = [`${BULLET} Decision number: ${seed.number}`];
+  if (seed.areas.length) details.push(`${BULLET} Area (EEA Agreement): ${seed.areas.join("; ")}`);
+  lines.push("", "Case details:", ...details);
+
+  lines.push("", "Decision:", body);
+  return lines.join("\n");
+}
+
+async function recordTotal(key: string, total: number): Promise<void> {
   try {
-    await prisma.source.updateMany({
-      where: { key: EEALEX_SOURCE_KEY },
-      data: { totalAvailable: total },
-    });
+    await prisma.source.updateMany({ where: { key }, data: { totalAvailable: total } });
   } catch {
     // Bookkeeping only — never fail a run over it.
   }
@@ -448,8 +638,8 @@ async function recordTotal(total: number): Promise<void> {
 
 export const eeaLexAdapter: IngestionAdapter = {
   key: "eea-lex",
-  name: "EEA Joint Committee decisions in force (efta.int/eea-lex)",
-  sourceKeys: [EEALEX_SOURCE_KEY],
+  name: "EEA Joint Committee decisions and the acts they incorporated (efta.int/eea-lex)",
+  sourceKeys: [DECISIONS_SOURCE_KEY, ACTS_SOURCE_KEY],
 
   async run(ctx: IngestContext): Promise<IngestStats> {
     const stats: IngestStats = { indexed: 0, skipped: 0, errors: 0 };
@@ -463,9 +653,9 @@ export const eeaLexAdapter: IngestionAdapter = {
       fetches++;
       const identity = {
         adapter: "eea-lex",
-        source: EEALEX_SOURCE_KEY,
+        source: ACTS_SOURCE_KEY,
         officialUrl: url,
-        court: EEALEX_NAME,
+        court: ACTS_NAME,
         caseNumber: null as string | null,
         title: null as string | null,
         date: null,
@@ -503,8 +693,8 @@ export const eeaLexAdapter: IngestionAdapter = {
         const date = decisionDate(sheet);
         const title = `${incorporationLabel(sheet)} (${sheet.celex})`;
         const result = await ctx.save({
-          source: EEALEX_SOURCE_KEY,
-          court: EEALEX_NAME,
+          source: ACTS_SOURCE_KEY,
+          court: ACTS_NAME,
           caseNumber: jcdNumber(sheet),
           // The act's own English title is what a reader recognises the
           // decision by, so it heads the card; the decision's number and the
@@ -535,20 +725,173 @@ export const eeaLexAdapter: IngestionAdapter = {
       }
     };
 
+    const ingestDecision = async (seed: DecisionSeed): Promise<void> => {
+      fetches++;
+      const identity = {
+        adapter: "eea-lex",
+        source: DECISIONS_SOURCE_KEY,
+        officialUrl: seed.url,
+        court: DECISIONS_NAME,
+        caseNumber: seed.number,
+        title: `Decision of the EEA Joint Committee No ${seed.number}`,
+        date: seed.date ?? null,
+      };
+
+      let body: string;
+      try {
+        const { body: bytes } = await politeFetchBytes(seed.url);
+        body = normalizeJudgmentText((await pdfParse(bytes)).text);
+      } catch (e) {
+        stats.errors++;
+        stats.errorSample = stats.errorSample ?? String(e);
+        ctx.log(`  JCD ${seed.number}: ${String(e).slice(0, 140)}`);
+        await ctx.recordGap({ ...identity, reason: "fetch-failed", detail: String(e).slice(0, 300) });
+        return;
+      }
+
+      if (body.length < MIN_DECISION_CHARS) {
+        stats.skipped++;
+        await ctx.recordGap({
+          ...identity,
+          reason: "no-text",
+          detail: body.length
+            ? `the decision PDF extracted only ${body.length} chars`
+            : "the decision PDF extracted no text at all",
+        });
+        return;
+      }
+
+      try {
+        const heading = parseDecisionHeading(body);
+        // The decision's own date beats the factsheets': it is the date
+        // printed on the instrument, where theirs is EEA-Lex's record of it.
+        const date = heading?.date ?? seed.date;
+        const result = await ctx.save({
+          source: DECISIONS_SOURCE_KEY,
+          court: DECISIONS_NAME,
+          caseNumber: seed.number,
+          // The Committee's own statement of what the decision does heads the
+          // card; the decision's number sits under it.
+          caseName: heading?.subject || undefined,
+          title: `Decision of the EEA Joint Committee No ${seed.number}`,
+          date,
+          year: date?.getUTCFullYear() ?? decisionYear(seed.number),
+          language: "en",
+          subjectTags: seed.areas,
+          officialUrl: seed.url,
+          pdfUrl: seed.url,
+          fullText: composeDecision(seed, heading, body),
+        });
+        if (result === "indexed") stats.indexed++;
+        else stats.skipped++;
+      } catch (e) {
+        stats.errors++;
+        stats.errorSample = stats.errorSample ?? String(e);
+        ctx.log(`  JCD ${seed.number}: ${String(e).slice(0, 140)}`);
+        await ctx.recordGap({ ...identity, reason: "error", detail: String(e).slice(0, 300) });
+      }
+    };
+
     // -----------------------------------------------------------------------
     // Retry sweep: the gap ledger and nothing else, no listing walk in front.
+    // Both sources share the ledger, and a gap says which it belongs to.
     // -----------------------------------------------------------------------
     if (mode === "retry") {
-      const open = await ctx.openGaps([EEALEX_SOURCE_KEY]);
-      ctx.log(`Retry sweep: ${open.length} outstanding factsheet(s); up to ${maxFetches} fetches.`);
+      const open = await ctx.openGaps([ACTS_SOURCE_KEY, DECISIONS_SOURCE_KEY]);
+      ctx.log(`Retry sweep: ${open.length} outstanding record(s); up to ${maxFetches} fetches.`);
+      const seeds = new Map((await decisionSeeds()).map((seed) => [seed.url, seed]));
       for (const gap of open) {
         if (fetches >= maxFetches) {
           ctx.log(`Reached INGEST_MAX_CASES=${maxFetches}; re-run to continue.`);
           break;
         }
-        await ingestOne(gap.officialUrl);
+        if (gap.source === DECISIONS_SOURCE_KEY) {
+          // A decision is only re-attemptable while an act still names it; if
+          // none does, the gap is stale and the row below clears it.
+          const seed = seeds.get(gap.officialUrl);
+          if (seed) await ingestDecision(seed);
+          else await ctx.retire(DECISIONS_SOURCE_KEY, [gap.officialUrl]);
+        } else {
+          await ingestOne(gap.officialUrl);
+        }
       }
       ctx.log(`Retry sweep done: ${stats.indexed} recovered, ${stats.skipped} still unread.`);
+      return stats;
+    }
+
+    // -----------------------------------------------------------------------
+    // Decisions pass: no walk of the site at all. The acts already stored say
+    // which decisions exist and which are in force, and each one names the
+    // English PDF that is the decision itself.
+    // -----------------------------------------------------------------------
+    if (mode === "decisions") {
+      // Records written before the decisions and the acts were told apart:
+      // factsheets stored under the decisions key. They are duplicates of the
+      // acts source now and are not decisions, so they go.
+      const misfiled = (
+        await prisma.document.findMany({
+          where: { source: DECISIONS_SOURCE_KEY, officialUrl: { contains: "/eea-lex/" } },
+          select: { officialUrl: true },
+        })
+      ).map((d) => d.officialUrl);
+      if (misfiled.length) {
+        const removed = await ctx.retire(DECISIONS_SOURCE_KEY, misfiled);
+        ctx.log(`Retired ${removed} factsheet(s) filed under the decisions source before the split.`);
+      }
+
+      const seeds = await decisionSeeds();
+      if (seeds.length === 0) {
+        ctx.log(`No acts stored yet, so no decisions to fetch — run the acts pass first.`);
+        return stats;
+      }
+      await recordTotal(DECISIONS_SOURCE_KEY, seeds.length);
+
+      const stored = new Set(
+        (
+          await prisma.document.findMany({
+            where: { source: DECISIONS_SOURCE_KEY },
+            select: { officialUrl: true },
+          })
+        ).map((d) => d.officialUrl)
+      );
+      const missing = seeds.filter((seed) => !stored.has(seed.url));
+      stats.skipped += seeds.length - missing.length;
+      ctx.log(
+        `${seeds.length} decision(s) named by the acts in force; ${stored.size} stored, ` +
+          `${missing.length} missing. Up to ${maxFetches} fetches this run.`
+      );
+
+      // Oldest decision first, as everywhere else here, so a bounded run
+      // always lands on ground no previous run has covered.
+      for (const seed of missing) {
+        if (fetches >= maxFetches) {
+          ctx.log(`Reached INGEST_MAX_CASES=${maxFetches}; ${missing.length - fetches} left for next run.`);
+          break;
+        }
+        await ingestDecision(seed);
+      }
+
+      // A decision no act in force names any more has nothing left in force
+      // to have done, so it leaves with them. The guard is the acts pass's.
+      const named = new Set(seeds.map((seed) => seed.url));
+      const orphaned = [...stored].filter((url) => !named.has(url));
+      const allowedHere = Math.max(MAX_RETIRE_FLOOR, Math.floor(stored.size * MAX_RETIRE_SHARE));
+      if (orphaned.length > allowedHere) {
+        ctx.log(
+          `${orphaned.length} of ${stored.size} stored decision(s) are named by no act in force — ` +
+            `more than the ${allowedHere} this run may retire. Nothing retired; check the acts source first.`
+        );
+      } else if (orphaned.length) {
+        const removed = await ctx.retire(DECISIONS_SOURCE_KEY, orphaned);
+        ctx.log(`Retired ${removed} decision(s) whose acts are no longer in force.`);
+      }
+
+      const open = await ctx.openGaps([DECISIONS_SOURCE_KEY]);
+      if (open.length) {
+        ctx.log(`${open.length} decision(s) outstanding — run INGEST_MODE=retry to re-attempt them.`);
+        for (const g of open.slice(0, 25)) ctx.log(`  [${g.reason}, ${g.attempts}x] ${g.caseNumber ?? ""} ${g.officialUrl}`);
+      }
+      ctx.log(`${fetches} decision(s) fetched.`);
       return stats;
     }
 
@@ -605,12 +948,12 @@ export const eeaLexAdapter: IngestionAdapter = {
     if (!walkedToTheEnd) {
       ctx.log(`Stopped at EEALEX_MAX_PAGES=${maxPages}; the listing walk is incomplete.`);
     }
-    await recordTotal(announced ?? inForce.length);
+    await recordTotal(ACTS_SOURCE_KEY, announced ?? inForce.length);
 
     const stored = new Set(
       (
         await prisma.document.findMany({
-          where: { source: EEALEX_SOURCE_KEY },
+          where: { source: ACTS_SOURCE_KEY },
           select: { officialUrl: true },
         })
       ).map((d) => d.officialUrl)
@@ -648,7 +991,7 @@ export const eeaLexAdapter: IngestionAdapter = {
             `than a wave of withdrawals. Nothing retired; check the site before the next run.`
         );
       } else if (withdrawn.length) {
-        const removed = await ctx.retire(EEALEX_SOURCE_KEY, withdrawn);
+        const removed = await ctx.retire(ACTS_SOURCE_KEY, withdrawn);
         ctx.log(`Retired ${removed} factsheet(s) no longer in force.`);
       }
     } else if (walkedToTheEnd && announced !== undefined) {
@@ -657,7 +1000,7 @@ export const eeaLexAdapter: IngestionAdapter = {
       );
     }
 
-    const open = await ctx.openGaps([EEALEX_SOURCE_KEY]);
+    const open = await ctx.openGaps([ACTS_SOURCE_KEY]);
     if (open.length) {
       ctx.log(`${open.length} factsheet(s) outstanding — run INGEST_MODE=retry to re-attempt them.`);
       for (const g of open.slice(0, 25)) ctx.log(`  [${g.reason}, ${g.attempts}x] ${g.officialUrl}`);
