@@ -21,7 +21,7 @@ import {
 } from "./adapter";
 import { icelandicCourtsAdapter } from "./adapters/icelandic-courts";
 import { eftaCourtAdapter } from "./adapters/efta-court";
-import { eeaLexAdapter } from "./adapters/eea-lex";
+import { eeaJointCommitteeAdapter } from "./adapters/eea-joint-committee";
 import { eftaSurvAdapter } from "./adapters/eftasurv";
 import { umbodsmadurAdapter } from "./adapters/umbodsmadur";
 import { stjornarradidAdapter } from "./adapters/stjornarradid";
@@ -37,7 +37,7 @@ import { citationsAdapter } from "./citations";
 const ADAPTERS: Record<string, IngestionAdapter> = {
   "icelandic-courts": icelandicCourtsAdapter,
   "efta-court": eftaCourtAdapter,
-  "eea-lex": eeaLexAdapter,
+  "eea-joint-committee": eeaJointCommitteeAdapter,
   eftasurv: eftaSurvAdapter,
   umbodsmadur: umbodsmadurAdapter,
   stjornarradid: stjornarradidAdapter,
@@ -88,6 +88,7 @@ async function main() {
   });
 
   const ctx: IngestContext = {
+    dryRun,
     fetchText: politeFetchText,
     save: dryRun
       ? async (doc) => {

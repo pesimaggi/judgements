@@ -217,38 +217,20 @@ export const ALL_SOURCES: SourceDef[] = [
     // a PDF per language, so the English PDF is the officialUrl, as the ruling
     // PDF already is for Óbyggðanefnd and for ESA.
     //
-    // Only decisions still doing something are here. Which those are is read
-    // off the acts source below, which is filtered to the acts in force: a
-    // decision appears once the first act it incorporated is ingested, and is
-    // retired once the last one falls out of force.
+    // These used to be derived from a second source, an EEA-Lex register of
+    // the EU acts in force, whose factsheets each named the decision that
+    // incorporated them. That register was not the right thing to be
+    // ingesting and has been withdrawn; the decisions it had already named
+    // are carried in the gap ledger instead, and the adapter works that list
+    // to the end. It discovers nothing new until EEA-Lex is ingested again —
+    // deliberately, and see the adapter's header for why.
     key: "eea-joint-committee",
     name: "Sameiginlega EES-nefndin (EEA Joint Committee)",
     officialBaseUrl:
       "https://www.efta.int/about-efta/legal-documents/adopted-joint-committee-decisions",
     language: "en",
     group: EEA_EFTA,
-    adapterKey: "eea-lex",
-    kind: "decision",
-    status: "live",
-  },
-  {
-    // The other half of EEA-Lex: the register of **EU acts in force in the
-    // EEA**, one record per act. EEA-Lex separates acts incorporated and still
-    // in force from acts incorporated but superseded, and this source carries
-    // the first set alone; an act that later falls out of force leaves the
-    // register, and its record is retired with it.
-    //
-    // It is a different document from the decision that incorporated it, and
-    // it is worth its own source: the factsheet carries the act's title in
-    // Icelandic and Norwegian as well as English, and those titles are
-    // searchable nowhere else in this app. `officialUrl` is the factsheet,
-    // from which the act and the decision can both be opened in any language.
-    key: "eea-lex",
-    name: "EEA-Lex (EU-gerðir í gildi á EES-svæðinu)",
-    officialBaseUrl: "https://www.efta.int/eea-lex",
-    language: "en",
-    group: EEA_EFTA,
-    adapterKey: "eea-lex",
+    adapterKey: "eea-joint-committee",
     kind: "decision",
     status: "live",
   },

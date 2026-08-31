@@ -268,7 +268,8 @@ model IngestGap {
   /// Why it is not stored. Kept to a small vocabulary so the counts mean
   /// something: "no-text" (the page yielded no judgment body), "fetch-failed"
   /// (the detail page could not be retrieved), "unmapped-court" (the feed
-  /// named a court no source covers), "error" (anything else).
+  /// named a court no source covers), "pending" (known to exist, not yet
+  /// fetched — the only reason that is not a failure), "error" (anything else).
   reason      String
   detail      String?
   attempts    Int       @default(1)

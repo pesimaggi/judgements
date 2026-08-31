@@ -27,6 +27,13 @@ export interface IngestionAdapter {
 }
 
 export interface IngestContext {
+  /**
+   * True when the run must not write anything. `save`, `recordGap` and
+   * `retire` already honour it on their own, so an adapter only needs to read
+   * this when it writes through Prisma directly — a one-off migration or
+   * clean-up step, which has no context helper to hide behind.
+   */
+  dryRun: boolean;
   /** Polite fetch: shared UA, rate-limited, throws on non-2xx. */
   fetchText(url: string): Promise<string>;
   /** Upsert a normalized document; returns "indexed" or "skipped" (unchanged). */
@@ -46,21 +53,31 @@ export interface IngestContext {
   /** Open (unresolved) gaps for these sources, oldest attempt first. */
   openGaps(sources: string[]): Promise<OpenGap[]>;
   /**
-   * Delete stored documents a source no longer publishes, by official URL.
-   * Returns how many rows went.
+   * Delete stored documents, by official URL. Returns how many rows went.
+   * This is the only path that also drops them from the search index, so it
+   * is the only correct way to remove a document: deleting the rows directly
+   * leaves every one of them findable in Meilisearch.
    *
-   * Only one source needs this so far, and it needs it to be honest: EEA-Lex
-   * is ingested filtered to the acts *in force*, and an act that falls out of
-   * force leaves that listing. Keeping its record would turn "in force" into
-   * "was in force when we first saw it". Every other source publishes an
-   * archive that only grows, and must never call this.
+   * It exists for a source that stops publishing what it published, which is
+   * rare and always deliberate. Its one standing use is the EEA Joint
+   * Committee adapter's purge of the withdrawn EEA-Lex acts register — see
+   * that adapter's header. Every other source here publishes an archive that
+   * only grows, and must never call this.
    */
   retire(source: string, officialUrls: string[]): Promise<number>;
   log(msg: string): void;
 }
 
-/** Why a case seen in a listing did not get stored. */
-export type GapReason = "no-text" | "fetch-failed" | "unmapped-court" | "error";
+/**
+ * Why a case seen in a listing did not get stored.
+ *
+ * "pending" is the one that is not a failure: the case is known to exist and
+ * has simply not been fetched yet. Only the EEA Joint Committee adapter writes
+ * it, and it writes it for one reason — the acts register that used to say
+ * which decisions exist was withdrawn, so the outstanding decisions were moved
+ * into this ledger to keep the to-do list rather than lose it with the acts.
+ */
+export type GapReason = "no-text" | "fetch-failed" | "unmapped-court" | "pending" | "error";
 
 export interface GapRecord {
   adapter: string;
@@ -79,6 +96,8 @@ export interface OpenGap {
   officialUrl: string;
   court: string | null;
   caseNumber: string | null;
+  /** The date recorded when the gap was written, if the listing gave one. */
+  date: Date | null;
   reason: string;
   attempts: number;
 }
@@ -237,7 +256,10 @@ export async function openIngestGaps(sources: string[]): Promise<OpenGap[]> {
   return prisma.ingestGap.findMany({
     where: { source: { in: sources }, resolvedAt: null },
     orderBy: [{ attempts: "asc" }, { lastTriedAt: "asc" }],
-    select: { source: true, officialUrl: true, court: true, caseNumber: true, reason: true, attempts: true },
+    select: {
+      source: true, officialUrl: true, court: true, caseNumber: true,
+      date: true, reason: true, attempts: true,
+    },
   });
 }
 
