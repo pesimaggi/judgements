@@ -147,8 +147,21 @@ export interface ProvisionCitation extends ActCitation {
   text: string;
 }
 
-/** "N. gr." with an optional single-letter suffix that stands as its own word. */
-const ARTICLE = String.raw`(\d+)\.\s*gr\.(?:\s*([a-záðéíóúýþæö])(?![\p{L}]))?`;
+/**
+ * "N. gr." with an optional single-letter suffix that stands as its own word.
+ *
+ * The suffix may carry its own period — Lagasafn prints the article as "7. gr.
+ * a." and judgments cite it the same way, which is the *usual* form rather
+ * than an edge case. It is consumed here so that the act reference following
+ * it is still adjacent; without that, every lettered provision cited in the
+ * ordinary way failed to extract and no case was ever linked to one.
+ *
+ * The letter still has to stand as its own word. `(?![\p{L}])` is what stops
+ * "57. gr. laga nr. 46/1980" reading as article 57 letter "l": the period is
+ * optional, so on that input the guard sees the "a" of "laga" and the whole
+ * suffix group backtracks away.
+ */
+const ARTICLE = String.raw`(\d+)\.\s*gr\.(?:\s*([a-záðéíóúýþæö])\.?(?![\p{L}]))?`;
 /** The qualifiers that may precede it, outermost first. */
 const ARTICLE_PREFIX =
   String.raw`(?:(\d+)\.\s*tölul\.\s*)?(?:(\d+)\.\s*málsl\.\s*)?(?:(\d+)\.\s*mgr\.\s*)?`;

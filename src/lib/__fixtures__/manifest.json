@@ -1,0 +1,19 @@
+{
+  "description": "Frozen responses from the live sources, for parser tests that run offline. See README.md.",
+  "fixtures": [
+    {
+      "file": "lagasafn/2001038.html.gz",
+      "url": "https://www.althingi.is/lagas/nuna/2001038.html",
+      "captured": "2026-08-31",
+      "codexVersion": "157b",
+      "describes": "Lög um vexti og verðtryggingu nr. 38/2001 — 'vaxtalög'. Nine chapters, fifteen temporary provisions numbered in roman, one repealed article. The act whose short name is nowhere in its own title, which is what Act.aliases exists for."
+    },
+    {
+      "file": "lagasafn/2004081.html.gz",
+      "url": "https://www.althingi.is/lagas/nuna/2004081.html",
+      "captured": "2026-08-31",
+      "codexVersion": "157b",
+      "describes": "Jarðalög nr. 81/2004. Lettered articles inserted by amendment (7. gr. a–d, 10. gr. a), per-article headings, an annex, five repealed articles. The lettered articles are the shape that lib/legal-citations.ts silently failed to extract before 2026-08-31."
+    }
+  ]
+}

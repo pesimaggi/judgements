@@ -1193,6 +1193,81 @@ Results are paginated 15 to a page. Counting stops at 10,000, so very broad quer
 
 If you change `document_search_vector()`, stored vectors are not updated retroactively: run `UPDATE "Document" SET search_vector = NULL;` and then `npm run db:setup-search` to rebuild them.
 
+## Tests
+
+```bash
+npm test           # the whole suite, no database and no network
+npm run typecheck  # tsc --noEmit
+```
+
+Node's own test runner through `tsx`, so there is no test framework to
+install and no config to keep in step with `tsconfig.json`. Tests sit next to
+what they test as `*.test.ts`. CI (`.github/workflows/ci.yml`) runs the
+typecheck and the suite on every pull request.
+
+What is covered, and why those:
+
+| Module | What the tests hold down |
+|---|---|
+| `lib/legal-citations.ts` | that `lög nr. 91/1991` and `mál nr. 91/1991` stay told apart, and that every citation form the courts use still extracts |
+| `lib/provision-query.ts` | that what a user can type matches what the linker can extract — the two halves of the same grammar |
+| `lib/judgment-text.ts` | letter-spaced headings, abbreviation-aware sentence splitting, blob reflow, `Útdráttur` extraction |
+| `lib/lagasafn.ts` | the act parser, against two real acts frozen from althingi.is |
+| `lib/query-parser.ts` | case-number detection and the boolean → `websearch_to_tsquery` translation |
+| `lib/sources.ts`, `lib/adr-boards.ts` | registry invariants: unique keys, every board a source, Félagsdómur not among the boards, exotic `Committee=` values surviving URL encoding |
+| `search-eval/metrics.ts` | the ranking metrics themselves |
+
+Every failure mode in that list is silent. A citation that stops matching
+produces no link; a board whose filter value is mangled returns an empty
+listing, which is indistinguishable from "nothing new" and so fails forever.
+None of it raises anything at ingestion time, which is why it is worth a test
+rather than a look.
+
+### Fixtures
+
+`src/lib/__fixtures__/` holds gzipped real responses, recorded in
+`manifest.json` with their URL and capture date — currently two Lagasafn acts
+(38/2001 and 81/2004, chosen between them to carry chapters, lettered
+articles, temporary provisions, an annex and repealed articles). Assertions
+are structural rather than exact: Alþingi amends these acts, and a test
+pinning `provisions.length === 53` fails on the next amendment and trains
+everyone to ignore it. What must not change is the shape the parser recovers,
+and that breaks only when the markup does.
+
+**The fourteen ingestion adapters have no fixtures yet, and that is the gap
+worth closing next.** Each wants one frozen listing page and one frozen
+document page; `src/lib/lagasafn.test.ts` is the pattern. Both of the
+formatting bugs this repo has fixed by hand — Félagsdómur's letter-spaced
+headings, and the pre-2010 half of that court filing its parties as subject
+tags — are exactly what a frozen listing page catches on the next run.
+
+## Measuring search
+
+```bash
+npm run eval:search
+```
+
+Runs the cases in `src/search-eval/queries.json` against the live corpus and
+reports how the current configuration does on them. It reads `SEARCH_PROVIDER`
+and `DATABASE_URL` from the environment, so it measures whatever the app would
+run, and exits non-zero on a failed assertion so it can be used as a gate.
+
+This exists because the app ships two providers behind one interface and had
+no way to say which answers better, or whether a ranking change helped.
+
+Cases come in two kinds. **Assertions** need no labelled corpus — a case
+number's own case is the top hit, "vaxtalög" finds 38/2001, a scoped query
+returns only the ticked sources, a quoted phrase's hits contain the phrase,
+`NOT` excludes, nonsense returns nothing. **Graded cases** carry hand-labelled
+answers and are scored with recall@1/@5, MRR and nDCG@10; none ship yet, and
+`--record` prints the stubs for labelling one.
+
+Cases are split into development and holdout. Tune against development; run
+holdout once, to confirm a configuration already chosen.
+
+See [docs/search-evaluation.md](docs/search-evaluation.md) for the schema, the
+metrics, and the labelling rules.
+
 ## How judgments are made readable
 
 island.is serves older cases as scanned PDFs and newer ones as a rich-text tree, and neither survives extraction as readable prose: PDF text arrives broken at the page's line width, rich text as one line per block with no spacing. `src/lib/judgment-text.ts` handles both — it reflows wrapped lines into paragraphs, rejoins words hyphenated across a line break, drops stranded page numbers, and recognises headings (`Dómsorð`, `Niðurstaða`, roman-numeral sections) and numbered clauses so the document page can typeset them. Judgments ingested before this existed are stored as one run-together blob; those are re-split at render time from sentence and section boundaries, so no re-ingestion is needed.
