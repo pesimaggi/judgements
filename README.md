@@ -4,7 +4,7 @@ An MVP search engine for **Icelandic court judgments only** — Hæstiréttur Í
 
 > **Disclaimer shown throughout the app:** This is an unofficial research tool. Always verify text against the official source.
 
-This is a deliberately narrowed build: no CJEU. The three Icelandic courts published at [island.is/domar](https://island.is/domar), searched properly — plus Endurupptökudómur and [Félagsdómur](https://felagsdomur.is/domar-og-urskurdir/), the EFTA Court, Umboðsmaður Alþingis, the 40 administrative appeal boards that publish at [stjornarradid.is](https://www.stjornarradid.is/gogn/urskurdir-og-alit-/), the EEA law in force — the [EEA Joint Committee decisions](https://www.efta.int/about-efta/legal-documents/adopted-joint-committee-decisions) themselves, the [EU acts](https://www.efta.int/eea-lex) they brought in, and the [EFTA Surveillance Authority](https://www.eftasurv.int/esa-at-a-glance/publications/public-access-to-documents/public-documents) documents enforcing them — and two peer-reviewed Icelandic legal journals for the commentary on them.
+This is a deliberately narrowed build: no CJEU. The three Icelandic courts published at [island.is/domar](https://island.is/domar), searched properly — plus Endurupptökudómur and [Félagsdómur](https://felagsdomur.is/domar-og-urskurdir/), the EFTA Court, Umboðsmaður Alþingis, the 40 administrative appeal boards that publish at [stjornarradid.is](https://www.stjornarradid.is/gogn/urskurdir-og-alit-/), the EEA law in force — the [EEA Joint Committee decisions](https://www.efta.int/about-efta/legal-documents/adopted-joint-committee-decisions) that bring EU acts into the EEA Agreement, and the [EFTA Surveillance Authority](https://www.eftasurv.int/esa-at-a-glance/publications/public-access-to-documents/public-documents) documents enforcing them — and two peer-reviewed Icelandic legal journals for the commentary on them.
 
 ## What's in the MVP
 
@@ -19,7 +19,7 @@ This is a deliberately narrowed build: no CJEU. The three Icelandic courts publi
 - **Administrative case law** — the úrskurðarnefndir, kærunefndir and ministry appeal desks at stjornarradid.is, each board its own tickable source rather than one undifferentiated pile. For immigration, benefits, tenancy, procurement and freedom of information this is where the case law actually is, and a search of the courts alone would miss it. See *Úrskurðarnefndir og ráðuneyti* below.
 - **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`.
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
-- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force act; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `eea-lex` ingests both the EEA Joint Committee's decisions (their own text, one record each) and the ~9,164 EU acts **in force** that they incorporated, retiring either when it falls out of force; `eftasurv` ingests the EFTA Surveillance Authority's ~6,725 public documents; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court, both halves of it; `uua` ingests Úrskurðarnefnd umhverfis- og auðlindamála (~3,000 planning and environmental rulings, on its own site); `obyggdanefnd` ingests the þjóðlendu commission's 84 úrskurðir; `neytendamal` ingests Áfrýjunarnefnd neytendamála; `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
+- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force act; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `eea-joint-committee` ingests the EEA Joint Committee's decisions (their own text, one record each); `eftasurv` ingests the EFTA Surveillance Authority's ~6,725 public documents; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court, both halves of it; `uua` ingests Úrskurðarnefnd umhverfis- og auðlindamála (~3,000 planning and environmental rulings, on its own site); `obyggdanefnd` ingests the þjóðlendu commission's 84 úrskurðir; `neytendamal` ingests Áfrýjunarnefnd neytendamála; `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
 - **Scholarly commentary** — Tímarit Lögréttu and Vefrit Úlfljóts, searched alongside the case law rather than in a separate silo, so a query about an unsettled point returns both the judgments and the articles arguing about them. Articles are indexed in full but read at the journal that published them: their cards and pages link out rather than reproducing the text here.
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
 
@@ -108,7 +108,6 @@ unchanged; this is copy, not schema.
 | Félagsdómur | live | Icelandic |
 | EFTA Court | live | English |
 | Sameiginlega EES-nefndin — EEA Joint Committee decisions (efta.int) | live | English |
-| EEA-Lex — EU acts in force in the EEA (efta.int/eea-lex) | live | English |
 | EFTA Surveillance Authority (eftasurv.int) | live | English |
 | Umboðsmaður Alþingis | live | Icelandic |
 | 40 úrskurðarnefndir, kærunefndir and ministry appeal desks (stjornarradid.is) | live | Icelandic |
@@ -284,106 +283,86 @@ Runs are incremental: a case page is only re-fetched when the sitemap's
 `lastmod` is newer than the last time we stored it, so pending cases still
 refresh as their court diary moves. `INGEST_FULL=1` forces a full re-walk.
 
-### EEA Joint Committee decisions, and the acts they brought in
+### EEA Joint Committee decisions
 
 The EEA Agreement works by incorporation: an EU act becomes EEA law when the
-**EEA Joint Committee** decides to take it in. Both halves of that are here,
-as **two sources fed by one adapter**, because they are two different
-documents:
-
-- **Sameiginlega EES-nefndin (EEA Joint Committee)** — the decisions. One
-  record per JCD, carrying the decision's own text: *"DECISION OF THE EEA JOINT
-  COMMITTEE No 25/2010 of 12 March 2010 amending Annex II (Technical
-  regulations, standards, testing and certification) to the EEA Agreement"*.
-  This is the legal instrument.
-- **EEA-Lex (EU-gerðir í gildi á EES-svæðinu)** — the acts. One record per
-  incorporated EU act, from its [EEA-Lex](https://www.efta.int/eea-lex)
-  factsheet: the act's title in English, Icelandic, Norwegian and German, which
-  decision took it in, the Annex or Protocol it landed in, and the dates it
-  moved through. The Icelandic titles in it are searchable nowhere else here.
-
-**The decisions are derived from the acts**, not from a second walk of the
-site. Every factsheet names its JCD and links that decision's English text, so
-grouping the stored factsheets by decision gives both the set of decisions
-*and* the in-force filter for free — the decisions pass costs one database
-query and then one PDF fetch per decision. A decision appears once the first
-act it incorporated has been ingested, and is retired once the last one falls
-out of force.
+**EEA Joint Committee** decides to take it in. That decision is what this
+source carries — one record per JCD, holding the decision's own text: *"DECISION
+OF THE EEA JOINT COMMITTEE No 25/2010 of 12 March 2010 amending Annex II
+(Technical regulations, standards, testing and certification) to the EEA
+Agreement"*. It is the legal instrument, and it is what someone looking for a
+decision of the Joint Committee is looking for.
 
 A JCD has no page of its own on efta.int; it is published as a PDF per
 language under `/sites/default/files/…/adopted-joint-committee-decisions/`. So
 the English PDF is the decision's `officialUrl`, as the ruling PDF already is
 for Óbyggðanefnd and for ESA's documents. The decisions are small — measured
 across 1994–2026, a JCD runs 2–3 pages and 1,700–5,200 characters. The 1994
-omnibus decisions are the exception (7/1994 is 213 pages and 359,000
-characters), and storing them **once each** is exactly why the decisions are
-their own source rather than text appended to every factsheet that names them:
-7/1994 alone covers a long stretch of the register.
+omnibus decisions are the exception: 7/1994 is 213 pages and 359,000
+characters, and it is stored **once**, which is why the decisions are a source
+of their own rather than text appended to every act that names them.
 
-Each decision's date and subject are read from its own heading rather than
-from the factsheets — the heading is the date printed on the instrument, and
-the Committee's own statement of what the decision does. That parse was checked
-against decisions from 1994, 1999, 2010, 2016 and 2026.
+Each decision's date and subject are read from its own heading — the date
+printed on the instrument, and the Committee's own statement of what the
+decision does. That parse was checked against decisions from 1994, 1999, 2010,
+2016 and 2026.
 
-The list of acts a decision carried is deliberately *not* in the decision's
-record. It would grow as the acts backfill advances, and every growth would
-change the text and so cost another fetch of a PDF whose content had not
-changed. The linkage is not lost: each act's record names its decision, so
-"which decision brought in Directive 2009/9/EC" is a search away.
+#### EEA-Lex was withdrawn, and what that changed
 
-#### Only what is in force
+Until now this adapter fed a second source as well: **EEA-Lex
+(EU-gerðir í gildi á EES-svæðinu)**, a register of the ~9,164 **EU acts in
+force in the EEA**, one record per [EEA-Lex](https://www.efta.int/eea-lex)
+factsheet, walked off the site filtered to `case_status:14`. That register was
+not the right thing to be ingesting. It has been withdrawn: the source is gone
+from the registry, the listing walk is gone from the adapter, and the records
+it stored are deleted — documents, search index and gap ledger alike — by a
+one-time purge that runs at the head of the decisions pass. Nothing needs to be
+set for that purge to happen; it runs on the next firing and costs one count
+query on every firing after. EEA-Lex will be ingested again, differently, and
+when it is it starts from a clean name and an empty table.
 
-EEA-Lex's Case Status facet separates *Incorporated into the EEA Agreement and
-in force* (9,164 acts) from *Incorporated into the EEA Agreement but no longer
-in force* (5,421) and from the four pre-incorporation stages.
-`src/ingestion/adapters/eea-lex.ts` walks the first of those and nothing else —
-`case_status:14`, the same filter the site's own URL carries — so a hit is
-never an act that has been superseded.
+**The decisions used to be derived from those acts.** Every factsheet named its
+JCD and linked that decision's English text, so grouping the stored factsheets
+by decision number gave both the set of decisions *and*, for free, the filter to
+the ones still doing something. With the acts gone, that derivation is gone with
+them, and the adapter is driven by the **gap ledger** instead: every decision
+known to exist but not held is a row in `ingest_gaps`, and a run is one PDF
+fetch per row until `INGEST_MAX_CASES` is spent. The purge seeds that ledger
+from the acts **before** deleting them — as `pending` rows, the one gap reason
+that is not a failure — so the backlog is carried forward rather than lost with
+the register that knew about it.
 
-That filter is a *standing* one, not just a starting point. An act that falls
-out of force leaves the listing, and the adapter **retires** the stored record
-to match; a decision goes when the last act naming it does. Without that,
-"in force" would quietly come to mean "was in force when we first saw it".
-Retirement is deliberately timid: it happens only after a walk that reached the
-end of the listing and read at least as many factsheets as the facet announced,
-and a run that wants to delete more than 20% of the source (or 50 records,
-whichever is more) refuses and says so instead. A listing that changes shape
-should cost a log line, not nine thousand rows.
+That leaves a complete to-do list but not a growing one. The adapter will work
+the backlog to the end; it discovers nothing new, because it walks no listing
+of its own. New decisions start appearing again when EEA-Lex is re-ingested, or
+when this adapter is given the Committee's own published listing to walk. Until
+then the source is complete as of the day the register was withdrawn, and says
+so on `/admin/ingestion` rather than being silently frozen half-fetched.
 
-#### How it lists
-
-`items_per_page=60` with `sort_bef_combine=decision_ASC` (oldest decision
-first) gives 153 stable pages — 152 full and a last of 44, exactly the 9,164
-the facet announces. The sort is pinned rather than left at the site's default
-because a relevance-ordered walk can shuffle between requests, and a
-page-by-page walk of a shuffling list both misses and repeats rows. The facet's
-own count is the denominator for the progress bar, so the number on the front
-page is EFTA's, not an estimate.
-
-**Not every act in force came in by a decision.** The oldest entries were in
-the Agreement when it was signed: their JCD field holds "Part of the EEA
-Agreement at the time of signing in 1992." instead of a number, and their
-history is dated 01.01.1994, the day the Agreement entered into force. They
-belong in the acts source and are stored — with no case number and with EFTA's
-own words as their title, rather than dressed up as a decision the Joint
-Committee never took. They contribute no decision, because there is none.
+**Nothing is retired any more.** The acts pass filtered to what was in force and
+removed a decision once the last act it incorporated fell out of force. Without
+that filter there is nothing here that can tell a withdrawn decision from one we
+simply hold, so the adapter deletes nothing but the acts it is purging. A
+superseded decision stays, which is the safe direction: a JCD is a historical
+instrument, and the Committee does not unpublish them.
 
 ```
-npm run ingest -- --adapter=eea-lex                        # the acts, bounded, oldest first
-INGEST_MODE=decisions npm run ingest -- --adapter=eea-lex  # the decisions those acts name
-INGEST_MODE=retry npm run ingest -- --adapter=eea-lex      # the gap ledger, both sources
+npm run ingest -- --adapter=eea-joint-committee   # purge the acts, then work the backlog
 ```
 
-Bounded and resumable without a cursor: the acts pass walks the whole listing
-every run, diffs it against what is stored, and spends `INGEST_MAX_CASES` on
-the oldest thing missing; the decisions pass walks nothing at all. A quiet run
-costs the 153 listing fetches and no detail fetches. At the default budgets a
-fresh database fills over about a month of three-hourly firings.
+One pass, not three: there is no listing walk to schedule separately and no
+retry sweep either, because first attempts and fifth attempts are rows in the
+same ledger. `openGaps` orders it by attempt count and then by how long ago each
+row was last tried, so an untouched decision is reached before a re-attempt and
+one that keeps failing cannot monopolise the budget. A run whose ledger is
+empty makes no requests at all; one whose ledger holds only decisions that
+never extract any text re-attempts those, which is the price every retry sweep
+here pays for recovering the ones that failed transiently.
 
 **A note on pace.** efta.int answers 429 if pushed, so the shared fetcher
 retries on 429 as well as 5xx and honours `Retry-After` when the server sends
-one. At the default `INGEST_DELAY_MS=1500` a full 153-page walk completes
-cleanly; below about a second it does not.
+one. `INGEST_DELAY_MS=1500` is the default and is comfortable here; below about
+a second it is not.
 
 ### EFTA Surveillance Authority
 
@@ -397,9 +376,9 @@ referrals to the EFTA Court, requests for information, the states' replies, and
 the State aid notifications under the block exemption regulation.
 
 For an Icelandic researcher this is the missing middle of a chain the app
-already carried at both ends: the act incorporated (EEA-Lex, above), the
-enforcement correspondence (here), and the judgment when it reaches Luxembourg
-(the EFTA Court).
+already carried at both ends: the act's incorporation (the Joint Committee
+decision, above), the enforcement correspondence (here), and the judgment when
+it reaches Luxembourg (the EFTA Court).
 
 **The page is a single-page app, so its HTML is empty** — fetching it yields
 "You need to enable JavaScript to run this app". The app reads a plain JSON
@@ -1133,7 +1112,7 @@ runs; no code change and no push:
 | *(unset)* | every adapter, in order |
 | `icelandic-gaps` | the gap sweep that finishes the Icelandic archive |
 | `efta-court umbodsmadur` | just those two |
-| `eea-lex eea-lex-decisions eftasurv` | the EEA sources: acts, decisions, enforcement |
+| `eea-joint-committee eftasurv` | the EEA sources: the Committee's decisions and ESA's enforcement |
 | `stjornarradid-backfill` | carry the úrskurðarnefndir archive forward |
 | `stjornarradid-priority` | just the board being rushed (see below) |
 
@@ -1178,9 +1157,7 @@ tuned as Railway service variables without a code change:
 | `ICELANDIC_MAX_PAGES` | `40` | Pages of judgments per run |
 | `EFTA_FETCH_DOCUMENTS` | `1` | Fetch decision PDFs — see the robots.txt note above |
 | `EFTA_MAX_CASES` | `1000` | Cases per run; the register is ~461 |
-| `EEALEX_CASES` | `300` | EEA-Lex factsheets per run; the in-force register is ~9,164 |
-| `EEALEX_DECISIONS` | `300` | Joint Committee Decisions per run; the pass walks nothing |
-| `EEALEX_RETRY` | `100` | Records the EEA-Lex retry sweep re-attempts, acts and decisions alike |
+| `JCD_DECISIONS` | `300` | Joint Committee Decisions per run; the pass walks nothing |
 | `ESA_CASES` | `300` | ESA documents (one PDF each) per run; the database is ~6,725 |
 | `ESA_RETRY` | `100` | Documents the ESA retry sweep re-attempts |
 | `UMBODSMADUR_MAX_CASES` | `600` | Cases per run; full backfill is ~11,455 |
@@ -1258,9 +1235,9 @@ src/
       icelandic-courts.ts        GraphQL + embedded PDF/rich text; scheduled incremental
       lagasafn.ts                in-force Icelandic acts; incremental by codex version
       efta-court.ts              EFTA Court case register, via cases-sitemap.xml
-      eea-lex.ts                 EEA Joint Committee decisions (their own text)
-                                 and the EU acts in force they incorporated;
-                                 retires either when it falls out of force
+      eea-joint-committee.ts     EEA Joint Committee decisions (their own text),
+                                 worked off the gap ledger; also purges the
+                                 withdrawn EEA-Lex acts register
       eftasurv.ts                EFTA Surveillance Authority public documents,
                                  through the site's own JSON API; the PDF is
                                  the document, so it is the officialUrl
@@ -1321,12 +1298,8 @@ npm run ingest -- --adapter=citations
 | `EFTA_CASES_SITEMAP` | efta-court | Override the case sitemap URL |
 | `INGEST_MAX_CASES` | efta-court | Cases per run (default 1000) |
 | `INGEST_FULL=1` | efta-court, umbodsmadur, logretta | Ignore what is stored and re-walk everything |
-| `INGEST_MAX_CASES` | eea-lex, eftasurv | Detail fetches per run (default 300 each) |
-| `INGEST_MODE=retry` | eea-lex, eftasurv | Work the gap ledger only; no listing walk |
-| `INGEST_MODE=decisions` | eea-lex | Fetch the decisions the stored acts name; walks nothing |
-| `EEALEX_MAX_PAGES` | eea-lex | Listing pages per run (default 400; the listing is 153). Below the full listing nothing is retired |
-| `EEALEX_FACET` | eea-lex | Override the Case Status facet (default `case_status:14`, in force) |
-| `EEALEX_BASE` / `EEALEX_PAGE_SIZE` | eea-lex | Override the site or the rows per listing page |
+| `INGEST_MAX_CASES` | eea-joint-committee, eftasurv | Detail fetches per run (default 300 each) |
+| `INGEST_MODE=retry` | eftasurv | Work the gap ledger only; no listing walk |
 | `ESA_MAX_PAGES` | eftasurv | Safety bound on the API walk (default 400; the database is 135 pages) |
 | `ESA_BASE` / `ESA_LISTING_ALIAS` | eftasurv | Override the site or the database's page alias |
 | `LOGRETTA_FETCH_PDFS=1` | logretta | Also fetch article PDFs — see the robots.txt note above |
