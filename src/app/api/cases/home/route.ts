@@ -39,6 +39,9 @@ function toCard(r: any): SearchHit {
     snippet: r.snippet ?? "",
     summary: extractSummary(r.summary_source ?? ""),
     isSample: r.is_sample,
+    // Front-page cards are the newest judgments, selected by date rather than
+    // matched against anything, so there is no near-match to disclose.
+    isFuzzy: false,
   };
 }
 

@@ -95,6 +95,13 @@ export class MeilisearchProvider implements SearchProvider {
       pdfUrl: h.pdfUrl ?? null,
       snippet: h._formatted?.fullText ?? "",
       summary: extractSummary((h.fullText ?? "").slice(0, SUMMARY_SCAN_CHARS)),
+      // Meilisearch applies typo tolerance inside the engine and does not
+      // report whether a given hit needed it, so there is nothing honest to
+      // put here but false. The consequence is worth knowing: the "svipuð
+      // niðurstaða" mark the Postgres provider shows on a near-matched case
+      // number does not appear under SEARCH_PROVIDER=meilisearch. Marking
+      // them all fuzzy would be worse — the mark would stop meaning anything.
+      isFuzzy: false,
       isSample: h.isSample ?? false,
     }));
 

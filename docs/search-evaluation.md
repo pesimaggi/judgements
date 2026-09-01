@@ -30,6 +30,7 @@ answer is:
 | `onlySources` | the strict opt-in promise leaking |
 | `everyHitContains` | a quoted phrase being matched as loose words |
 | `noHitContains` | `NOT` no longer excluding |
+| `topHitIsExact` | a trigram near-match being served as the answer |
 
 These run today and catch most of what actually goes wrong. A ranking
 regression that empties a common query shows up here long before it shows up
@@ -113,14 +114,27 @@ switching providers — expand it first.
 - **Latency is not measured.** Add it only with the usual caveats: same
   machine, same Node version, same corpus, warm cache.
 
-## One thing the seed run already surfaced
+## Near-matches are marked, not hidden
 
-Searching `12595/2024` — a case number *not* in the corpus — returned a
-different case, `456/2024`, at rank 1. That is the `pg_trgm` fuzzy fallback
-doing what it was asked to do. It is the right behaviour for a misspelt word
-and the wrong behaviour for a case number, where the user knows exactly what
-they typed and a near-miss is not a near-answer.
+Searching `12595/2024` — a case number *not* in the corpus — returns a
+different case, `456/2024`. That is `pg_trgm` doing what it was asked to: the
+case-number condition is `d.case_number % <query>`, a trigram near-match, and
+it is always on rather than only a fallback.
 
-Worth deciding deliberately: either exclude case-number lookups from the
-fuzzy fallback, or mark fuzzy hits in the UI. `parseQuery` already flags
-`isCaseNumberLookup`, so the information is there.
+Right behaviour for a misspelt word, wrong for a case number, where the user
+knows exactly what they typed and a near-miss is a *different case*.
+
+Rather than remove it, every hit now carries `isFuzzy` — true when the row was
+reached without satisfying an exact condition (full-text match, or
+`case_number ILIKE`). The result card shows *"Svipuð niðurstaða"* on those, so
+a near-match is still offered but never passes as the thing that was asked
+for. The two can appear together, which is why the mark is per-hit rather than
+a banner over the page: searching `22/2023` returns that case exactly *and*
+`88/2022` as a near-match, and only the second should be marked.
+
+The `topHitIsExact` assertion holds this down on the case-number cases.
+
+**This does not carry to Meilisearch.** That provider applies typo tolerance
+inside the engine and does not report whether a hit needed it, so `isFuzzy` is
+always false under `SEARCH_PROVIDER=meilisearch` and the mark never appears.
+Worth weighing if you ever compare the two on anything but ranking numbers.

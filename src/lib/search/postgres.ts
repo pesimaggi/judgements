@@ -87,16 +87,34 @@ export class PostgresSearchProvider implements SearchProvider {
 
     // Indexed match conditions: FTS (GIN on the stored vector) + case-number
     // match/fuzzy (trigram index on case_number itself). Both index-backed.
+    //
+    // `exactMatchParts` is the subset that means "this really is what was
+    // typed". Everything reached without satisfying one of them got here by
+    // near-match, and is reported as such on the hit — see SearchHit.isFuzzy.
     const indexedMatchParts: Prisma.Sql[] = [];
+    const exactMatchParts: Prisma.Sql[] = [];
     if (parsed.websearch) {
-      indexedMatchParts.push(
-        Prisma.sql`d.search_vector @@ websearch_to_tsquery('simple', ${parsed.websearch})`
-      );
+      const fts = Prisma.sql`d.search_vector @@ websearch_to_tsquery('simple', ${parsed.websearch})`;
+      indexedMatchParts.push(fts);
+      exactMatchParts.push(fts);
     }
     for (const cn of parsed.caseNumbers) {
-      indexedMatchParts.push(Prisma.sql`d.case_number ILIKE ${cn}`);
+      const exact = Prisma.sql`d.case_number ILIKE ${cn}`;
+      indexedMatchParts.push(exact);
+      exactMatchParts.push(exact);
       indexedMatchParts.push(Prisma.sql`d.case_number % ${cn}`);
     }
+
+    /**
+     * Evaluated per row inside the ranking subquery, where `d` is in scope.
+     *
+     * With no exact conditions at all — an empty query browsing within the
+     * selected sources — nothing is fuzzy, because nothing was matched
+     * against in the first place.
+     */
+    const fuzzyExpr = exactMatchParts.length
+      ? Prisma.sql`NOT (${Prisma.join(exactMatchParts, " OR ")})`
+      : Prisma.sql`FALSE`;
 
     const rankExpr = parsed.websearch
       ? Prisma.sql`ts_rank(d.search_vector, websearch_to_tsquery('simple', ${parsed.websearch}))`
@@ -132,12 +150,13 @@ export class PostgresSearchProvider implements SearchProvider {
       const [rows, countRows] = await Promise.all([
         prisma.$queryRaw<any[]>(Prisma.sql`
           SELECT p.id, p.source, p.court, p.case_number, p.case_name, p.title, p.date, p.year,
-                 p.subject_tags, p.official_url, p.pdf_url, p.is_sample,
+                 p.subject_tags, p.official_url, p.pdf_url, p.is_sample, p.is_fuzzy,
                  ${headlineExpr} AS snippet,
                  left(p.full_text, ${SUMMARY_SCAN_CHARS}::int) AS summary_source
           FROM (
             SELECT d.id, d.source, d.court, d.case_number, d.case_name, d.title, d.date, d.year,
                    d.subject_tags, d.official_url, d.pdf_url, d.is_sample, d.full_text,
+                   ${fuzzyExpr} AS is_fuzzy,
                    ${rankExpr} AS rank
             FROM "Document" d
             WHERE ${where}
@@ -197,6 +216,7 @@ export class PostgresSearchProvider implements SearchProvider {
       snippet: r.snippet ?? "",
       summary: extractSummary(r.summary_source ?? ""),
       isSample: r.is_sample,
+      isFuzzy: r.is_fuzzy === true,
     }));
 
     return { total, totalIsCapped: total >= COUNT_CAP, hits };

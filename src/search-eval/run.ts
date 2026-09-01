@@ -46,6 +46,8 @@ interface Assertions {
   topHitCaseNumber?: string;
   act?: { actNumber: number; year: number };
   onlySources?: string[];
+  /** The top hit must be a real match, not a trigram near-match. */
+  topHitIsExact?: boolean;
   everyHitContains?: string;
   noHitContains?: string;
 }
@@ -149,6 +151,14 @@ function checkAssertions(c: EvalCase, hits: SearchHit[], total: number): string[
     if (!top) failures.push(`expected ${a.topHitCaseNumber} as top hit, got nothing`);
     else if (top.caseNumber !== a.topHitCaseNumber) {
       failures.push(`top hit is ${top.caseNumber ?? "(no case number)"}, expected ${a.topHitCaseNumber}`);
+    }
+  }
+  if (a.topHitIsExact) {
+    if (!top) failures.push("expected an exact top hit, got nothing");
+    else if (top.isFuzzy) {
+      failures.push(
+        `top hit ${top.caseNumber ?? top.title.slice(0, 30)} is a fuzzy near-match, not an exact one`
+      );
     }
   }
   if (a.onlySources) {

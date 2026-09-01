@@ -1265,6 +1265,20 @@ answers and are scored with recall@1/@5, MRR and nDCG@10; none ship yet, and
 Cases are split into development and holdout. Tune against development; run
 holdout once, to confirm a configuration already chosen.
 
+### Near-matches are marked
+
+The case-number condition is a trigram near-match (`d.case_number % <query>`)
+and is always on, not only a fallback — so searching a case number the corpus
+does not hold returns a *different* case. Right for a misspelt word, wrong for
+a case number, where the reader knows exactly what they typed.
+
+Every hit therefore carries `isFuzzy`, true when the row was reached without
+satisfying an exact condition, and the result card marks those *"Svipuð
+niðurstaða"*. The mark is per-hit rather than a banner because the two mix:
+`22/2023` returns that case exactly *and* `88/2022` as a near-match. Always
+false under `SEARCH_PROVIDER=meilisearch`, which does not report whether a hit
+needed its typo tolerance.
+
 See [docs/search-evaluation.md](docs/search-evaluation.md) for the schema, the
 metrics, and the labelling rules.
 
