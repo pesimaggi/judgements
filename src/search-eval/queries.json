@@ -1,0 +1,254 @@
+{
+  "schemaVersion": 1,
+  "description": "Search-quality cases for Lögbrunnur, kept in Git so a ranking or provider change can be measured against the same inputs before it is merged. See docs/search-evaluation.md.",
+  "grades": {
+    "3": "the primary answer — the document the query is really asking for",
+    "2": "strongly relevant — a researcher would want it on the first page",
+    "1": "contextual — related and reasonable to return, not what was asked for"
+  },
+  "defaultSources": [
+    "haestirettur",
+    "landsrettur",
+    "heradsdomar",
+    "endurupptokudomur",
+    "felagsdomur"
+  ],
+  "cases": [
+    {
+      "id": "case-number-haestirettur",
+      "category": "exact",
+      "split": "development",
+      "query": "22/2023",
+      "note": "A bare case number is a lookup, not a search. parseQuery flags it as isCaseNumberLookup; the case itself must be the top hit, not a judgment that happens to cite it.",
+      "assert": {
+        "topHitCaseNumber": "22/2023",
+        "minResults": 1,
+        "topHitIsExact": true
+      }
+    },
+    {
+      "id": "case-number-efta",
+      "category": "exact",
+      "split": "development",
+      "query": "E-2/24",
+      "sources": [
+        "eftacourt"
+      ],
+      "note": "The EFTA Court's lettered form. Exercises the same pattern through a different source and a different stored language.",
+      "assert": {
+        "topHitCaseNumber": "E-2/24",
+        "minResults": 1,
+        "topHitIsExact": true
+      }
+    },
+    {
+      "id": "case-number-long-form",
+      "category": "exact",
+      "split": "development",
+      "query": "12595/2024",
+      "note": "Héraðsdómur numbers run to five digits. A pattern tuned to 2-4 digits drops them silently. topHitIsExact also guards the other direction: a trigram near-match on a different case number must never be served as the answer unmarked - see SearchHit.isFuzzy.",
+      "assert": {
+        "topHitCaseNumber": "12595/2024",
+        "topHitIsExact": true
+      }
+    },
+    {
+      "id": "act-vaxtalog-by-short-name",
+      "category": "act-alias",
+      "split": "development",
+      "query": "vaxtalög",
+      "note": "38/2001 is 'Lög um vexti og verðtryggingu' and is universally cited as 'vaxtalög' — a name its own title does not contain. This is what Act.aliases exists for; if it regresses, the most natural query for the act returns nothing.",
+      "assert": {
+        "act": {
+          "actNumber": 38,
+          "year": 2001
+        },
+        "minResults": 1
+      }
+    },
+    {
+      "id": "act-hegningarlog-by-short-name",
+      "category": "act-alias",
+      "split": "development",
+      "query": "hegningarlög",
+      "assert": {
+        "act": {
+          "actNumber": 19,
+          "year": 1940
+        },
+        "minResults": 1
+      }
+    },
+    {
+      "id": "act-by-citation-number",
+      "category": "act-alias",
+      "split": "development",
+      "query": "91/1991",
+      "note": "Lög um meðferð einkamála. Cited by about a third of the corpus, so the act must outrank the judgments citing it.",
+      "assert": {
+        "act": {
+          "actNumber": 91,
+          "year": 1991
+        }
+      }
+    },
+    {
+      "id": "act-by-title-fragment",
+      "category": "act-alias",
+      "split": "holdout",
+      "query": "lög um aðbúnað og hollustuhætti",
+      "assert": {
+        "act": {
+          "actNumber": 46,
+          "year": 1980
+        }
+      }
+    },
+    {
+      "id": "phrase-orsakatengsl",
+      "category": "phrase",
+      "split": "development",
+      "query": "\"sönnun um orsakatengsl\"",
+      "note": "A quoted phrase must be matched as a phrase. If the quotes are dropped the result set widens to every judgment containing either word, which is most of tort law.",
+      "assert": {
+        "minResults": 1,
+        "everyHitContains": "orsakatengsl"
+      }
+    },
+    {
+      "id": "phrase-with-icelandic-letters",
+      "category": "phrase",
+      "split": "development",
+      "query": "þjóðlenda",
+      "sources": [
+        "obyggdanefnd",
+        "haestirettur"
+      ],
+      "note": "þ/ð/æ/ö survive tokenisation. A character class that quietly drops them empties the query rather than failing.",
+      "assert": {
+        "minResults": 1
+      }
+    },
+    {
+      "id": "boolean-not",
+      "category": "boolean",
+      "split": "development",
+      "query": "uppsögn NOT sjómenn",
+      "note": "NOT becomes websearch's -negation. Verified by the excluded term being absent, not by a count.",
+      "assert": {
+        "minResults": 1,
+        "noHitContains": "sjómenn"
+      }
+    },
+    {
+      "id": "boolean-or",
+      "category": "boolean",
+      "split": "holdout",
+      "query": "gæsluvarðhald OR farbann",
+      "assert": {
+        "minResults": 1
+      }
+    },
+    {
+      "id": "topic-stjornsysla",
+      "category": "topic",
+      "split": "development",
+      "query": "stjórnsýsla",
+      "note": "A broad topical query. Nothing to label a single right answer for; it is here so a change that empties a common query is caught.",
+      "assert": {
+        "minResults": 10
+      }
+    },
+    {
+      "id": "topic-immigration-board",
+      "category": "topic",
+      "split": "development",
+      "query": "alþjóðleg vernd",
+      "sources": [
+        "kaerunefnd-utlendingamala"
+      ],
+      "note": "For immigration the case law is at the board, not the courts. Also checks that source scoping actually scopes.",
+      "assert": {
+        "minResults": 5,
+        "onlySources": [
+          "kaerunefnd-utlendingamala"
+        ]
+      }
+    },
+    {
+      "id": "topic-tenancy-board",
+      "category": "topic",
+      "split": "holdout",
+      "query": "trygging fyrir leigu",
+      "sources": [
+        "kaerunefnd-husamala"
+      ],
+      "assert": {
+        "minResults": 1,
+        "onlySources": [
+          "kaerunefnd-husamala"
+        ]
+      }
+    },
+    {
+      "id": "scope-single-source",
+      "category": "scoping",
+      "split": "development",
+      "query": "dómur",
+      "sources": [
+        "haestirettur"
+      ],
+      "note": "The strict opt-in promise: a ticked source is the only source that answers.",
+      "assert": {
+        "onlySources": [
+          "haestirettur"
+        ],
+        "minResults": 1
+      }
+    },
+    {
+      "id": "scope-scholarship-separate",
+      "category": "scoping",
+      "split": "development",
+      "query": "skaðabætur",
+      "sources": [
+        "logretta",
+        "ulfljotur"
+      ],
+      "note": "The journals are searched alongside the case law but are not decisions; a query scoped to them must return only articles.",
+      "assert": {
+        "onlySources": [
+          "logretta",
+          "ulfljotur"
+        ],
+        "minResults": 1
+      }
+    },
+    {
+      "id": "eea-joint-committee-decision",
+      "category": "topic",
+      "split": "holdout",
+      "query": "amending Annex II",
+      "sources": [
+        "eea-joint-committee"
+      ],
+      "note": "JCDs are stored in English. Their own heading is the only description they carry.",
+      "assert": {
+        "minResults": 1,
+        "onlySources": [
+          "eea-joint-committee"
+        ]
+      }
+    },
+    {
+      "id": "no-results-nonsense",
+      "category": "negative",
+      "split": "development",
+      "query": "qqzzxwv þessiorðerukkitil",
+      "note": "The other direction: a fuzzy fallback tuned too loosely returns plausible-looking rubbish for a query that should be empty. In a legal tool that is worse than nothing.",
+      "assert": {
+        "maxResults": 0
+      }
+    }
+  ]
+}

@@ -68,6 +68,23 @@ export interface SearchHit {
    */
   summary: string | null;
   isSample: boolean;
+  /**
+   * True when this result was reached only by fuzzy matching — a trigram
+   * near-match on the case number, title or party name — rather than by the
+   * indexed search actually matching what was typed.
+   *
+   * Surfaced because the two are not equally useful. For a misspelt Icelandic
+   * word a near-match is the answer. For a case number it is a *different
+   * case*: someone searching "12595/2024" knows exactly what they typed, and
+   * silently handing them "456/2024" at the top of the page is a wrong answer
+   * wearing the clothes of a right one. Marking it lets the reader tell the
+   * two apart without removing the behaviour that helps with typos.
+   *
+   * Always false from the Meilisearch provider, which applies its own typo
+   * tolerance inside the engine and does not report whether a given hit
+   * needed it. See lib/search/meilisearch.ts.
+   */
+  isFuzzy: boolean;
 }
 
 export interface SearchResponse {

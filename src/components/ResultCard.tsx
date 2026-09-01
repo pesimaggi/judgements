@@ -33,6 +33,21 @@ export function ResultCard({ hit, query }: { hit: SearchHit; query: string }) {
             Sample data
           </span>
         )}
+        {/*
+          This result did not match what was typed — it was reached by
+          near-match on the case number, title or party name. Worth saying out
+          loud: for a case number a near-match is a *different case*, and
+          without the mark it sits at the top of the page looking like the
+          answer. `title` carries the longer explanation on hover.
+        */}
+        {hit.isFuzzy && (
+          <span
+            className="rounded bg-sky-100 px-1.5 py-0.5 text-[11px] font-medium text-sky-800"
+            title="Fannst ekki nákvæmlega eins og leitað var að — þetta er svipuð niðurstaða. Athugaðu málsnúmerið."
+          >
+            Svipuð niðurstaða
+          </span>
+        )}
       </div>
 
       <h3 className="mt-1.5 font-serif text-lg font-semibold leading-snug">

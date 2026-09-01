@@ -301,18 +301,80 @@ async function writeAliases(
   ctx: IngestContext,
   totals: Map<string, Map<string, number>>
 ): Promise<void> {
+  /**
+   * A full replacement, for a sweep that really did scan the whole corpus.
+   * This is the only way a genuinely stale alias is ever dropped, so it is
+   * worth running after a complete re-scan — and only then.
+   */
+  const rebuild = process.env.CITATION_REBUILD_ALIASES === "1";
+
+  const actIds = [...totals.keys()];
+  if (actIds.length === 0) {
+    ctx.log("Aliases refreshed for 0 acts");
+    return;
+  }
+
+  const existing = new Map(
+    (
+      await prisma.act.findMany({
+        where: { id: { in: actIds } },
+        select: { id: true, aliases: true },
+      })
+    ).map((a) => [a.id, a.aliases])
+  );
+
   let updated = 0;
   for (const [actId, byAlias] of totals) {
-    const aliases = [...byAlias.entries()]
-      .sort((a, b) => b[1] - a[1])
-      // A name used once is as likely to be a typo in one judgment as a real
-      // short name; the fuzzy search handles genuine misspellings anyway.
-      .filter(([, n]) => n >= 2)
-      .slice(0, 6)
-      .map(([alias]) => alias);
-    if (aliases.length === 0) continue;
-    await prisma.act.update({ where: { id: actId }, data: { aliases } });
+    const before = existing.get(actId) ?? [];
+    const merged = aliasesForAct(byAlias, before, { rebuild });
+
+    if (merged.length === 0) continue;
+    if (merged.length === before.length && merged.every((a, i) => a === before[i])) continue;
+
+    await prisma.act.update({ where: { id: actId }, data: { aliases: merged } });
     updated++;
   }
-  ctx.log(`Aliases refreshed for ${updated} acts`);
+  ctx.log(
+    `Aliases refreshed for ${updated} acts` +
+      (rebuild ? " (full rebuild — stored aliases replaced)" : "")
+  );
+}
+
+/**
+ * The alias list an act should end up with, given what this run saw and what
+ * is already stored.
+ *
+ * Merged, not replaced — and this is the whole point.
+ *
+ * A run is a partial view of the corpus by design: it processes the documents
+ * whose text changed, bounded by CITATION_MAX_DOCS. Writing this run's counts
+ * over the stored list therefore rebuilt every touched act's aliases from a
+ * handful of judgments.
+ *
+ * The effect was silent and bad. "vaxtalög" is the name lög nr. 38/2001 is
+ * universally cited by, and it appears nowhere in the act's official title, so
+ * the alias is the only way the type-ahead finds it. Earned across thousands
+ * of judgments, it was dropped the moment a small run touched the act and saw
+ * the word fewer than twice.
+ *
+ * A union cannot lose a name that way. The cost is that a genuinely obsolete
+ * alias persists until someone runs a full sweep with
+ * CITATION_REBUILD_ALIASES=1 — much the better failure. An extra name matches
+ * a few things it needn't; a missing one makes the act unfindable by the only
+ * name anyone actually uses for it.
+ */
+export function aliasesForAct(
+  counts: Map<string, number>,
+  existing: string[],
+  { rebuild = false, max = 6, minUses = 2 }: { rebuild?: boolean; max?: number; minUses?: number } = {}
+): string[] {
+  const fresh = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    // A name used once is as likely to be a typo in one judgment as a real
+    // short name; the fuzzy search handles genuine misspellings anyway.
+    .filter(([, n]) => n >= minUses)
+    .map(([alias]) => alias);
+
+  if (rebuild) return fresh.slice(0, max);
+  return [...new Set([...fresh, ...existing])].slice(0, max);
 }

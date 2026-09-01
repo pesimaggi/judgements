@@ -17,7 +17,11 @@
     "db:deploy": "prisma db push --accept-data-loss && tsx prisma/setup-search.ts",
     "db:seed": "tsx prisma/seed.ts",
     "ingest": "tsx src/ingestion/run.ts",
-    "ingest:all": "sh scripts/ingest-all.sh"
+    "ingest:all": "sh scripts/ingest-all.sh",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "test:watch": "node --import tsx --test --watch \"src/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "eval:search": "tsx src/search-eval/run.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.18.0",

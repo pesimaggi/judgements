@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      # `postinstall` runs `prisma generate`, which needs the schema but not a
+      # database. Nothing in the test suite connects to one: the tests cover
+      # the parsers and pure functions, and the fixtures are frozen responses.
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      # `npm run lint` is deliberately not here yet: ESLint has never been
+      # configured in this repo, so `next lint` prompts for a config and would
+      # hang the job. Configure it, then add the step.
