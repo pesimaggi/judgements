@@ -51,8 +51,28 @@ const LEADING_ARTICLE = new RegExp(
  */
 const ACT_LEAD_IN = /^\s*(?:,?\s*sbr\.\s*)?(?:í\s+)?(?:lög|lögum|laga|laganna|lögunum|l\.)\s*/iu;
 
+/**
+ * "Article 6", "art. 6a" — the same reference written the EU way.
+ *
+ * The act library now holds EU regulations and directives alongside the
+ * Icelandic acts, and their articles are cited "Article 6 of the GDPR", never
+ * "6. gr.". Without this the box could find the act but never the article of
+ * it, which is the half of the query that narrows.
+ */
+const LEADING_ARTICLE_EN = /^\s*art(?:icle)?\.?\s*(\d+)\s*([a-z])?(?![\p{L}])\.?\s*(?:of\s+(?:the\s+)?)?/iu;
+
 export function parseProvisionQuery(raw: string): ParsedProvisionQuery {
   const input = raw.trim();
+  const english = LEADING_ARTICLE_EN.exec(input);
+  if (english) {
+    return {
+      articleNumber: Number(english[1]),
+      articleLetter: english[2]?.toLowerCase() ?? null,
+      paragraphNumber: null,
+      actQuery: input.slice(english[0].length).trim(),
+      hasArticle: true,
+    };
+  }
   const m = LEADING_ARTICLE.exec(input);
 
   if (!m) {

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { ScopeToggle, useActScope } from "./ScopeToggle";
 
 export interface LegalSelection {
   kind: "act" | "provision";
@@ -45,6 +46,9 @@ interface Props {
  */
 export function SpecificSearch({ legal, onLegalChange, tags: activeTags, onTagsChange }: Props) {
   const [legalQuery, setLegalQuery] = useState("");
+  // How much of the EU library the act box offers. Remembered across visits —
+  // see useActScope().
+  const [scope, setScope] = useActScope();
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [needsAct, setNeedsAct] = useState(false);
   const [legalLoading, setLegalLoading] = useState(false);
@@ -68,7 +72,7 @@ export function SpecificSearch({ legal, onLegalChange, tags: activeTags, onTagsC
     const id = ++legalRequest.current;
     setLegalLoading(true);
     const timer = setTimeout(() => {
-      fetch(`/api/lookup?q=${encodeURIComponent(q)}`)
+      fetch(`/api/lookup?q=${encodeURIComponent(q)}&scope=${scope}`)
         .then((r) => r.json())
         .then((d) => {
           if (id !== legalRequest.current) return;
@@ -84,7 +88,7 @@ export function SpecificSearch({ legal, onLegalChange, tags: activeTags, onTagsC
         .finally(() => id === legalRequest.current && setLegalLoading(false));
     }, 180);
     return () => clearTimeout(timer);
-  }, [legalQuery, legal]);
+  }, [legalQuery, legal, scope]);
 
   useEffect(() => {
     if (!tagOpen) return;
@@ -111,9 +115,17 @@ export function SpecificSearch({ legal, onLegalChange, tags: activeTags, onTagsC
 
       {/* ---- Act / provision ---------------------------------------- */}
       <div className="mt-3">
-        <label htmlFor="legal-lookup" className="text-xs font-medium text-inkSoft">
-          Lög eða ákvæði
-        </label>
+        <div className="flex items-center justify-between gap-2">
+          <label htmlFor="legal-lookup" className="text-xs font-medium text-inkSoft">
+            Lög eða ákvæði
+          </label>
+          <ScopeToggle scope={scope} onChange={setScope} />
+        </div>
+        <p className="mt-0.5 text-[11px] text-inkSoft">
+          {scope === "eea"
+            ? "Íslensk lög og ESB-gerðir sem geta haft EES-þýðingu."
+            : "Íslensk lög og allar ESB-gerðir, líka óinnleiddar."}
+        </p>
 
         {legal.length > 0 && (
           <ul className="mt-1 space-y-1">
@@ -148,7 +160,7 @@ export function SpecificSearch({ legal, onLegalChange, tags: activeTags, onTagsC
           placeholder={
             legal.length
               ? "Bæta við lögum eða ákvæði…"
-              : "t.d. „lög um aðbúnað“ eða „57. gr. a. laga um aðbúnað“"
+              : "t.d. „lög um aðbúnað“, „57. gr. a. laga um aðbúnað“ eða „gdpr“"
           }
           autoComplete="off"
           lang="is"

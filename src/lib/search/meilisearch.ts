@@ -1,5 +1,6 @@
 import { MeiliSearch } from "meilisearch";
 import { prisma } from "../db";
+import { actCitation, actDisplayTitle, actPath } from "../acts";
 import type {
   SearchRequest,
   SearchHit,
@@ -110,15 +111,25 @@ export class MeilisearchProvider implements SearchProvider {
 
   async searchActs(req: ActSearchRequest): Promise<ActHit[]> {
     const limit = Math.min(25, Math.max(1, req.limit ?? 10));
-    const res = await this.client.index(ACTS_INDEX).search(req.query, { limit });
+    // The EEA/EU scope, as a Meilisearch filter rather than a SQL predicate:
+    // Icelandic law always, and the EU library either whole or limited to what
+    // may be part of EEA law. See src/lib/acts.ts.
+    const filter =
+      (req.scope ?? "eea") === "eu"
+        ? undefined
+        : `jurisdiction = "is" OR eeaRelevant = true OR eeaIncorporated = true`;
+    const res = await this.client.index(ACTS_INDEX).search(req.query, { limit, filter });
     return res.hits.map((h: any) => ({
       id: h.id,
+      jurisdiction: h.jurisdiction ?? "is",
       actNumber: h.actNumber,
       year: h.year,
       title: h.title,
       citation: h.citation ?? `lög nr. ${h.actNumber}/${h.year}`,
-      path: `/log/${h.actNumber}-${h.year}`,
+      path: h.path ?? `/log/${h.actNumber}-${h.year}`,
       provisionCount: h.provisionCount ?? 0,
+      eeaRelevant: h.eeaRelevant ?? false,
+      eeaIncorporatedBy: h.eeaIncorporatedBy ?? [],
     }));
   }
 
@@ -152,15 +163,17 @@ export class MeilisearchProvider implements SearchProvider {
     const hits: ProvisionHit[] = res.hits.map((h: any) => ({
       id: h.id,
       actId: h.actId,
+      jurisdiction: h.jurisdiction ?? "is",
       actNumber: h.actNumber,
       year: h.year,
       actTitle: h.actTitle,
+      actCitation: h.actCitation ?? `lög nr. ${h.actNumber}/${h.year}`,
       displayLabel: h.displayLabel,
       heading: h.heading ?? null,
       anchor: h.anchor,
       snippet: h._formatted?.fullText ?? (h.fullText ?? "").slice(0, 400),
       caseCount: countBy.get(h.id) ?? 0,
-      path: `/log/${h.actNumber}-${h.year}#${h.anchor}`,
+      path: `${h.actPath ?? `/log/${h.actNumber}-${h.year}`}#${h.anchor}`,
     }));
     return { total: res.estimatedTotalHits ?? hits.length, hits };
   }
@@ -240,11 +253,17 @@ const PROVISIONS_INDEX = "provisions";
  */
 export async function ensureActIndexes(client: MeiliSearch) {
   await client.index(ACTS_INDEX).updateSettings({
-    filterableAttributes: ["actNumber", "year"],
-    searchableAttributes: ["title", "aliases", "citation"],
+    filterableAttributes: [
+      "actNumber",
+      "year",
+      "jurisdiction",
+      "eeaRelevant",
+      "eeaIncorporated",
+    ],
+    searchableAttributes: ["title", "officialTitle", "aliases", "citation", "celex"],
   });
   await client.index(PROVISIONS_INDEX).updateSettings({
-    filterableAttributes: ["actId", "articleNumber", "kind"],
+    filterableAttributes: ["actId", "articleNumber", "kind", "jurisdiction"],
     sortableAttributes: ["ordering"],
     searchableAttributes: ["displayLabel", "heading", "fullText", "actTitle"],
   });
@@ -253,10 +272,15 @@ export async function ensureActIndexes(client: MeiliSearch) {
 /** Push one act and its provisions into the indexes (called from ingestion). */
 export async function syncActToMeilisearch(act: {
   id: string;
+  jurisdiction?: string;
   actNumber: number;
   year: number;
   title: string;
   aliases: string[];
+  citation?: string | null;
+  celex?: string | null;
+  eeaRelevant?: boolean;
+  eeaIncorporatedBy?: string[];
   provisions: {
     id: string;
     kind: string;
@@ -271,14 +295,33 @@ export async function syncActToMeilisearch(act: {
   const provider = new MeilisearchProvider();
   const client = provider.client;
   await ensureActIndexes(client);
+  const jurisdiction = act.jurisdiction ?? "is";
+  const identity = {
+    jurisdiction,
+    celex: act.celex ?? null,
+    actNumber: act.actNumber,
+    year: act.year,
+  };
   await client.index(ACTS_INDEX).addDocuments([
     {
       id: act.id,
+      jurisdiction,
+      celex: act.celex ?? null,
       actNumber: act.actNumber,
       year: act.year,
-      title: act.title,
+      title: actDisplayTitle({ jurisdiction, title: act.title }),
+      // The official title as well, so a search for the words only the full
+      // form carries ("of the European Parliament and of the Council") still
+      // finds the act the display title has trimmed them from.
+      officialTitle: act.title,
       aliases: act.aliases,
-      citation: `lög nr. ${act.actNumber}/${act.year}`,
+      citation: actCitation({ ...identity, citation: act.citation ?? null }),
+      path: actPath(identity),
+      eeaRelevant: act.eeaRelevant ?? false,
+      // A boolean as well as the list, because Meilisearch filters on a
+      // scalar and the scope filter asks "is it incorporated at all".
+      eeaIncorporated: (act.eeaIncorporatedBy ?? []).length > 0,
+      eeaIncorporatedBy: act.eeaIncorporatedBy ?? [],
       provisionCount: act.provisions.filter((p) => p.kind === "article").length,
     },
   ]);
@@ -287,9 +330,12 @@ export async function syncActToMeilisearch(act: {
       act.provisions.map((p) => ({
         id: p.id,
         actId: act.id,
+        jurisdiction,
         actNumber: act.actNumber,
         year: act.year,
-        actTitle: act.title,
+        actTitle: actDisplayTitle({ jurisdiction, title: act.title }),
+        actCitation: actCitation({ ...identity, citation: act.citation ?? null }),
+        actPath: actPath(identity),
         kind: p.kind,
         articleNumber: p.articleNumber,
         displayLabel: p.displayLabel,

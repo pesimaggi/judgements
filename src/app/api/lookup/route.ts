@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSearchProvider } from "@/lib/search";
 import { parseProvisionQuery, formatArticleLabel } from "@/lib/provision-query";
+import { actCitation, actPath, parseActScope } from "@/lib/acts";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,8 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const raw = (searchParams.get("q") ?? "").trim();
   const limit = Math.min(20, Math.max(1, Number(searchParams.get("limit")) || 8));
+  // How much of the EU library the box may offer — the EEA/EU toggle above it.
+  const scope = parseActScope(searchParams.get("scope"));
   if (raw.length < 2) return NextResponse.json({ suggestions: [] });
 
   const parsed = parseProvisionQuery(raw);
@@ -35,6 +38,7 @@ export async function GET(req: Request) {
     const acts = await getSearchProvider().searchActs({
       query: parsed.actQuery || raw,
       limit,
+      scope,
     });
 
     if (!parsed.hasArticle) {
@@ -71,8 +75,8 @@ export async function GET(req: Request) {
         id: p.id,
         actId: p.actId,
         label: `${p.displayLabel}${p.heading ? ` — ${p.heading}` : ""}`,
-        sublabel: `${p.act.title} (lög nr. ${p.act.actNumber}/${p.act.year})`,
-        path: `/log/${p.act.actNumber}-${p.act.year}#${p.anchor}`,
+        sublabel: `${p.act.title} (${actCitation(p.act)})`,
+        path: `${actPath(p.act)}#${p.anchor}`,
       })),
       // Offered as a fallback when the article does not exist in any match —
       // better to show the act than nothing at all.

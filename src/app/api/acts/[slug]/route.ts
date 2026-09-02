@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { parseActSlug } from "@/lib/lagasafn";
+import { actCitation, actDisplayTitle, actPath, parseActRef } from "@/lib/acts";
 
 export const dynamic = "force-dynamic";
 
@@ -13,13 +13,25 @@ export const dynamic = "force-dynamic";
  * count would mean several hundred round trips to render one page.
  */
 export async function GET(_req: Request, { params }: { params: { slug: string } }) {
-  const parsed = parseActSlug(params.slug);
-  if (!parsed) {
+  const ref = parseActRef(params.slug);
+  if (!ref) {
     return NextResponse.json({ error: "Malformed act reference." }, { status: 400 });
   }
 
+  // "38-2001" is an Icelandic act, "32016R0679" an EU one — one route, two
+  // corpora, because they are one table and one reader. See parseActRef().
   const act = await prisma.act.findUnique({
-    where: { actNumber_year: { actNumber: parsed.actNumber, year: parsed.year } },
+    where:
+      ref.jurisdiction === "eu"
+        ? { celex: ref.celex }
+        : {
+            jurisdiction_docType_actNumber_year: {
+              jurisdiction: "is",
+              docType: "act",
+              actNumber: ref.actNumber,
+              year: ref.year,
+            },
+          },
     include: {
       chapters: { orderBy: { ordering: "asc" } },
       provisions: {
@@ -61,14 +73,29 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
   return NextResponse.json({
     act: {
       id: act.id,
+      jurisdiction: act.jurisdiction,
       actNumber: act.actNumber,
       year: act.year,
-      title: act.title,
-      citation: `lög nr. ${act.actNumber}/${act.year}`,
+      title: actDisplayTitle(act),
+      /** The full official title, which for an EU act repeats the citation. */
+      officialTitle: act.title,
+      citation: actCitation(act),
+      path: actPath(act),
       currentVersionUrl: act.currentVersionUrl,
       codexVersion: act.codexVersion,
       aliases: act.aliases,
       actCaseCount,
+      // EU acts. Null or empty throughout on the Icelandic side, which is
+      // what the reader keys its EEA panel off.
+      celex: act.celex,
+      docType: act.docType,
+      status: act.status,
+      eeaRelevant: act.eeaRelevant,
+      eeaIncorporatedBy: act.eeaIncorporatedBy,
+      entryIntoForce: act.entryIntoForce,
+      endOfValidity: act.endOfValidity,
+      textCelex: act.textCelex,
+      textStatus: act.textStatus,
     },
     chapters: act.chapters.map((c) => ({
       id: c.id,

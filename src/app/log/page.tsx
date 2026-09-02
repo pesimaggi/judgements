@@ -1,9 +1,12 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { Pagination } from "@/components/Pagination";
+import { ScopeToggle, useActScope } from "@/components/ScopeToggle";
 
 interface ActListItem {
   id: string;
+  jurisdiction: string;
   actNumber: number;
   year: number;
   title: string;
@@ -13,9 +16,14 @@ interface ActListItem {
   provisionCount: number;
   citingCases: number;
   currentVersionUrl: string;
+  eeaRelevant: boolean;
+  eeaIncorporatedBy: string[];
+  status: string;
+  textStatus: string | null;
 }
 
 type Sort = "title" | "number" | "cases" | "provisions";
+type Corpus = "is" | "eu";
 
 const SORT_LABELS: { value: Sort; label: string }[] = [
   { value: "title", label: "Heiti (A–Ö)" },
@@ -24,50 +32,81 @@ const SORT_LABELS: { value: Sort; label: string }[] = [
   { value: "provisions", label: "Flestar greinar" },
 ];
 
+const PAGE_SIZE = 100;
+
 /**
- * The act catalogue — every act ingested from Lagasafn.
+ * The act catalogue — Icelandic acts from Lagasafn, and EU acts from EUR-Lex.
  *
- * The whole list is fetched once (it is ~900 rows of metadata, not text) and
- * filtered in the browser, so typing is instant and does not put a query per
- * keystroke on the database. Sorting is server-side, because "most cited"
- * needs the counts computed across the full corpus rather than the page.
+ * Two corpora, one page, because they are the same kind of thing and a reader
+ * looking for "the rule" should not have to know which of the two libraries it
+ * is filed in. What differs is the size: ~900 Icelandic acts against tens of
+ * thousands of EU ones, which is why the search box and the paging are
+ * server-side. This page used to fetch the whole list once and filter it in
+ * the browser; that is a fine trick for 900 rows of metadata and a download
+ * for 33,000.
+ *
+ * The EU tab carries the EEA/ESB scope toggle — see components/ScopeToggle.
  */
 export default function ActIndexPage() {
   const [acts, setActs] = useState<ActListItem[]>([]);
-  const [totals, setTotals] = useState({ acts: 0, provisions: 0, linkedProvisions: 0 });
+  const [totals, setTotals] = useState({
+    acts: 0,
+    provisions: 0,
+    linkedProvisions: 0,
+    icelandic: 0,
+    eu: 0,
+    euEea: 0,
+  });
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [page, setPage] = useState(1);
+  const [corpus, setCorpus] = useState<Corpus>("is");
+  const [scope, setScope] = useActScope();
   const [sort, setSort] = useState<Sort>("title");
   const [citedOnly, setCitedOnly] = useState(false);
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  // A new filter, corpus or scope is a new list; staying on page 7 of it would
+  // show an empty page more often than not.
+  useEffect(() => {
+    setPage(1);
+  }, [filter, corpus, scope, sort, citedOnly]);
+
   useEffect(() => {
     setLoading(true);
-    const params = new URLSearchParams({ sort, pageSize: "1000" });
+    const params = new URLSearchParams({
+      catalogue: "1",
+      sort,
+      scope,
+      jurisdiction: corpus,
+      page: String(page),
+      pageSize: String(PAGE_SIZE),
+    });
     if (citedOnly) params.set("cited", "1");
-    fetch(`/api/acts?${params}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.error) throw new Error(d.error);
-        setActs(d.acts);
-        setTotals(d.totals);
-        setError("");
-      })
-      .catch(() => setError("Could not load the list of acts."))
-      .finally(() => setLoading(false));
-  }, [sort, citedOnly]);
+    if (filter.trim()) params.set("q", filter.trim());
 
-  const visible = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    if (!q) return acts;
-    return acts.filter(
-      (a) =>
-        a.title.toLowerCase().includes(q) ||
-        a.citation.includes(q) ||
-        `${a.actNumber}/${a.year}`.includes(q) ||
-        a.aliases.some((alias) => alias.includes(q))
-    );
-  }, [acts, filter]);
+    // Debounced, because this runs on every keystroke in the search box and
+    // each run is a query over the whole corpus.
+    const timer = setTimeout(() => {
+      fetch(`/api/acts?${params}`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.error) throw new Error(d.error);
+          setActs(d.acts);
+          setTotals(d.totals);
+          setTotal(d.total);
+          setTotalPages(d.totalPages);
+          setError("");
+        })
+        .catch(() => setError("Could not load the list of acts."))
+        .finally(() => setLoading(false));
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [sort, citedOnly, corpus, scope, page, filter]);
+
+  const isEu = corpus === "eu";
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-6">
@@ -76,29 +115,94 @@ export default function ActIndexPage() {
       </Link>
 
       <header className="mt-2">
-        <h1 className="font-serif text-2xl font-semibold">Lög</h1>
+        <h1 className="font-serif text-2xl font-semibold">{isEu ? "ESB-gerðir" : "Lög"}</h1>
         <p className="mt-1 text-sm text-inkSoft">
-          Every act ingested from{" "}
-          <a
-            href="https://www.althingi.is/lagas/"
-            target="_blank"
-            rel="noreferrer"
-            className="text-accent hover:underline"
-          >
-            Lagasafn
-          </a>
-          , the in-force text of Icelandic law.{" "}
-          {totals.acts > 0 && (
+          {isEu ? (
             <>
-              {totals.acts.toLocaleString("is-IS")} lög ·{" "}
-              {totals.provisions.toLocaleString("is-IS")} greinar ·{" "}
-              {totals.linkedProvisions.toLocaleString("is-IS")} greinar sem úrlausnir vísa til.
+              EU acts in force — regulations, directives and decisions — from{" "}
+              <a
+                href="https://eur-lex.europa.eu"
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent hover:underline"
+              >
+                EUR-Lex
+              </a>
+              , with the articles of each.{" "}
+              {totals.eu > 0 && (
+                <>
+                  {totals.eu.toLocaleString("is-IS")} gerðir ·{" "}
+                  {totals.euEea.toLocaleString("is-IS")} með mögulega EES-þýðingu.
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              Every act ingested from{" "}
+              <a
+                href="https://www.althingi.is/lagas/"
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent hover:underline"
+              >
+                Lagasafn
+              </a>
+              , the in-force text of Icelandic law.{" "}
+              {totals.icelandic > 0 && (
+                <>
+                  {totals.icelandic.toLocaleString("is-IS")} lög ·{" "}
+                  {totals.provisions.toLocaleString("is-IS")} greinar ·{" "}
+                  {totals.linkedProvisions.toLocaleString("is-IS")} greinar sem úrlausnir vísa til.
+                </>
+              )}
             </>
           )}
         </p>
       </header>
 
-      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+      {/* ---- Which corpus, and how much of it ------------------------ */}
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <div className="inline-flex overflow-hidden rounded-lg border border-line">
+          {([
+            { value: "is" as const, label: "Íslensk lög", count: totals.icelandic },
+            { value: "eu" as const, label: "ESB-gerðir", count: totals.eu },
+          ]).map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => setCorpus(tab.value)}
+              aria-pressed={corpus === tab.value}
+              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                corpus === tab.value ? "bg-ink text-white" : "bg-white text-inkSoft hover:bg-paper"
+              }`}
+            >
+              {tab.label}
+              {tab.count > 0 && (
+                <span className={`ml-1.5 text-[11px] ${corpus === tab.value ? "text-white/70" : "text-inkSoft/70"}`}>
+                  {tab.count.toLocaleString("is-IS")}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {isEu && (
+          <div className="flex items-center gap-2">
+            <ScopeToggle
+              scope={scope}
+              onChange={setScope}
+              counts={{ eea: totals.euEea, eu: totals.eu }}
+            />
+            <span className="text-[11px] text-inkSoft">
+              {scope === "eea"
+                ? "Aðeins gerðir sem geta haft EES-þýðingu."
+                : "Allar gerðir, líka þær sem hafa ekki verið teknar upp í EES-samninginn."}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
         <div className="flex-1">
           <label htmlFor="act-filter" className="text-xs font-medium text-inkSoft">
             Leita
@@ -107,9 +211,13 @@ export default function ActIndexPage() {
             id="act-filter"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Heiti, stuttnefni („vaxtalög“) eða númer („38/2001“)"
+            placeholder={
+              isEu
+                ? "Heiti, stuttnefni („gdpr“), númer („2016/679“) eða CELEX"
+                : "Heiti, stuttnefni („vaxtalög“) eða númer („38/2001“)"
+            }
             className="mt-1 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none focus:border-ink"
-            lang="is"
+            lang={isEu ? "en" : "is"}
           />
         </div>
         <div>
@@ -136,22 +244,22 @@ export default function ActIndexPage() {
             onChange={(e) => setCitedOnly(e.target.checked)}
             className="h-4 w-4 rounded border-line accent-accent"
           />
-          Aðeins lög sem úrlausnir vísa til
+          Aðeins þau sem úrlausnir vísa til
         </label>
       </div>
 
       <p className="mt-2 text-xs text-inkSoft">
         {loading
-          ? "Sæki lög…"
-          : `${visible.length.toLocaleString("is-IS")}${
-              filter.trim() ? ` af ${acts.length.toLocaleString("is-IS")}` : ""
-            } lög`}
+          ? "Sæki…"
+          : `${total.toLocaleString("is-IS")} ${isEu ? "gerðir" : "lög"}${
+              totalPages > 1 ? ` · síða ${page} af ${totalPages}` : ""
+            }`}
       </p>
 
       {error && <p className="mt-3 text-sm text-accent">{error}</p>}
 
       <ul className="mt-3 divide-y divide-line overflow-hidden rounded-lg border border-line bg-white">
-        {visible.map((a) => (
+        {acts.map((a) => (
           <li key={a.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-2.5">
             <Link
               href={a.path}
@@ -160,10 +268,27 @@ export default function ActIndexPage() {
               {a.title}
             </Link>
             <span className="font-mono text-[11px] text-inkSoft">{a.citation}</span>
+            {a.jurisdiction === "eu" && (a.eeaRelevant || a.eeaIncorporatedBy.length > 0) && (
+              <span
+                className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[10px] text-inkSoft"
+                title={
+                  a.eeaIncorporatedBy.length > 0
+                    ? `Tekin upp með ákvörðun sameiginlegu EES-nefndarinnar nr. ${a.eeaIncorporatedBy.join(", ")}`
+                    : "Merkt „Text with EEA relevance“ í EUR-Lex"
+                }
+              >
+                {a.eeaIncorporatedBy.length > 0 ? "EES — tekin upp" : "EES-þýðing"}
+              </span>
+            )}
+            {a.status === "no_longer_in_force" && (
+              <span className="shrink-0 text-[10px] text-inkSoft">fallin úr gildi</span>
+            )}
             <span className="shrink-0 text-[11px] text-inkSoft">
               {a.provisionCount > 0
                 ? `${a.provisionCount} gr.`
-                : "engin grein birt"}
+                : a.jurisdiction === "eu" && a.textStatus !== "stored"
+                  ? "texti ósóttur"
+                  : "engin grein birt"}
             </span>
             <span className="w-24 shrink-0 text-right text-[11px]">
               {a.citingCases > 0 ? (
@@ -178,9 +303,17 @@ export default function ActIndexPage() {
         ))}
       </ul>
 
-      {!loading && visible.length === 0 && !error && (
-        <p className="mt-3 text-sm text-inkSoft">Engin lög fundust.</p>
+      {!loading && acts.length === 0 && !error && (
+        <p className="mt-3 text-sm text-inkSoft">
+          {isEu && scope === "eea"
+            ? "Ekkert fannst innan EES. Prófaðu ESB-stillinguna til að leita í öllum gerðum."
+            : "Ekkert fannst."}
+        </p>
       )}
+
+      <div className="mt-4">
+        <Pagination page={page} totalPages={totalPages} disabled={loading} onPageChange={setPage} />
+      </div>
 
       <p className="mt-4 text-center text-[11px] text-inkSoft">
         Unofficial reproduction of the consolidated text. Always verify against the official source.

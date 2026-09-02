@@ -151,6 +151,17 @@ CREATE INDEX IF NOT EXISTS acts_title_trgm_idx ON acts USING GIN (title gin_trgm
 CREATE INDEX IF NOT EXISTS acts_aliases_trgm_idx
   ON acts USING GIN (act_alias_text(aliases) gin_trgm_ops);
 
+-- The EU half of the act table is tens of thousands of rows, and an EU act is
+-- named by its citation as written ("Regulation (EU) 2016/679"), which the
+-- lookup matches with the same ILIKE-and-trigram pair it uses on titles.
+-- Without this, every keystroke in the act box scans the whole library.
+--
+-- The other two columns the lookup touches need nothing here: `celex` is
+-- unique in the schema and `(jurisdiction, eea_relevant)` — the scope filter —
+-- is declared there as an index, so `prisma db push` creates both.
+CREATE INDEX IF NOT EXISTS acts_citation_trgm_idx
+  ON acts USING GIN (coalesce(citation, '') gin_trgm_ops);
+
 -- The provision badge ("12 dómar vísa til þessa ákvæðis") counts links per
 -- provision, and the act reader loads every provision's count in one pass.
 CREATE INDEX IF NOT EXISTS case_provision_links_provision_idx

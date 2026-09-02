@@ -10,6 +10,7 @@ import type {
   ProvisionSearchRequest,
   ProvisionHit,
 } from "../types";
+import { actCitation, actDisplayTitle, actPath, scopeFilter } from "../acts";
 import type { SearchProvider, ProviderResult } from "./provider";
 
 /**
@@ -232,37 +233,59 @@ export class PostgresSearchProvider implements SearchProvider {
 }
 
 /**
- * Act lookup for the specific-search panel.
+ * Act lookup for the specific-search panel, over both corpora.
  *
- * Three ways in, because that is how people actually reach for an act:
- *  - by citation number, "91/1991" or "nr. 91/1991" — an exact hit, ranked first;
+ * Four ways in, because that is how people actually reach for an act:
+ *  - by citation number, "91/1991" or "nr. 91/1991" — an exact hit, ranked
+ *    first. Read in both directions, since "2016/679" puts the year first
+ *    where "91/1991" puts the number first;
+ *  - by CELEX, "32016R0679", which is how an EU act is referred to in a
+ *    reference list and in every machine-readable citation of it;
  *  - by title, with trigram fuzziness for Icelandic spelling variants;
- *  - by one of the short names harvested from the corpus, because acts are
- *    routinely cited by a name their official title does not contain
- *    ("vaxtalög" for "Lög um vexti og verðtryggingu", nr. 38/2001).
+ *  - by one of the short names, because acts are routinely cited by a name
+ *    their official title does not contain — "vaxtalög" for "Lög um vexti og
+ *    verðtryggingu", and "gdpr" for Regulation (EU) 2016/679, which EUR-Lex
+ *    records as a short title of its own.
  *
  * The alias match goes through act_alias_text(), the same immutable wrapper
  * the trigram index in setup-search.sql is built on — using a different
  * expression here would silently drop the index.
+ *
+ * `scope` decides how much of the EU library is visible; see scopeFilter().
  */
 export async function searchActsPostgres(req: ActSearchRequest): Promise<ActHit[]> {
   const q = req.query.trim();
   const limit = Math.min(25, Math.max(1, req.limit ?? 10));
   if (!q) return [];
 
-  // "91/1991", "nr. 91/1991", or "91 1991".
-  const num = /(\d{1,3})\s*[\/ ]\s*(\d{4})/.exec(q);
+  // "91/1991", "nr. 91/1991", "91 1991", "2016/679". Both halves are matched
+  // loosely, because which of them is the year depends on the convention the
+  // act was numbered under — see numberMatch below.
+  const num = /(\d{1,4})\s*[\/ -]\s*(\d{1,4})/.exec(q);
+  const first = num ? Number(num[1]) : null;
+  const second = num ? Number(num[2]) : null;
   const like = `%${q}%`;
+  const celex = /^[03]\d{4}[RLD]\d{4}$/i.test(q) ? q.toUpperCase() : null;
+
+  // Read as "number/year" (lög nr. 91/1991, Regulation (EC) No 1/2003) and as
+  // "year/number" (Regulation (EU) 2016/679) alike; only one of the two can
+  // match a given act.
+  const numberMatch = Prisma.sql`(
+    (${first}::int IS NOT NULL AND a.act_number = ${first}::int AND a.year = ${second}::int)
+    OR (${first}::int IS NOT NULL AND a.year = ${first}::int
+        AND coalesce(a.natural_number, a.act_number) = ${second}::int)
+  )`;
 
   const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
-    SELECT a.id, a.act_number, a.year, a.title,
+    SELECT a.id, a.jurisdiction, a.act_number, a.year, a.title, a.citation, a.celex,
+           a.eea_relevant, a.eea_incorporated_by,
            (SELECT count(*)::int FROM provisions p WHERE p.act_id = a.id AND p.kind = 'article') AS provision_count,
            CASE
-             WHEN ${num ? Number(num[1]) : null}::int IS NOT NULL
-              AND a.act_number = ${num ? Number(num[1]) : null}::int
-              AND a.year = ${num ? Number(num[2]) : null}::int THEN 0
+             WHEN ${celex}::text IS NOT NULL AND a.celex = ${celex}::text THEN 0
+             WHEN ${numberMatch} THEN 0
              WHEN a.title ILIKE ${like} THEN 1
              WHEN act_alias_text(a.aliases) ILIKE ${like} THEN 2
+             WHEN coalesce(a.citation, '') ILIKE ${like} THEN 2
              ELSE 3
            END AS bucket,
            GREATEST(
@@ -270,25 +293,41 @@ export async function searchActsPostgres(req: ActSearchRequest): Promise<ActHit[
              similarity(act_alias_text(a.aliases), ${q})
            ) AS sim
       FROM acts a
-     WHERE (${num ? Number(num[1]) : null}::int IS NOT NULL
-            AND a.act_number = ${num ? Number(num[1]) : null}::int
-            AND a.year = ${num ? Number(num[2]) : null}::int)
-        OR a.title ILIKE ${like}
-        OR act_alias_text(a.aliases) ILIKE ${like}
-        OR a.title % ${q}
-        OR act_alias_text(a.aliases) % ${q}
+     WHERE ${scopeFilter(req.scope ?? "eea")}
+       AND (
+            (${celex}::text IS NOT NULL AND a.celex = ${celex}::text)
+         OR ${numberMatch}
+         OR a.title ILIKE ${like}
+         OR act_alias_text(a.aliases) ILIKE ${like}
+         OR coalesce(a.citation, '') ILIKE ${like}
+         OR a.title % ${q}
+         OR act_alias_text(a.aliases) % ${q}
+       )
      ORDER BY bucket ASC, sim DESC, a.year DESC
      LIMIT ${limit}
   `);
 
   return rows.map((r) => ({
     id: r.id,
+    jurisdiction: r.jurisdiction,
     actNumber: r.act_number,
     year: r.year,
-    title: r.title,
-    citation: `lög nr. ${r.act_number}/${r.year}`,
-    path: `/log/${r.act_number}-${r.year}`,
+    title: actDisplayTitle({ jurisdiction: r.jurisdiction, title: r.title }),
+    citation: actCitation({
+      jurisdiction: r.jurisdiction,
+      citation: r.citation,
+      actNumber: r.act_number,
+      year: r.year,
+    }),
+    path: actPath({
+      jurisdiction: r.jurisdiction,
+      celex: r.celex,
+      actNumber: r.act_number,
+      year: r.year,
+    }),
     provisionCount: Number(r.provision_count ?? 0),
+    eeaRelevant: r.eea_relevant ?? false,
+    eeaIncorporatedBy: r.eea_incorporated_by ?? [],
   }));
 }
 
@@ -312,6 +351,12 @@ export async function searchProvisionsPostgres(
 
   const filters: Prisma.Sql[] = [Prisma.sql`p.kind = 'article'`];
   if (req.actId) filters.push(Prisma.sql`p.act_id = ${req.actId}`);
+  // Outside a chosen act, a provision search is a search of the whole corpus
+  // and takes the same EEA/EU scope the act lookup does. Inside one, the act
+  // has already been chosen and its scope with it.
+  else filters.push(Prisma.sql`EXISTS (
+    SELECT 1 FROM acts a WHERE a.id = p.act_id AND ${scopeFilter(req.scope ?? "eea")}
+  )`);
 
   const q = req.query.trim();
   const match: Prisma.Sql[] = [];
@@ -358,6 +403,7 @@ export async function searchProvisionsPostgres(
     prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT p.id, p.act_id, p.display_label, p.heading, p.anchor,
              a.act_number, a.year, a.title AS act_title,
+             a.jurisdiction, a.citation AS act_citation, a.celex,
              left(p.full_text, 400) AS snippet,
              -- Distinct judgments, not link rows: one link is one citing
              -- passage, and a judgment often cites the same provision twice.
@@ -379,15 +425,27 @@ export async function searchProvisionsPostgres(
     hits: rows.map((r) => ({
       id: r.id,
       actId: r.act_id,
+      jurisdiction: r.jurisdiction,
       actNumber: r.act_number,
       year: r.year,
-      actTitle: r.act_title,
+      actTitle: actDisplayTitle({ jurisdiction: r.jurisdiction, title: r.act_title }),
+      actCitation: actCitation({
+        jurisdiction: r.jurisdiction,
+        citation: r.act_citation,
+        actNumber: r.act_number,
+        year: r.year,
+      }),
       displayLabel: r.display_label,
       heading: r.heading,
       anchor: r.anchor,
       snippet: r.snippet ?? "",
       caseCount: Number(r.case_count ?? 0),
-      path: `/log/${r.act_number}-${r.year}#${r.anchor}`,
+      path: `${actPath({
+        jurisdiction: r.jurisdiction,
+        celex: r.celex,
+        actNumber: r.act_number,
+        year: r.year,
+      })}#${r.anchor}`,
     })),
   };
 }
