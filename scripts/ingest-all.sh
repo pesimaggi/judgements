@@ -29,6 +29,8 @@
 #   INGEST_ADAPTERS="icelandic-gaps"          # one-off, finish the archive
 #   INGEST_ADAPTERS="icelandic-retry"         # just re-attempt known gaps
 #   INGEST_ADAPTERS="logretta ulfljotur"      # just the new sources
+#   INGEST_ADAPTERS="eur-lex-catalogue"       # only the EU act catalogue
+#   INGEST_ADAPTERS="eur-lex"                 # only the EU acts' text
 #   (unset)                                   # every adapter, in order
 #
 # Command-line arguments win over the variable, so a local run can still
@@ -78,6 +80,23 @@
 #   STJORNARRADID_RETRY     default 300   — cases the retry sweep re-attempts
 #   STJORNARRADID_BOARDS    unset         — comma-separated board keys; all 40 by default
 #   LOGRETTA_FETCH_PDFS     unset         — see README on the Prismic CDN's robots.txt
+#   EURLEX_YEARS_PER_RUN    default 3     — calendar years of the EU act catalogue
+#                                           swept per run; the sweep runs 1952 to
+#                                           this year and then starts over
+#   EURLEX_ACTS             default 150   — EU acts whose text is fetched per run.
+#                                           One Cellar request each, EEA-relevant
+#                                           acts first
+#   EURLEX_TEXT_SCOPE       default eea   — "eea" fetches only the acts that may be
+#                                           part of EEA law; "all" fetches the whole
+#                                           library (~33,000 acts, weeks of runs)
+#   EURLEX_RETRY            default 50    — acts whose text failed that the retry
+#                                           pass re-attempts
+#   EURLEX_JCD_LINKS        default on    — "0" skips the EUR-Lex half of the EEA
+#                                           incorporation pass, leaving only what
+#                                           the stored decisions' own text says
+#   JCD_LISTING             default on    — "0" stops the EEA Joint Committee pass
+#                                           asking EUR-Lex which decisions exist,
+#                                           leaving it to work the ledger it has
 #
 set -u
 
@@ -93,7 +112,7 @@ set -u
 # hand, which is why Endurupptökudómur sat at 2 of 102 cases: the sweep that
 # would have found the other 100 was opt-in and nobody opted in. A source that
 # only closes its gaps when prompted does not close them.
-DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-joint-committee eftasurv eftasurv-retry lagasafn citations"
+DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-joint-committee eftasurv eftasurv-retry lagasafn eur-lex-catalogue eur-lex eur-lex-retry eur-lex-eea citations"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"
@@ -265,6 +284,18 @@ for adapter in $ADAPTERS; do
       # row until the budget is spent. A run whose ledger is empty makes no
       # requests at all.
       #
+      # It now walks a listing, which it did not before: EUR-Lex publishes every
+      # decision the Committee has adopted (about 6,780, back to No 1/94), so
+      # each run asks for that list and queues whatever is neither held nor
+      # already in the ledger. That is what unfroze this source — its backlog
+      # was seeded once from a register that has since been withdrawn, and a
+      # decision adopted after that day could not be discovered at all. Set
+      # JCD_LISTING=0 to skip the listing and work only the existing ledger.
+      #
+      # Decisions queued from the listing are read from EUR-Lex rather than as
+      # PDFs from efta.int; both halves compose the same record. See the
+      # adapter's header.
+      #
       # This pass also carries out the one-time purge of the withdrawn EEA-Lex
       # acts register, which is why it needs no variable set to happen: it runs
       # on the next firing, and costs one count query on every firing after.
@@ -294,6 +325,49 @@ for adapter in $ADAPTERS; do
       # dashboard can set it — the default is off, deliberately.
       LOGRETTA_FETCH_PDFS="${LOGRETTA_FETCH_PDFS:-}" \
         npm run ingest -- --adapter=logretta
+      ;;
+    eur-lex-catalogue)
+      # What exists: two SPARQL queries per calendar year against the
+      # Publications Office's endpoint, giving every EU act of that year in
+      # force with its title, its dates, its EEA relevance marker and its
+      # current consolidated version. Seconds per year and no document fetches
+      # at all, so it runs every time and carries the sweep forward from a
+      # cursor — 1952 to this year, then round again to pick up amendments and
+      # acts that have fallen out of force.
+      INGEST_MODE=catalogue \
+      EURLEX_YEARS_PER_RUN="${EURLEX_YEARS_PER_RUN:-3}" \
+        npm run ingest -- --adapter=eur-lex
+      ;;
+    eur-lex)
+      # The acts' text, one Cellar request each. EEA-relevant acts first and,
+      # by default, only those: the library is ~33,000 acts and an Icelandic
+      # research question is almost always about one that reached Icelandic
+      # law. Set EURLEX_TEXT_SCOPE=all from the dashboard to work through the
+      # rest, which takes weeks of runs at the polite fetch rate.
+      INGEST_MODE=text \
+      EURLEX_TEXT_SCOPE="${EURLEX_TEXT_SCOPE:-eea}" \
+      INGEST_MAX_CASES="${EURLEX_ACTS:-150}" \
+        npm run ingest -- --adapter=eur-lex
+      ;;
+    eur-lex-retry)
+      # The acts whose text could not be read, re-attempted — the equivalent of
+      # the gap ledger for a corpus whose ledger is the act table itself. Cheap
+      # and bounded, and it is what recovers an act lost to a one-off 5xx.
+      INGEST_MODE=text-retry \
+      INGEST_MAX_CASES="${EURLEX_RETRY:-50}" \
+        npm run ingest -- --adapter=eur-lex
+      ;;
+    eur-lex-eea)
+      # Which EU acts the EEA Joint Committee has taken into the Agreement —
+      # the cross-reference behind the EES tag. Two sources merged: EUR-Lex's
+      # own citation graph, which covers every decision that exists (about
+      # 20,400 act references in ~34 queries), and the text of the decisions
+      # already stored, which costs no requests. This is the pass that lets the
+      # EEA scope include an act too old to carry a relevance marker — of the
+      # EU acts of 2000 in force, none carries the marker and 61 are named by a
+      # decision.
+      INGEST_MODE=eea-links \
+        npm run ingest -- --adapter=eur-lex
       ;;
     *)
       npm run ingest -- --adapter="$adapter"

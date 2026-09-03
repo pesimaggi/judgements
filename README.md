@@ -4,7 +4,7 @@ An MVP search engine for **Icelandic court judgments only** — Hæstiréttur Í
 
 > **Disclaimer shown throughout the app:** This is an unofficial research tool. Always verify text against the official source.
 
-This is a deliberately narrowed build: no CJEU. The three Icelandic courts published at [island.is/domar](https://island.is/domar), searched properly — plus Endurupptökudómur and [Félagsdómur](https://felagsdomur.is/domar-og-urskurdir/), the EFTA Court, Umboðsmaður Alþingis, the 40 administrative appeal boards that publish at [stjornarradid.is](https://www.stjornarradid.is/gogn/urskurdir-og-alit-/), the EEA law in force — the [EEA Joint Committee decisions](https://www.efta.int/about-efta/legal-documents/adopted-joint-committee-decisions) that bring EU acts into the EEA Agreement, and the [EFTA Surveillance Authority](https://www.eftasurv.int/esa-at-a-glance/publications/public-access-to-documents/public-documents) documents enforcing them — and two peer-reviewed Icelandic legal journals for the commentary on them.
+This is a deliberately narrowed build: no CJEU. The three Icelandic courts published at [island.is/domar](https://island.is/domar), searched properly — plus Endurupptökudómur and [Félagsdómur](https://felagsdomur.is/domar-og-urskurdir/), the EFTA Court, Umboðsmaður Alþingis, the 40 administrative appeal boards that publish at [stjornarradid.is](https://www.stjornarradid.is/gogn/urskurdir-og-alit-/), the EEA law in force — the [EEA Joint Committee decisions](https://www.efta.int/about-efta/legal-documents/adopted-joint-committee-decisions) that bring EU acts into the EEA Agreement, and the [EFTA Surveillance Authority](https://www.eftasurv.int/esa-at-a-glance/publications/public-access-to-documents/public-documents) documents enforcing them — and two peer-reviewed Icelandic legal journals for the commentary on them. Alongside the case law sits the legislation it applies: the in-force text of Icelandic law from Lagasafn, and the EU acts in force from [EUR-Lex](https://eur-lex.europa.eu) — with an EES/ESB toggle that decides whether the EU library is limited to what may be part of EEA law or opened to all of it.
 
 ## What's in the MVP
 
@@ -14,12 +14,14 @@ This is a deliberately narrowed build: no CJEU. The three Icelandic courts publi
 - **Full document page** — structured metadata, the judgment typeset as readable prose (headings, paragraphs, numbered clauses, quoted passages) with highlighted hits, search-within-document, copyable citation, official-source link, related cases via case-number citation extraction.
 - **Icelandic acts (lög)** — the in-force text of Icelandic law from [Lagasafn](https://www.althingi.is/lagas/), parsed into chapters (kaflar), provisions (greinar) and paragraphs (málsgreinar), with an act reader at `/log/{actNumber}-{year}`.
 - **Provision-level case linking** — each provision shows how many decisions cite it ("12 úrlausnir vísa til þessa ákvæðis"), expanding to the citing cases with the sentence the citation was found in, so you can see *why* a case matched before opening it.
-- **Act catalogue** — `/log` lists every ingested act with its provision count and how many judgments cite it, searchable by title, short name or number, and sortable by most-cited.
+- **EU acts (ESB-gerðir)** — the regulations, directives and decisions in force, from EUR-Lex, parsed into the same chapter / article / paragraph structure and read in the same act reader at `/log/{CELEX}` — `/log/32016R0679` is the GDPR. Each act carries whether EUR-Lex marks it *"(Text with EEA relevance)"* and which decisions of the EEA Joint Committee this database holds that name it. See *EU acts (EUR-Lex)* below.
+- **EES / ESB scope toggle** — one control, in the act catalogue and beside the specific-search act box, deciding how much of the EU library any act lookup sees. **EES** (the default) is Icelandic law plus the EU acts that may be part of EEA law — the marked ones and the ones a Joint Committee decision names. **ESB** lifts the limit, which is what you want precisely when an act has *not* been incorporated and you need to establish that. Icelandic law is in both: the toggle never hides lög nr. 91/1991.
+- **Act catalogue** — `/log` lists every ingested act with its provision count and how many judgments cite it, searchable by title, short name or number, and sortable by most-cited. Two tabs: Icelandic acts and EU acts, the second carrying the scope toggle.
 - **Specific search** — alongside the keyword search, two live lookups that narrow the results, each accepting several selections that combine as AND: an act/provision box that takes the citation as it is written ("lög um aðbúnað og hollustuhætti" finds the cases about the act; "57. gr. a. laga um aðbúnað og hollustuhætti" narrows to the cases citing that article), and a subject-tag box. Acts match on title, citation number, or the short names judgments actually use — "vaxtalög" finds lög nr. 38/2001.
 - **Administrative case law** — the úrskurðarnefndir, kærunefndir and ministry appeal desks at stjornarradid.is, each board its own tickable source rather than one undifferentiated pile. For immigration, benefits, tenancy, procurement and freedom of information this is where the case law actually is, and a search of the courts alone would miss it. See *Úrskurðarnefndir og ráðuneyti* below.
-- **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`.
+- **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`. `Act` holds both jurisdictions: `jurisdiction` and `docType` say which corpus and which instrument, and an EU act adds its CELEX, its citation, its EEA marker and the Joint Committee decisions naming it.
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
-- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force act; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `eea-joint-committee` ingests the EEA Joint Committee's decisions (their own text, one record each); `eftasurv` ingests the EFTA Surveillance Authority's ~6,725 public documents; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court, both halves of it; `uua` ingests Úrskurðarnefnd umhverfis- og auðlindamála (~3,000 planning and environmental rulings, on its own site); `obyggdanefnd` ingests the þjóðlendu commission's 84 úrskurðir; `neytendamal` ingests Áfrýjunarnefnd neytendamála; `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
+- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force Icelandic act; `eur-lex` ingests the EU acts in force from the Publications Office; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `eea-joint-committee` ingests the EEA Joint Committee's decisions (their own text, one record each); `eftasurv` ingests the EFTA Surveillance Authority's ~6,725 public documents; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court, both halves of it; `uua` ingests Úrskurðarnefnd umhverfis- og auðlindamála (~3,000 planning and environmental rulings, on its own site); `obyggdanefnd` ingests the þjóðlendu commission's 84 úrskurðir; `neytendamal` ingests Áfrýjunarnefnd neytendamála; `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
 - **Scholarly commentary** — Tímarit Lögréttu and Vefrit Úlfljóts, searched alongside the case law rather than in a separate silo, so a query about an unsettled point returns both the judgments and the articles arguing about them. Articles are indexed in full but read at the journal that published them: their cards and pages link out rather than reproducing the text here.
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
 
@@ -293,10 +295,34 @@ OF THE EEA JOINT COMMITTEE No 25/2010 of 12 March 2010 amending Annex II
 Agreement"*. It is the legal instrument, and it is what someone looking for a
 decision of the Joint Committee is looking for.
 
-A JCD has no page of its own on efta.int; it is published as a PDF per
-language under `/sites/default/files/…/adopted-joint-committee-decisions/`. So
-the English PDF is the decision's `officialUrl`, as the ruling PDF already is
-for Óbyggðanefnd and for ESA's documents. The decisions are small — measured
+**Which decisions exist comes from EUR-Lex.** The Official Journal publishes
+every one of them — about 6,780, from No 1/94 to the present — and the SPARQL
+endpoint lists them by their authoring body, `CMT_MIX_EEAREA`, which is the
+Committee itself. That is the precise filter: sector 2 also holds every other
+joint body's decisions, and CELEX shape alone would not separate them. Each run
+asks for the list and queues, as `pending` ledger rows, whatever is neither
+held nor already queued — matched on the decision's own number ("154/2018"),
+never on a URL, so a decision already held from efta.int is not fetched twice.
+`JCD_LISTING=0` turns the listing off and leaves the adapter working the ledger
+it has.
+
+This is what unfroze the source. Its backlog was seeded once, from a register
+that has since been withdrawn (below), and a decision adopted after that day
+could not be discovered at all. The listing also gives the progress bar an
+honest denominator: what the Committee has adopted, rather than what we happen
+to know about.
+
+**The text comes from whichever source the row names.** A JCD has no page of
+its own on efta.int; it is published as a PDF per language under
+`/sites/default/files/…/adopted-joint-committee-decisions/`, and the English
+PDF is that row's `officialUrl`, as the ruling PDF already is for Óbyggðanefnd
+and for ESA's documents. A row queued from the listing instead carries the
+EUR-Lex reading page, and its text is read from Cellar — no PDF to parse, and
+the same record either way: the heading parse below reads both. Note that
+Cellar needs the parentheses in a suffixed CELEX percent-encoded
+(`21994D0330%2801%29`), which is every decision published before about 2005.
+
+The decisions are small — measured
 across 1994–2026, a JCD runs 2–3 pages and 1,700–5,200 characters. The 1994
 omnibus decisions are the exception: 7/1994 is 213 pages and 359,000
 characters, and it is stored **once**, which is why the decisions are a source
@@ -332,12 +358,12 @@ from the acts **before** deleting them — as `pending` rows, the one gap reason
 that is not a failure — so the backlog is carried forward rather than lost with
 the register that knew about it.
 
-That leaves a complete to-do list but not a growing one. The adapter will work
-the backlog to the end; it discovers nothing new, because it walks no listing
-of its own. New decisions start appearing again when EEA-Lex is re-ingested, or
-when this adapter is given the Committee's own published listing to walk. Until
-then the source is complete as of the day the register was withdrawn, and says
-so on `/admin/ingestion` rather than being silently frozen half-fetched.
+That left a complete to-do list but not a growing one: the adapter would work
+the backlog to the end and then discover nothing, because it walked no listing
+of its own. **EUR-Lex is now that listing** — see above — so the ledger grows
+again, and a decision adopted next month is queued on the next firing. The
+purge's seeding still matters: it carried the backlog forward rather than
+losing it with the register, and those rows keep their efta.int PDFs.
 
 **Nothing is retired any more.** The acts pass filtered to what was in force and
 removed a decision once the last act it incorporated fell out of force. Without
@@ -363,6 +389,201 @@ here pays for recovering the ones that failed transiently.
 retries on 429 as well as 5xx and honours `Retry-After` when the server sends
 one. `INGEST_DELAY_MS=1500` is the default and is comfortable here; below about
 a second it is not.
+
+### EU acts (EUR-Lex)
+
+The Joint Committee decisions above say *that* an EU act became EEA law. This
+is the act itself: every regulation, directive and decision **in force** — about
+33,000 of them — with its articles, from the Publications Office of the
+European Union.
+
+They are stored as **acts, not documents**. A regulation has articles, an
+article has numbered paragraphs, and both are cited the way a grein and a
+málsgrein are, so an EU act is an `Act` row with `jurisdiction = "eu"` beside
+lög nr. 38/2001 rather than a record in a parallel table. Everything already
+built on that shape works for it: the act reader, the provision search, the
+act type-ahead in specific search, and the provision-level links from
+judgments. An EU act is read at `/log/{CELEX}` — `/log/32016R0679` is the
+GDPR — and is cited the way it is written, "Regulation (EU) 2016/679", taken
+off the front of its own official title rather than composed from its numbers.
+(The numbering conventions changed twice: a directive of 2000 is cited
+"Directive 2000/31/EC", a regulation of 2003 "Regulation (EC) No 1/2003", and
+everything since 2015 "2016/679". None is derivable from another.)
+
+This is **not** the EEA-Lex acts register that was withdrawn in August 2026.
+That was a list of factsheets *about* acts, stored as searchable documents; this
+is the acts, from the source that publishes them, with their text. See the EEA
+Joint Committee adapter's header for the difference.
+
+#### The EES / ESB toggle
+
+Most of the EU library has never had anything to do with Iceland, and a search
+that returns a Commission implementing regulation on the marketing of hop
+products alongside the four Icelandic acts you asked about is a worse search.
+So every act query takes a scope, and the toggle sets it:
+
+| | What an act lookup sees |
+|---|---|
+| **EES** (default) | Icelandic acts, plus EU acts that may be part of EEA law: those EUR-Lex marks *"(Text with EEA relevance)"*, **or** that a decision of the EEA Joint Committee names. |
+| **ESB** | Everything. The whole EU library, incorporated or not. |
+
+Icelandic law is in both. The toggle says how much of the EU library comes
+with it, not whether Icelandic law is searched.
+
+The EES side is deliberately generous — a marker *or* a naming is enough —
+because the question it answers is "might this matter here": an act wrongly
+kept is a line in a list, and an act wrongly dropped is a search that silently
+fails.
+
+The two criteria are not one criterion and its backup. They are different
+claims, and they cover different eras:
+
+- **The marker** is the Commission's view that an act *belongs* in the
+  Agreement. It only became standard practice in the 1990s, so of the EU acts
+  of 2000 still in force, **not one carries it**.
+- **A naming by the Joint Committee** is the fact: the Committee is what
+  actually takes an act into the Agreement. Of those same acts of 2000, **61
+  are named by a decision** — every one of which the marker alone would have
+  hidden. The e-Commerce Directive (2000/31/EC) is the plain example: no
+  marker, and incorporated by Decision No 91/2000.
+
+#### The EES tag
+
+Where an act appears — in the catalogue, in the act reader, in the act
+type-ahead — it carries a tag saying which of those two it is, from one shared
+definition in `src/lib/eea-tag.ts` so all three make the same claim:
+
+| Tag | Means |
+|---|---|
+| **EES** | A decision of the Joint Committee names this act. Hovering gives the decision numbers, in the order they were adopted; the act reader prints them with a link to search for the decision itself. |
+| **EES?** | Marked *"(Text with EEA relevance)"*, but no decision we know of names it. Often a decision not yet adopted; sometimes a gap in what we hold. |
+| *(none)* | Neither. The act is in the library because the ESB scope shows the whole EU corpus, not because it binds anything here. |
+
+The tag says *named by*, not *inserted by*, and the wording under it is careful
+about the difference: a decision that deletes a point names the act it is
+deleting, and a later decision amending an act names it again. EUR-Lex records
+both as citations and offers nothing finer, so nothing here pretends to know
+which. What the tag asserts is the useful and defensible thing — the Committee
+has dealt with this act — with the decision numbers there to check.
+
+The cross-reference itself comes from two places, merged: EUR-Lex's citation
+graph (every decision that exists) and the text of the decisions this database
+holds, where the JCDs print the act they are inserting in the Official
+Journal's two-part form, `32016 R 0679: Regulation (EU) 2016/679 …`, and both
+halves are read. See `src/lib/eu-citations.ts` and `src/ingestion/eurlex-sparql.ts`.
+
+The choice is remembered in `localStorage` rather than asked per query: it is a
+research posture, and someone who set ESB on the catalogue page should not find
+the act box back on EES.
+
+#### Where the text comes from
+
+Not `eur-lex.europa.eu`, which is the reading room and answers a crawler with
+an empty `202 Accepted` rather than an error — a status that would sail through
+any `res.ok` check and store thousands of empty acts. The text comes from
+**Cellar**, the Publications Office's content API, which serves the act by
+CELEX to anything that asks for a format it holds:
+
+```
+curl -L -H "Accept: application/xhtml+xml, text/html;q=0.9" -H "Accept-Language: eng" \
+  https://publications.europa.eu/resource/celex/32016R0679
+```
+
+Both formats are asked for because which one an act is held as depends on when
+it was published, and asking for one alone 404s on the acts held as the other.
+
+**The consolidated version is preferred**, since that is the text in force —
+the same principle as reading Lagasafn's `/nuna/` pages rather than the act as
+originally passed. Which consolidated version is current comes from the
+catalogue pass, and a 404 on it falls back to the act as adopted rather than
+losing the act.
+
+**Three layouts, one parse.** Cellar does not serve one format:
+
+| Layout | What it is | How it is read |
+|---|---|---|
+| `oj` | published in the Official Journal, ~2004 onwards | `div id="art_1"` holding `p.oj-ti-art`, headings in `.eli-title`, one `div` per numbered paragraph |
+| `consolidated` | the in-force version of an amended act | the same `id="art_1"` skeleton, different class names, paragraph numbers in a `span` of their own |
+| `legacy` | anything older, held as plain HTML | no structure at all: an article heading is a `<p>` whose whole content is "Article 3" |
+
+The legacy parse starts only **after** the adoption formula ("HAVE ADOPTED
+THIS DIRECTIVE:"), because every recital above that line cites articles of the
+Treaty and of other acts — the e-Commerce Directive's recitals name Articles
+251, 95 and 46 — and a looser rule turns those citations into articles of this
+act. All three layouts are frozen as fixtures and tested offline; see
+`src/lib/__fixtures__/README.md`.
+
+#### Three passes, because they cost different amounts
+
+```
+INGEST_MODE=catalogue  npm run ingest -- --adapter=eur-lex   # what exists
+INGEST_MODE=text       npm run ingest -- --adapter=eur-lex   # the acts' text
+INGEST_MODE=text-retry npm run ingest -- --adapter=eur-lex   # what failed
+INGEST_MODE=eea-links  npm run ingest -- --adapter=eur-lex   # what the JCDs name
+```
+
+- **catalogue** — two SPARQL queries per calendar year against Cellar's
+  endpoint give every act of that year in force, with its title, its short
+  names (EUR-Lex records "gdpr" as one, which is what makes the type-ahead
+  find it), its dates, its EEA marker and its current consolidated version.
+  Seconds per year, no document fetches, resumable from a cursor:
+  `EURLEX_YEARS_PER_RUN` (default 3) years per firing, 1952 to this year and
+  then round again. An act the catalogue stops listing is marked
+  `no_longer_in_force` rather than deleted — it is still the law a judgment of
+  2011 applied.
+- **text** — one Cellar request per act, bounded by `EURLEX_ACTS` (default
+  150) and ordered EEA-relevant first. `EURLEX_TEXT_SCOPE` is `eea` by default,
+  so the acts that reached Icelandic law arrive first; set it to `all` to work
+  through the rest, which is weeks of runs at the polite fetch rate. The
+  catalogue is complete either way, so an act with no text yet is still
+  findable, still says what it is, and still links to EUR-Lex.
+- **eea-links** — the cross-reference behind the EES tag: which decisions of
+  the Joint Committee name each act. Two sources, merged, because each covers
+  what the other misses. EUR-Lex's own citation graph is the bulk of it — every
+  decision that exists, about 20,400 act references, in ~34 queries — and the
+  stored decisions' text catches what the graph does not record, at no request
+  cost. Both answer the same question, so they merge into one list of decision
+  numbers per act, ordered as the Committee adopted them.
+
+**The act table is the ledger.** There is no `IngestGap` row here, because that
+ledger is keyed by `(source, officialUrl)` and these are not documents. The
+equivalent lives on the act: `textStatus` is `pending` until the text is read,
+then `stored`, `fetch-failed` or `no-articles`, and every run prints the
+breakdown the way the document adapters print their gap counts:
+
+```
+[eur-lex] EU acts by text status: pending=1171 stored=5
+```
+
+So the shortfall is visible and retriable, and an act whose consolidation has
+moved on is put back to `pending` by the catalogue pass rather than going
+quietly stale.
+
+#### What is deliberately not here
+
+- **Not the Joint Committee's decisions, as acts.** EUR-Lex publishes those
+  too, in sector 2 — Decision No 154/2018 is CELEX `22018D1022` there, numbered
+  by its place in the Official Journal rather than by its decision number — but
+  this app already holds them as documents. Sweeping sector 2 would store every
+  one of them a second time, as a document and as an act, findable twice. The
+  catalogue query asks Cellar for sector 3 only, and `parseCelex()` refuses
+  anything else besides, which is a second guard on the same rule.
+
+  EUR-Lex *is* what the decisions source reads its listing from, which is a
+  different thing: see *EEA Joint Committee decisions* above. One copy of each
+  decision, stored as a document; EUR-Lex says which ones exist.
+- **Only the binding families.** Regulations, directives and decisions
+  (`EURLEX_TYPES=R,L,D`). Not opinions, recommendations, treaties or
+  international agreements — they are in EUR-Lex, they are not what "the EU
+  legal library" means to someone asking whether a rule applies.
+- **Only plain sector-3 CELEX numbers.** Corrigenda (`32016R0679R(01)`) and
+  the suffixed forms are skipped: a CELEX is a reliable identity only while it
+  is sector, year, type letter and four digits, which together are unique.
+- **No citation linking from Icelandic judgments to EU acts yet.** The
+  citation job reads the Icelandic grammar ("1. mgr. 175. gr. laga nr.
+  91/1991"); an Icelandic judgment citing "reglugerð (ESB) 2016/679" is a
+  different grammar and is not resolved. The link tables are jurisdiction-blind,
+  so this is an extractor to add, not a schema to change.
 
 ### EFTA Surveillance Authority
 
@@ -1434,6 +1655,8 @@ Each run records indexed/skipped/error counts in `IngestionRun`, visible at `/ad
 Lagasafn's markup carries stable anchors — `id="G7A"` for "7. gr. a", `id="G7AM1"` for its first paragraph — so provisions parse cleanly and can deep-link into the official text. Provisions are matched on `(actId, anchor)` and updated in place rather than deleted and recreated, because `CaseProvisionLink` cascades from `Provision`: a delete-and-reinsert would discard every judgment link on the act each time Lagasafn published a routine amendment.
 
 Repeat runs are cheap. An act whose stored codex version still matches the index's is skipped without being fetched, so a run against an unchanged Lagasafn release makes a single request in total.
+
+`eur-lex` reads the EU half of the same table. Its catalogue pass is SPARQL against the Publications Office's Cellar endpoint — two queries per calendar year, giving every act of that year in force — and its text pass fetches each act from Cellar by CELEX and parses it into the same chapters, provisions and paragraphs. Provisions are matched on `(actId, anchor)` and updated in place, for exactly the reason the Lagasafn adapter does it: `CaseProvisionLink` cascades from `Provision`. Anchors are EUR-Lex's own (`art_6`), so a provision link deep-links into the official text, and paragraph anchors are synthesised from them (`art_6-p1`) because EUR-Lex anchors articles but not their paragraphs. Unlike the Lagasafn adapter it does *not* clear the citation watermark when it stores new acts: the citation job reads the Icelandic citation grammar, so 33,000 EU acts arriving would trigger a full corpus rescan that could not produce a single link. See *EU acts (EUR-Lex)* above.
 
 `citations` links judgments to provisions where the article and its act appear together in the text ("1. mgr. 175. gr. laga nr. 91/1991"), storing the citing sentence and its offset so the UI can show why a case matched and jump to the passage. It is incremental on `Document.citationScanHash` vs `Document.textHash`, so it rescans only judgments whose text changed. Ingesting a previously unknown act clears that watermark automatically, because a new act is a link target nothing has been compared against and no judgment's text has changed to trigger a rescan on its own. To force a full rescan by hand:
 

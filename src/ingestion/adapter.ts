@@ -138,8 +138,11 @@ function retryAfterMs(res: Response): number | undefined {
  * (e.g. a genuine 404) fail immediately since retrying won't change the
  * outcome.
  */
-export async function politeFetchText(url: string): Promise<string> {
-  const { body, contentType } = await politeFetchBytes(url);
+export async function politeFetchText(
+  url: string,
+  headers?: Record<string, string>
+): Promise<string> {
+  const { body, contentType } = await politeFetchBytes(url, headers);
   return decodeHtml(body, contentType);
 }
 
@@ -147,15 +150,21 @@ export async function politeFetchText(url: string): Promise<string> {
  * The bytes behind politeFetchText, sharing its rate limiter and retries.
  * Needed where the response's own encoding has to be inspected rather than
  * assumed — see decodeHtml().
+ *
+ * `headers` are merged over the shared User-Agent, for a source that serves a
+ * machine something different from what it serves a browser: Cellar, the
+ * Publications Office's content API, answers 404 unless asked for a format it
+ * holds the document in — see src/lib/eur-lex.ts.
  */
 export async function politeFetchBytes(
-  url: string
+  url: string,
+  headers?: Record<string, string>
 ): Promise<{ body: Buffer; contentType: string | null }> {
   for (let attempt = 0; ; attempt++) {
     const wait = lastFetch + DELAY_MS - Date.now();
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     lastFetch = Date.now();
-    const res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
+    const res = await fetch(url, { headers: { "User-Agent": USER_AGENT, ...headers } });
     if (res.ok) {
       return {
         body: Buffer.from(await res.arrayBuffer()),

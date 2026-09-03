@@ -29,6 +29,13 @@ Both were found by reading output by hand.
 ```bash
 curl -sS "https://www.althingi.is/lagas/nuna/2004081.html" \
   | gzip -9 > src/lib/__fixtures__/lagasafn/2004081.html.gz
+
+# EU acts come from Cellar, not from eur-lex.europa.eu, and only when asked
+# for a format the act is actually held in — see src/lib/eur-lex.ts.
+curl -sS -L -H "Accept: application/xhtml+xml, text/html;q=0.9" \
+  -H "Accept-Language: eng" \
+  "https://publications.europa.eu/resource/celex/32000L0031" \
+  | gzip -9 > src/lib/__fixtures__/eur-lex/32000L0031.html.gz
 ```
 
 Then add a `manifest.json` entry with the URL and capture date, and assert
@@ -46,8 +53,15 @@ Keep them small. One document per shape, not per source.
 | Parser | Fixtures | Status |
 |---|---|---|
 | `lib/lagasafn.ts` | 2 acts | covered |
+| `lib/eur-lex.ts` | 3 acts, one per layout | covered |
 | `lib/judgment-text.ts` | — | unit-tested against reconstructed cases; no frozen judgment yet |
-| the 14 ingestion adapters | — | none yet |
+| the 15 ingestion adapters | — | none yet |
 
 The adapters are the gap. Each one wants a single frozen listing page and a
 single frozen document page; `lagasafn.test.ts` is the pattern to copy.
+
+The EUR-Lex fixtures are one per *layout* rather than one per act, because
+that is what varies: Cellar serves the same act in the Official Journal's
+markup, in the consolidated markup, or — for anything published before about
+2004 — as plain HTML with no structure at all. One act of each is the smallest
+set that fails when any of the three changes.

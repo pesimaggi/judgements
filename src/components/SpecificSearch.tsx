@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { ScopeToggle, useActScope } from "./ScopeToggle";
+import { eeaTag } from "@/lib/eea-tag";
 
 export interface LegalSelection {
   kind: "act" | "provision";
@@ -10,6 +12,10 @@ export interface LegalSelection {
   sublabel: string;
   /** Route to the act reader, for "open the text" alongside the case list. */
   path: string;
+  /** "is" | "eu" — what the EES tag is drawn from. See lib/eea-tag.ts. */
+  jurisdiction?: string;
+  eeaRelevant?: boolean;
+  eeaIncorporatedBy?: string[];
 }
 
 interface Suggestion extends LegalSelection {}
@@ -45,6 +51,9 @@ interface Props {
  */
 export function SpecificSearch({ legal, onLegalChange, tags: activeTags, onTagsChange }: Props) {
   const [legalQuery, setLegalQuery] = useState("");
+  // How much of the EU library the act box offers. Remembered across visits —
+  // see useActScope().
+  const [scope, setScope] = useActScope();
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [needsAct, setNeedsAct] = useState(false);
   const [legalLoading, setLegalLoading] = useState(false);
@@ -68,7 +77,7 @@ export function SpecificSearch({ legal, onLegalChange, tags: activeTags, onTagsC
     const id = ++legalRequest.current;
     setLegalLoading(true);
     const timer = setTimeout(() => {
-      fetch(`/api/lookup?q=${encodeURIComponent(q)}`)
+      fetch(`/api/lookup?q=${encodeURIComponent(q)}&scope=${scope}`)
         .then((r) => r.json())
         .then((d) => {
           if (id !== legalRequest.current) return;
@@ -84,7 +93,7 @@ export function SpecificSearch({ legal, onLegalChange, tags: activeTags, onTagsC
         .finally(() => id === legalRequest.current && setLegalLoading(false));
     }, 180);
     return () => clearTimeout(timer);
-  }, [legalQuery, legal]);
+  }, [legalQuery, legal, scope]);
 
   useEffect(() => {
     if (!tagOpen) return;
@@ -111,9 +120,17 @@ export function SpecificSearch({ legal, onLegalChange, tags: activeTags, onTagsC
 
       {/* ---- Act / provision ---------------------------------------- */}
       <div className="mt-3">
-        <label htmlFor="legal-lookup" className="text-xs font-medium text-inkSoft">
-          Lög eða ákvæði
-        </label>
+        <div className="flex items-center justify-between gap-2">
+          <label htmlFor="legal-lookup" className="text-xs font-medium text-inkSoft">
+            Lög eða ákvæði
+          </label>
+          <ScopeToggle scope={scope} onChange={setScope} />
+        </div>
+        <p className="mt-0.5 text-[11px] text-inkSoft">
+          {scope === "eea"
+            ? "Íslensk lög og ESB-gerðir sem geta haft EES-þýðingu."
+            : "Íslensk lög og allar ESB-gerðir, líka óinnleiddar."}
+        </p>
 
         {legal.length > 0 && (
           <ul className="mt-1 space-y-1">
@@ -122,7 +139,10 @@ export function SpecificSearch({ legal, onLegalChange, tags: activeTags, onTagsC
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <span className="block text-sm leading-snug">{l.label}</span>
-                    <span className="block text-[11px] text-inkSoft">{l.sublabel}</span>
+                    <span className="block text-[11px] text-inkSoft">
+                      {l.sublabel}
+                      <EeaTagChip item={l} />
+                    </span>
                   </div>
                   <button
                     type="button"
@@ -148,7 +168,7 @@ export function SpecificSearch({ legal, onLegalChange, tags: activeTags, onTagsC
           placeholder={
             legal.length
               ? "Bæta við lögum eða ákvæði…"
-              : "t.d. „lög um aðbúnað“ eða „57. gr. a. laga um aðbúnað“"
+              : "t.d. „lög um aðbúnað“, „57. gr. a. laga um aðbúnað“ eða „gdpr“"
           }
           autoComplete="off"
           lang="is"
@@ -172,7 +192,10 @@ export function SpecificSearch({ legal, onLegalChange, tags: activeTags, onTagsC
                   className="w-full rounded border border-line px-2 py-1.5 text-left hover:border-ink"
                 >
                   <span className="block text-sm leading-snug">{s.label}</span>
-                  <span className="block text-[11px] text-inkSoft">{s.sublabel}</span>
+                  <span className="block text-[11px] text-inkSoft">
+                    {s.sublabel}
+                    <EeaTagChip item={s} />
+                  </span>
                 </button>
               </li>
             ))}
@@ -245,5 +268,30 @@ export function SpecificSearch({ legal, onLegalChange, tags: activeTags, onTagsC
       </div>
 
     </section>
+  );
+}
+
+/**
+ * The EES tag, inline after an act's citation: two words saying whether a
+ * decision of the Joint Committee has taken this act into the EEA Agreement.
+ *
+ * It belongs here as much as in the catalogue — this box is where an act is
+ * actually chosen, and "is this part of EEA law" is the question a reader is
+ * answering when they choose one.
+ */
+function EeaTagChip({ item }: { item: LegalSelection }) {
+  const tag = eeaTag(item);
+  if (!tag) return null;
+  return (
+    <span
+      title={tag.detail}
+      className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] ${
+        tag.status === "incorporated"
+          ? "bg-accentSoft font-medium text-accent"
+          : "border border-line text-inkSoft"
+      }`}
+    >
+      {tag.label}
+    </span>
   );
 }

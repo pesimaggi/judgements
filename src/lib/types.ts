@@ -103,21 +103,33 @@ export interface SearchResponse {
 
 /** Act lookup for the "specific search" panel's type-ahead. */
 export interface ActSearchRequest {
-  /** Free text: an act title, a short name ("vaxtalög"), or "91/1991". */
+  /** Free text: a title, a short name ("vaxtalög", "gdpr"), "91/1991", a CELEX. */
   query: string;
   limit?: number;
+  /**
+   * How much of the EU library the lookup may see: "eea" (the default) is
+   * Icelandic law plus the EU acts that may be part of EEA law, "eu" is the
+   * whole library. See src/lib/acts.ts.
+   */
+  scope?: "eea" | "eu";
 }
 
 export interface ActHit {
   id: string;
+  /** "is" | "eu" — which corpus the act belongs to. */
+  jurisdiction: string;
   actNumber: number;
   year: number;
   title: string;
-  /** "lög nr. 91/1991" — the form the citation is written in. */
+  /** "lög nr. 91/1991", "Regulation (EU) 2016/679" — as the act is cited. */
   citation: string;
-  /** Route to this act's reader view, e.g. "/log/91-1991". */
+  /** Route to this act's reader view, e.g. "/log/91-1991", "/log/32016R0679". */
   path: string;
   provisionCount: number;
+  /** EU acts: marked "(Text with EEA relevance)". */
+  eeaRelevant?: boolean;
+  /** EU acts: decisions of the EEA Joint Committee naming this act. */
+  eeaIncorporatedBy?: string[];
 }
 
 /** Provision search, scoped to one act or across all of them. */
@@ -127,14 +139,20 @@ export interface ProvisionSearchRequest {
   actId?: string;
   page?: number;
   pageSize?: number;
+  /** As on ActSearchRequest: how much of the EU library to search. */
+  scope?: "eea" | "eu";
 }
 
 export interface ProvisionHit {
   id: string;
   actId: string;
+  /** "is" | "eu" — which corpus the provision's act belongs to. */
+  jurisdiction: string;
   actNumber: number;
   year: number;
   actTitle: string;
+  /** How the act is cited, for a label that reads right in both corpora. */
+  actCitation: string;
   /** "5. gr." / "7. gr. a." */
   displayLabel: string;
   heading: string | null;

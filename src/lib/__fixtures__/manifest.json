@@ -14,6 +14,24 @@
       "captured": "2026-08-31",
       "codexVersion": "157b",
       "describes": "Jarðalög nr. 81/2004. Lettered articles inserted by amendment (7. gr. a–d, 10. gr. a), per-article headings, an annex, five repealed articles. The lettered articles are the shape that lib/legal-citations.ts silently failed to extract before 2026-08-31."
+    },
+    {
+      "file": "eur-lex/02016R0679-20160504.html.gz",
+      "url": "https://publications.europa.eu/resource/celex/02016R0679-20160504",
+      "captured": "2026-09-02",
+      "describes": "The GDPR, consolidated version — the 'consolidated' layout, which is the in-force text of every amended EU act. Eleven chapters, fifteen sections nested inside them, 99 articles, and paragraph numbers printed in a span of their own, which is the part a naive parse splits from the sentence it numbers."
+    },
+    {
+      "file": "eur-lex/32016D0002.html.gz",
+      "url": "https://publications.europa.eu/resource/celex/32016D0002",
+      "captured": "2026-09-02",
+      "describes": "Decision (EU) 2016/245 of the European Central Bank — the 'oj' layout, everything published in the Official Journal since about 2004. Chapters with sections, 41 articles, two annexes, tables, and a citation number (2016/245) that is not the number in its CELEX (32016D0002)."
+    },
+    {
+      "file": "eur-lex/32000L0031.html.gz",
+      "url": "https://publications.europa.eu/resource/celex/32000L0031",
+      "captured": "2026-09-02",
+      "describes": "The e-Commerce Directive 2000/31/EC — the 'legacy' layout, which Cellar holds as plain HTML with no structure at all: article headings are bare paragraphs, and the recitals above them cite Articles 251, 95 and 46 of the Treaty, which is what the adoption-formula boundary exists to keep out."
     }
   ]
 }

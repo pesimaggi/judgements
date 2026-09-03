@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSearchProvider } from "@/lib/search";
+import { parseActScope } from "@/lib/acts";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const query = (searchParams.get("q") ?? "").trim();
   const actId = searchParams.get("actId") ?? undefined;
+  const scope = parseActScope(searchParams.get("scope"));
   const page = Math.max(1, Number(searchParams.get("page")) || 1);
   const pageSize = Math.min(50, Math.max(1, Number(searchParams.get("pageSize")) || 20));
 
@@ -20,7 +22,7 @@ export async function GET(req: Request) {
   if (!query && !actId) return NextResponse.json({ total: 0, page, pageSize, hits: [] });
 
   try {
-    const r = await getSearchProvider().searchProvisions({ query, actId, page, pageSize });
+    const r = await getSearchProvider().searchProvisions({ query, actId, page, pageSize, scope });
     return NextResponse.json({ total: r.total, page, pageSize, hits: r.hits });
   } catch (e) {
     console.error("Provision search failed:", e);

@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ProvisionCases } from "@/components/ProvisionCases";
+import { eeaTag } from "@/lib/eea-tag";
 
 interface Paragraph {
   number: number;
@@ -27,6 +28,8 @@ interface Chapter {
 }
 interface Act {
   id: string;
+  /** "is" — an Icelandic act; "eu" — an EU regulation, directive or decision. */
+  jurisdiction: string;
   actNumber: number;
   year: number;
   title: string;
@@ -35,6 +38,16 @@ interface Act {
   codexVersion: string | null;
   aliases: string[];
   actCaseCount: number;
+  // EU acts only.
+  celex: string | null;
+  docType: string;
+  status: string;
+  eeaRelevant: boolean;
+  eeaIncorporatedBy: string[];
+  entryIntoForce: string | null;
+  endOfValidity: string | null;
+  textCelex: string | null;
+  textStatus: string | null;
 }
 
 /**
@@ -110,6 +123,8 @@ export default function ActPage({ params }: { params: { slug: string } }) {
     return groups;
   }, [visible, chapters]);
 
+  const isEu = act?.jurisdiction === "eu";
+
   // Deliberately not the sum of the per-provision counts: those are distinct
   // judgments *per provision*, so a judgment citing three provisions of this
   // act would be counted three times. act.actCaseCount is the distinct count
@@ -136,7 +151,7 @@ export default function ActPage({ params }: { params: { slug: string } }) {
         </Link>
         <span aria-hidden="true">·</span>
         <Link href="/log" className="hover:underline">
-          Öll lög
+          {isEu ? "Allar gerðir" : "Öll lög"}
         </Link>
       </nav>
 
@@ -154,7 +169,8 @@ export default function ActPage({ params }: { params: { slug: string } }) {
             {chapters.length > 0 ? ` · ${chapters.length} kaflar` : ""}
           </span>
           <span>
-            {act.actCaseCount} {act.actCaseCount === 1 ? "úrlausn vísar" : "úrlausnir vísa"} til laganna
+            {act.actCaseCount} {act.actCaseCount === 1 ? "úrlausn vísar" : "úrlausnir vísa"}{" "}
+            {isEu ? "til gerðarinnar" : "til laganna"}
             {provisionsWithCases > 0 ? ` · ${provisionsWithCases} greinar með tilvísunum` : ""}
           </span>
           <a
@@ -163,20 +179,80 @@ export default function ActPage({ params }: { params: { slug: string } }) {
             rel="noreferrer"
             className="text-accent hover:underline"
           >
-            Official text on althingi.is ↗
+            {isEu ? "Official text on EUR-Lex ↗" : "Official text on althingi.is ↗"}
           </a>
         </div>
+
+        {/* ---- Where this act stands in EEA law ---------------------- */}
+        {isEu && (
+          <div className="mt-3 rounded border border-line bg-paper px-3 py-2 text-xs text-inkSoft">
+            {act.eeaIncorporatedBy.length > 0 ? (
+              <p>
+                <span className="font-medium text-ink">Tekin upp í EES-samninginn</span> —{" "}
+                {eeaTag(act)?.detail}{" "}
+                <Link href={`/?q=${encodeURIComponent(act.eeaIncorporatedBy[0])}`} className="text-accent hover:underline">
+                  Leita að ákvörðuninni →
+                </Link>
+              </p>
+            ) : act.eeaRelevant ? (
+              <p>
+                <span className="font-medium text-ink">Merkt „Text with EEA relevance“</span> — ESB
+                telur gerðina eiga erindi í EES-samninginn. {eeaTag(act)?.detail} Það þarf ekki að
+                þýða að hún hafi ekki verið tekin upp.
+              </p>
+            ) : (
+              <p>
+                <span className="font-medium text-ink">Engin EES-merking</span> — hvorki merkt með
+                EES-þýðingu í EUR-Lex né nefnd í ákvörðun sameiginlegu EES-nefndarinnar sem safnið
+                heldur. Gerðin er hér vegna ESB-stillingarinnar, ekki af því að hún bindi Ísland.
+              </p>
+            )}
+            {act.status === "no_longer_in_force" && (
+              <p className="mt-1">Fallin úr gildi samkvæmt EUR-Lex.</p>
+            )}
+          </div>
+        )}
+
         <p className="mt-3 text-[11px] text-inkSoft">
-          Unofficial reproduction of the consolidated text
-          {act.codexVersion ? ` (Lagasafn ${act.codexVersion})` : ""}. Always verify against the
-          official source.
+          {isEu ? (
+            <>
+              Unofficial reproduction of the text EUR-Lex publishes
+              {act.textCelex && act.textCelex !== act.celex
+                ? ` (consolidated version ${act.textCelex})`
+                : act.celex
+                  ? ` (${act.celex})`
+                  : ""}
+              . Always verify against the official source.
+            </>
+          ) : (
+            <>
+              Unofficial reproduction of the consolidated text
+              {act.codexVersion ? ` (Lagasafn ${act.codexVersion})` : ""}. Always verify against the
+              official source.
+            </>
+          )}
         </p>
       </header>
 
       {provisions.length === 0 ? (
         <p className="mt-4 rounded-lg border border-line bg-white p-5 text-sm text-inkSoft">
-          Lagasafn does not publish the text of this act online — only its title and metadata. Use
-          the official link above.
+          {!isEu ? (
+            <>
+              Lagasafn does not publish the text of this act online — only its title and metadata.
+              Use the official link above.
+            </>
+          ) : act.textStatus === "pending" ? (
+            <>
+              The text of this act has not been fetched yet — only its EUR-Lex record. The EU
+              library is ingested EEA-first and act by act; use the official link above meanwhile.
+            </>
+          ) : (
+            <>
+              The published text of this act could not be read into articles
+              {act.textStatus === "fetch-failed" ? " (EUR-Lex would not serve it)" : ""}. Use the
+              official link above.
+            </>
+          )}
         </p>
       ) : (
         <>
@@ -184,7 +260,11 @@ export default function ActPage({ params }: { params: { slug: string } }) {
             <input
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              placeholder="Leita innan laganna — t.d. „130. gr.“ eða „málskostnaður“"
+              placeholder={
+                isEu
+                  ? "Leita innan gerðarinnar — t.d. „Article 6“ eða „consent“"
+                  : "Leita innan laganna — t.d. „130. gr.“ eða „málskostnaður“"
+              }
               className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none focus:border-ink"
             />
             {filter.trim() && (
@@ -225,7 +305,7 @@ export default function ActPage({ params }: { params: { slug: string } }) {
                           rel="noreferrer"
                           className="text-[11px] text-inkSoft hover:underline"
                         >
-                          althingi.is ↗
+                          {isEu ? "eur-lex.europa.eu ↗" : "althingi.is ↗"}
                         </a>
                       </div>
 

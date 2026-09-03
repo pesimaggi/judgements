@@ -9,30 +9,30 @@ datasource db {
 
 /// One normalized Icelandic court judgment.
 model Document {
-  id           String    @id @default(cuid())
-  source       String    // "haestirettur" | "landsrettur" | "heradsdomar"
-  court        String    // display name, e.g. "Hæstiréttur Íslands"
-  caseNumber   String?   @map("case_number")
-  caseName     String?   @map("case_name")
+  id           String                   @id @default(cuid())
+  source       String // "haestirettur" | "landsrettur" | "heradsdomar"
+  court        String // display name, e.g. "Hæstiréttur Íslands"
+  caseNumber   String?                  @map("case_number")
+  caseName     String?                  @map("case_name")
   title        String
   date         DateTime?
   year         Int?
-  language     String    @default("is")
+  language     String                   @default("is")
   parties      String?
-  subjectTags  String[]  @map("subject_tags")
-  officialUrl  String    @map("official_url")
-  pdfUrl       String?   @map("pdf_url")
-  htmlUrl      String?   @map("html_url")
-  fullText     String    @map("full_text")
-  textHash     String    @map("text_hash")
+  subjectTags  String[]                 @map("subject_tags")
+  officialUrl  String                   @map("official_url")
+  pdfUrl       String?                  @map("pdf_url")
+  htmlUrl      String?                  @map("html_url")
+  fullText     String                   @map("full_text")
+  textHash     String                   @map("text_hash")
   /// Materialized full-text search vector. Created by
   /// prisma/sql/setup-search.sql as a GENERATED ALWAYS … STORED column;
   /// declared here (as Unsupported, so the client never reads or writes it)
   /// only so that `prisma db push` leaves it alone instead of dropping it.
   searchVector Unsupported("tsvector")? @map("search_vector")
-  isSample     Boolean   @default(false) @map("is_sample") // seed/mock docs are flagged, never passed off as real
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  isSample     Boolean                  @default(false) @map("is_sample") // seed/mock docs are flagged, never passed off as real
+  createdAt    DateTime                 @default(now()) @map("created_at")
+  updatedAt    DateTime                 @updatedAt @map("updated_at")
 
   /// The value `textHash` had when this judgment was last scanned for
   /// citations. Null means never scanned; a mismatch means the text changed
@@ -51,41 +51,94 @@ model Document {
   @@index([citationScanHash])
 }
 
-/// One Icelandic act (lög), as published in Lagasafn.
+/// One act: an Icelandic act (lög) as published in Lagasafn, or an EU act
+/// (regulation, directive, decision) as published in EUR-Lex.
+///
+/// One table, because the two are the same shape — a titled instrument, with
+/// numbered articles, cited by number and year — and everything built on that
+/// shape (the act reader, provision search, the citation links from judgments)
+/// works for both. `jurisdiction` is what tells them apart, and it is the
+/// column every act query filters or groups on.
 model Act {
-  id        String @id @default(cuid())
-  /// "91" in "lög nr. 91/1991".
-  actNumber Int    @map("act_number")
-  year      Int
-  title     String
+  id                String   @id @default(cuid())
+  /// "is" — an Icelandic act from Lagasafn. "eu" — an EU act from EUR-Lex.
+  jurisdiction      String   @default("is")
+  /// The instrument: "act" for lög, and "regulation" | "directive" |
+  /// "decision" for the three families of EU act. Part of the identity,
+  /// because an EU regulation and an EU directive can share a number and a
+  /// year — Regulation (EC) No 1/2003 and Directive 2003/1/EC both exist.
+  docType           String   @default("act") @map("doc_type")
+  /// "91" in "lög nr. 91/1991"; for an EU act the sequence number in its
+  /// CELEX, which with docType and year is unique by construction.
+  actNumber         Int      @map("act_number")
+  year              Int
+  title             String
   /// Short names judgments actually use to cite this act ("vaxtalaga",
   /// "hegningarlaga"). Harvested from the corpus rather than derived from the
   /// title, because the two often disagree: 38/2001 is "Lög um vexti og
   /// verðtryggingu" but is universally cited as "vaxtalög". Without these the
   /// act type-ahead misses the most natural query for an act.
-  aliases   String[]
+  aliases           String[]
   /// "in_force" — everything ingested from Lagasafn's current index. Repealed
   /// acts have no /nuna/ page; the field exists so they can be represented
   /// later without a migration.
-  status    String @default("in_force")
+  status            String   @default("in_force")
   /// Canonical permalink to the current version, always /lagas/nuna/…, never
   /// a pinned session version.
-  currentVersionUrl String @map("current_version_url")
+  currentVersionUrl String   @map("current_version_url")
   /// Lagasafn codex version the stored text was parsed from, e.g. "157b".
-  codexVersion String? @map("codex_version")
+  codexVersion      String?  @map("codex_version")
   /// Hash of the law's normalized body, for skipping unchanged acts on the
   /// roughly-daily Lagasafn updates.
-  sourceHash String   @map("source_hash")
-  fetchedAt  DateTime @default(now()) @map("fetched_at")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  sourceHash        String   @map("source_hash")
+
+  // ---- EU acts (jurisdiction = "eu"). Null on the Icelandic side. ----------
+
+  /// EUR-Lex's CELEX number, "32016R0679" — the natural key of the EU corpus,
+  /// and the slug this app serves the act at.
+  celex             String?   @unique
+  /// The act as it is cited: "Regulation (EU) 2016/679". Stored rather than
+  /// composed, because the numbering conventions changed twice and the title
+  /// itself is the only reliable statement of the form. Null for Icelandic
+  /// acts, which are cited "lög nr. 38/2001" from actNumber and year.
+  citation          String?
+  /// The number in that citation where it differs from the CELEX sequence
+  /// number in `actNumber` — CELEX 32016D0002 is cited "Decision (EU)
+  /// 2016/245". Null when they agree, which is the usual case.
+  naturalNumber     Int?      @map("natural_number")
+  /// The act prints "(Text with EEA relevance)", or EUR-Lex records that it
+  /// does: the Commission's view that this act belongs in the EEA Agreement.
+  /// What the EEA/EU scope toggle filters on — see src/lib/acts.ts.
+  eeaRelevant       Boolean   @default(false) @map("eea_relevant")
+  /// Decisions of the EEA Joint Committee, by number ("154/2018"), whose text
+  /// names this act. Evidence that it was actually taken into the EEA
+  /// Agreement, derived from the decisions this database already holds — see
+  /// src/lib/eu-citations.ts. An act with one of these is in EEA scope
+  /// whatever its relevance marker says.
+  eeaIncorporatedBy String[]  @map("eea_incorporated_by")
+  entryIntoForce    DateTime? @map("entry_into_force")
+  endOfValidity     DateTime? @map("end_of_validity")
+  /// CELEX of the version whose text is stored: the consolidated version
+  /// where EUR-Lex publishes one, since that is the text in force, and the
+  /// act's own CELEX otherwise.
+  textCelex         String?   @map("text_celex")
+  /// Why this act has no text: "fetch-failed" (Cellar would not serve it),
+  /// "no-articles" (it served a document no layout could be read from).
+  /// Null when the text is stored, or has not been attempted yet.
+  textStatus        String?   @map("text_status")
+  textAttempts      Int       @default(0) @map("text_attempts")
+  fetchedAt         DateTime  @default(now()) @map("fetched_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
   chapters   Chapter[]
   provisions Provision[]
   caseLinks  CaseActLink[]
 
-  @@unique([actNumber, year])
+  @@unique([jurisdiction, docType, actNumber, year])
   @@index([status])
+  @@index([jurisdiction, eeaRelevant])
+  @@index([jurisdiction, textStatus])
   @@map("acts")
 }
 
@@ -113,35 +166,35 @@ model Chapter {
 /// A provision (grein) — the unit judgments cite and the unit this feature
 /// is built around.
 model Provision {
-  id        String  @id @default(cuid())
-  actId     String  @map("act_id")
-  chapterId String? @map("chapter_id")
+  id            String                   @id @default(cuid())
+  actId         String                   @map("act_id")
+  chapterId     String?                  @map("chapter_id")
   /// "article" for a numbered "N. gr."; "temporary" for the roman-numeral
   /// entries under "Ákvæði til bráðabirgða", which carry no article number.
-  kind      String  @default("article")
+  kind          String                   @default("article")
   /// 7 in "7. gr. a". Null for temporary provisions.
-  articleNumber Int?    @map("article_number")
+  articleNumber Int?                     @map("article_number")
   /// "a" in "7. gr. a" — sub-articles inserted by amendment.
-  articleLetter String? @map("article_letter")
+  articleLetter String?                  @map("article_letter")
   /// Label as printed, e.g. "7. gr. a" or "II." — what the UI shows.
-  displayLabel  String  @map("display_label")
+  displayLabel  String                   @map("display_label")
   /// The provision's own heading, where it has one ("Fyrirsvar jarða í sameign").
-  heading   String?
+  heading       String?
   /// Lagasafn's own anchor for this provision, e.g. "G7A". Appending it to
   /// the act's currentVersionUrl deep-links to the exact article on
   /// althingi.is, and it is a stable natural key across re-ingestion.
-  anchor    String
-  fullText  String  @map("full_text")
+  anchor        String
+  fullText      String                   @map("full_text")
   /// True when the provision's entire body has been repealed — Lagasafn
   /// prints these as a bare "…" with a footnote.
-  isRepealed Boolean @default(false) @map("is_repealed")
-  ordering  Int
+  isRepealed    Boolean                  @default(false) @map("is_repealed")
+  ordering      Int
   /// Materialized search vector, maintained by a trigger created in
   /// prisma/sql/setup-search.sql. Declared as Unsupported so `prisma db push`
   /// leaves it alone and Prisma Client never reads or writes it.
-  searchVector Unsupported("tsvector")? @map("search_vector")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  searchVector  Unsupported("tsvector")? @map("search_vector")
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  updatedAt     DateTime                 @updatedAt @map("updated_at")
 
   act        Act                  @relation(fields: [actId], references: [id], onDelete: Cascade)
   chapter    Chapter?             @relation(fields: [chapterId], references: [id], onDelete: SetNull)
@@ -177,26 +230,26 @@ model ProvisionParagraph {
 /// A judgment citing a specific provision. The excerpt is stored, not just
 /// the link, so the UI can show *why* a case matched.
 model CaseProvisionLink {
-  id          String @id @default(cuid())
-  documentId  String @map("document_id")
-  provisionId String @map("provision_id")
+  id              String   @id @default(cuid())
+  documentId      String   @map("document_id")
+  provisionId     String   @map("provision_id")
   /// "explicit_citation" — the article and its act appear together in the
   /// text. Room for "carried_act_context" (a bare "5. gr." resolved from a
   /// nearby act) and "ai_inferred_interpretation" later; the UI and the
   /// badge counts can then filter by type rather than trusting all links
   /// equally.
-  matchType   String @map("match_type")
+  matchType       String   @map("match_type")
   /// From "1. mgr." — which paragraph of the provision was cited, if stated.
-  paragraphNumber Int? @map("paragraph_number")
+  paragraphNumber Int?     @map("paragraph_number")
   /// From "2. tölul." — which point, if stated.
-  pointNumber     Int? @map("point_number")
+  pointNumber     Int?     @map("point_number")
   /// The citation exactly as written, e.g. "1. mgr. 175. gr. laga nr. 91/1991".
-  citationText String @map("citation_text")
+  citationText    String   @map("citation_text")
   /// The citing sentence(s), for the "why did this match" UI.
-  excerpt      String
+  excerpt         String
   /// Character offset into Document.fullText, so the UI can jump to the passage.
-  charOffset   Int    @map("char_offset")
-  createdAt    DateTime @default(now()) @map("created_at")
+  charOffset      Int      @map("char_offset")
+  createdAt       DateTime @default(now()) @map("created_at")
 
   document  Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
   provision Provision @relation(fields: [provisionId], references: [id], onDelete: Cascade)
@@ -211,12 +264,12 @@ model CaseProvisionLink {
 /// 91/1991"). Kept separate because it cannot be derived from
 /// CaseProvisionLink, and the act reader's header count needs it.
 model CaseActLink {
-  id         String @id @default(cuid())
-  documentId String @map("document_id")
-  actId      String @map("act_id")
-  matchType  String @map("match_type")
+  id         String   @id @default(cuid())
+  documentId String   @map("document_id")
+  actId      String   @map("act_id")
+  matchType  String   @map("match_type")
   excerpt    String
-  charOffset Int    @map("char_offset")
+  charOffset Int      @map("char_offset")
   createdAt  DateTime @default(now()) @map("created_at")
 
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)

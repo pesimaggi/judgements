@@ -120,8 +120,21 @@ export async function saveAct(
   const year = parsed.year ?? entry.year;
 
   const act = await prisma.act.upsert({
-    where: { actNumber_year: { actNumber, year } },
+    // Acts are keyed by jurisdiction and instrument as well as by number and
+    // year, since the table now also holds EU acts and a regulation can share
+    // a number and a year with an Icelandic act. Lagasafn writes the
+    // Icelandic half of that key on every row.
+    where: {
+      jurisdiction_docType_actNumber_year: {
+        jurisdiction: "is",
+        docType: "act",
+        actNumber,
+        year,
+      },
+    },
     create: {
+      jurisdiction: "is",
+      docType: "act",
       actNumber,
       year,
       title: parsed.title || entry.title,
@@ -258,6 +271,9 @@ export const lagasafnAdapter: IngestionAdapter = {
     const known = new Map(
       (
         await prisma.act.findMany({
+          // The Icelandic half of the table only: the EU acts alongside it are
+          // tens of thousands of rows this pass has no use for.
+          where: { jurisdiction: "is" },
           select: { actNumber: true, year: true, sourceHash: true, codexVersion: true },
         })
       ).map((a) => [`${a.actNumber}/${a.year}`, a])
@@ -306,7 +322,14 @@ export const lagasafnAdapter: IngestionAdapter = {
           // Text unchanged, but the codex version moved on: record that so the
           // cheap skip above applies next time.
           await prisma.act.update({
-            where: { actNumber_year: { actNumber: entry.actNumber, year: entry.year } },
+            where: {
+              jurisdiction_docType_actNumber_year: {
+                jurisdiction: "is",
+                docType: "act",
+                actNumber: entry.actNumber,
+                year: entry.year,
+              },
+            },
             data: { codexVersion: parsed.codexVersion ?? entry.codexVersion, fetchedAt: new Date() },
           });
           stats.skipped++;

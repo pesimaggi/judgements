@@ -32,6 +32,7 @@ import { neytendamalAdapter } from "./adapters/neytendamal";
 import { logrettaAdapter } from "./adapters/logretta";
 import { ulfljoturAdapter } from "./adapters/ulfljotur";
 import { lagasafnAdapter } from "./adapters/lagasafn";
+import { eurLexAdapter } from "./adapters/eur-lex";
 import { citationsAdapter } from "./citations";
 
 const ADAPTERS: Record<string, IngestionAdapter> = {
@@ -48,6 +49,7 @@ const ADAPTERS: Record<string, IngestionAdapter> = {
   logretta: logrettaAdapter,
   ulfljotur: ulfljoturAdapter,
   lagasafn: lagasafnAdapter,
+  "eur-lex": eurLexAdapter,
   citations: citationsAdapter,
 };
 
