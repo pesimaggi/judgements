@@ -502,6 +502,19 @@ quietly stale.
 
 #### What is deliberately not here
 
+- **Not the Joint Committee's decisions.** EUR-Lex publishes those too, in
+  sector 2 — Decision No 154/2018 is CELEX `22018D1022` there, numbered by its
+  place in the Official Journal rather than by its decision number — but this
+  app already holds them as documents, from efta.int. Sweeping sector 2 would
+  store every one of them a second time, as a document and as an act, findable
+  twice. The catalogue query asks Cellar for sector 3 only, and `parseCelex()`
+  refuses anything else besides, which is a second guard on the same rule.
+
+  What EUR-Lex *is* worth using for there is the listing the JCD source does
+  not have: its backlog is finite and it discovers nothing new, because it
+  walks no listing of its own. The SPARQL endpoint can enumerate every decision
+  that exists, which would unfreeze that backlog without a second copy of the
+  text. See the EEA Joint Committee adapter's header.
 - **Only the binding families.** Regulations, directives and decisions
   (`EURLEX_TYPES=R,L,D`). Not opinions, recommendations, treaties or
   international agreements — they are in EUR-Lex, they are not what "the EU

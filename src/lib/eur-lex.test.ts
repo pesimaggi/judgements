@@ -51,7 +51,13 @@ describe("CELEX numbers", () => {
   test("rejects everything that is not a plain act", () => {
     // Corrigenda, other sectors and the suffixed forms are not acts of this
     // library, and their CELEX is not a unique identity of one.
-    for (const raw of ["32016R0679R(01)", "62016CJ0203", "22018D0154", "3201R0679", ""]) {
+    //
+    // "22018D1022" is the real one to watch: sector 2, and it is Decision of
+    // the EEA Joint Committee No 154/2018, which this app already holds as a
+    // document ingested from efta.int. Accepting it here would store the same
+    // decision twice, as a document and as an act. The catalogue sweep asks
+    // Cellar for sector 3 only; this is the second guard on the same rule.
+    for (const raw of ["32016R0679R(01)", "62016CJ0203", "22018D1022", "3201R0679", ""]) {
       assert.equal(parseCelex(raw), null, raw);
     }
   });

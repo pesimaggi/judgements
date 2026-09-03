@@ -34,6 +34,12 @@
  *     holds. No network at all. See src/lib/eu-citations.ts for why this is
  *     worth doing on top of the relevance marker.
  *
+ * WHAT IT DOES NOT INGEST: the Joint Committee's decisions. EUR-Lex publishes
+ * those too, in sector 2, but they are already held as documents from
+ * efta.int and re-ingesting them here would mean two copies of each. See
+ * TYPES below for where that line is drawn, and the EEA Joint Committee
+ * adapter's header for the one thing EUR-Lex could still be used for there.
+ *
  * THE CATALOGUE IS THE LEDGER. There is no IngestGap row here, because a gap
  * ledger keyed by (source, officialUrl) is about documents and these are not
  * documents. The equivalent lives on the act itself: `textStatus` is "pending"
@@ -60,7 +66,19 @@ import { politeFetchText, type IngestionAdapter, type IngestContext, type Ingest
 const SPARQL_ENDPOINT =
   process.env.EURLEX_SPARQL ?? "https://publications.europa.eu/webapi/rdf/sparql";
 
-/** The families of act ingested, as CELEX type letters. */
+/**
+ * The families of act ingested, as CELEX type letters, within sector 3 —
+ * secondary legislation, and only that.
+ *
+ * The sector is not a detail. EUR-Lex also publishes the decisions of the EEA
+ * Joint Committee, in sector 2 (Decision No 154/2018 is `22018D1022` there),
+ * and this app already holds those as documents, ingested from efta.int by the
+ * `eea-joint-committee` adapter. Widening the sweep to sector 2 would store a
+ * second copy of every one of them — the same decision as a document and as an
+ * act, in two places, findable twice. So the sweep stays sector 3, and
+ * parseCelex refuses anything else besides, which is a second guard on the
+ * same rule.
+ */
 const TYPES = (process.env.EURLEX_TYPES ?? "R,L,D")
   .split(",")
   .map((t) => t.trim().toUpperCase())
@@ -386,9 +404,16 @@ async function runCatalogue(ctx: IngestContext, stats: IngestStats): Promise<voi
 // ---------------------------------------------------------------------------
 
 function hashAct(parsed: ParsedEuAct): string {
+  // Separators are written as escapes rather than as raw control characters:
+  // typed literally they make this file read as binary to git and grep,
+  // hiding it from diffs and code search. Same convention, and the same
+  // reason, as the Lagasafn adapter's hashAct.
   const body = parsed.provisions
-    .map((p) => `${p.anchor} ${p.displayLabel} ${p.heading ?? ""} ${p.fullText}`)
-    .join("");
+    .map(
+      (p) =>
+        `${p.anchor}\u0000${p.displayLabel}\u0000${p.heading ?? ""}\u0000${p.fullText}`
+    )
+    .join("\u0001");
   return createHash("sha256").update(body).digest("hex");
 }
 

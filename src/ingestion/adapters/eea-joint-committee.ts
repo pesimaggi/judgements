@@ -37,10 +37,21 @@ import {
  * from the acts at purge time, so the backlog it holds is every decision the
  * register named on the day it was withdrawn, and this adapter will work that
  * backlog to the end — but it discovers nothing new, because it walks no
- * listing of its own. New decisions will start appearing again when EEA-Lex is
- * re-ingested, or when this adapter is given the Joint Committee's own
- * published listing to walk; until then the source is complete as of that day
- * and honest about it, rather than silently frozen half-fetched.
+ * listing of its own. Until it is given one, the source is complete as of that
+ * day and honest about it, rather than silently frozen half-fetched.
+ *
+ * WHERE THAT LISTING SHOULD COME FROM. EUR-Lex publishes these decisions too,
+ * in sector 2 — Decision No 154/2018 is CELEX `22018D1022` there, numbered by
+ * its place in the Official Journal rather than by its decision number. So the
+ * SPARQL endpoint the `eur-lex` adapter already talks to can enumerate every
+ * JCD that exists, which is exactly the listing missing here, and Cellar can
+ * serve each one's text without a PDF to parse.
+ *
+ * That is a *listing* for this adapter to walk, not a second ingestion: the
+ * decisions are stored once, as documents, under this source. The `eur-lex`
+ * adapter deliberately sweeps sector 3 only and must keep doing so — see its
+ * TYPES constant — or the same decision would be stored twice, once as a
+ * document here and once as an act there.
  *
  * ONE FETCH PER RECORD. The English PDF named by the ledger is the decision's
  * publication and its identity here: `officialUrl` and `pdfUrl` are both that

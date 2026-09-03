@@ -32,7 +32,8 @@ describe("the Official Journal's reference form", () => {
 
   test("ignores the Committee's own decisions, which are sector 2", () => {
     // A JCD amending an earlier JCD must not read as incorporating an act.
-    const refs = extractEuActRefs("as amended by 22018 D 0154 and by Decision No 154/2018");
+    // "22018D1022" is Decision No 154/2018 as EUR-Lex numbers it.
+    const refs = extractEuActRefs("as amended by 22018 D 1022 and by Decision No 154/2018");
     assert.equal(
       refs.some((r) => r.celex?.startsWith("2")),
       false
