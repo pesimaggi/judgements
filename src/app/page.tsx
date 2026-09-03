@@ -7,6 +7,8 @@ import { ResultCard } from "@/components/ResultCard";
 import { Pagination } from "@/components/Pagination";
 import { ProgressBars } from "@/components/ProgressBars";
 import { HomeCases } from "@/components/HomeCases";
+import { ActResults, type ActSearchHit, type ProvisionSearchHit } from "@/components/ActResults";
+import { useActScope } from "@/components/ScopeToggle";
 import type { SourceDef } from "@/lib/sources";
 import type { SearchResponse } from "@/lib/types";
 
@@ -46,6 +48,9 @@ function SearchPageInner() {
   const [legal, setLegal] = useState<LegalSelection[]>([]);
 
   const [results, setResults] = useState<SearchResponse | null>(null);
+  // The law itself, when the query names one — shown above the judgments.
+  const [actHits, setActHits] = useState<ActSearchHit[]>([]);
+  const [provisionHits, setProvisionHits] = useState<ProvisionSearchHit[]>([]);
   const [searchedQuery, setSearchedQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -57,6 +62,9 @@ function SearchPageInner() {
   const resultsTopRef = useRef<HTMLDivElement | null>(null);
   // Guards against an earlier, slower request overwriting a later one.
   const requestIdRef = useRef(0);
+  // How much of the EU library an act may be found from: the same EES/ESB
+  // setting the act box and the catalogue obey.
+  const [scope] = useActScope();
 
   useEffect(() => {
     fetch("/api/sources")
@@ -71,10 +79,45 @@ function SearchPageInner() {
     return next;
   };
 
+  /**
+   * The act side of the same query, fetched alongside the judgments.
+   *
+   * Separate from the case search on purpose: it answers a different question,
+   * it must not be able to fail the page, and it has nothing to do with which
+   * sources are ticked. A query that names no act returns nothing and the page
+   * looks exactly as it did before this existed.
+   */
+  async function fetchActs(criteria: SearchCriteria, requestId: number) {
+    const query = criteria.query.trim();
+    // A filtered browse ("show me the cases citing this provision") is not a
+    // query naming an act, and neither is an empty box.
+    if (query.length < 2) {
+      setActHits([]);
+      setProvisionHits([]);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/search/acts?q=${encodeURIComponent(query)}&scope=${scope}`);
+      const data = await res.json();
+      if (requestId !== requestIdRef.current) return; // superseded
+      setActHits(data.acts ?? []);
+      setProvisionHits(data.provisions ?? []);
+    } catch {
+      if (requestId !== requestIdRef.current) return;
+      // The judgments are the rest of the answer and are already on their way.
+      setActHits([]);
+      setProvisionHits([]);
+    }
+  }
+
   async function fetchPage(criteria: SearchCriteria, page: number) {
     const requestId = ++requestIdRef.current;
     setLoading(true);
     setError("");
+    // Only on the first page: the act that heads a search stays put while its
+    // judgments are paged through, and re-asking for it on page 4 would be a
+    // query for an answer already on screen.
+    if (page === 1) void fetchActs(criteria, requestId);
     try {
       const res = await fetch("/api/search", {
         method: "POST",
@@ -172,6 +215,8 @@ function SearchPageInner() {
     else {
       setActiveTags(next);
       setResults(null);
+      setActHits([]);
+      setProvisionHits([]);
       setSearchedQuery("");
       criteriaRef.current = null;
     }
@@ -197,7 +242,7 @@ function SearchPageInner() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder='Search full text, case number (22/2023, E-3210/2025), party, "exact phrase", AND / OR / NOT…'
+          placeholder='Leitaðu að lögum („vaxtalög“, „38/2001“, „gdpr“) eða úrlausnum — texta, málsnúmeri (22/2023), aðila, "orðrétt", AND / OR / NOT…'
           className="w-full rounded-lg border border-line bg-white px-4 py-2.5 text-[15px] placeholder:text-inkSoft/60"
           lang="is"
         />
@@ -268,6 +313,44 @@ function SearchPageInner() {
 
         <section className="min-w-0 flex-1">
           <div ref={resultsTopRef} className="scroll-mt-4" />
+
+          {/* The law itself, above everything — including the chips saying
+              which sources are being searched. Those are the state of the
+              query; this is its answer. */}
+          <ActResults
+            acts={actHits}
+            provisions={provisionHits}
+            onFilterByAct={(act) =>
+              applyLegal([
+                ...legal.filter((l) => l.id !== act.id),
+                {
+                  kind: "act",
+                  id: act.id,
+                  actId: act.id,
+                  label: act.title,
+                  sublabel: act.citation,
+                  path: act.path,
+                  jurisdiction: act.jurisdiction,
+                  eeaRelevant: act.eeaRelevant,
+                  eeaIncorporatedBy: act.eeaIncorporatedBy,
+                },
+              ])
+            }
+            onFilterByProvision={(provision) =>
+              applyLegal([
+                ...legal.filter((l) => l.id !== provision.id),
+                {
+                  kind: "provision",
+                  id: provision.id,
+                  actId: provision.actId,
+                  label: provision.displayLabel,
+                  sublabel: `${provision.actTitle} (${provision.citation})`,
+                  path: provision.path,
+                },
+              ])
+            }
+          />
+
           {(selected.size > 0 || activeTags.length > 0 || legal.length > 0) && (
             <div className="mb-3 flex flex-wrap items-center gap-1.5">
               {legal.map((l) => (

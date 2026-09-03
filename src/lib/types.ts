@@ -126,6 +126,12 @@ export interface ActHit {
   /** Route to this act's reader view, e.g. "/log/91-1991", "/log/32016R0679". */
   path: string;
   provisionCount: number;
+  /** Short names the act is cited by ("vaxtalög", "gdpr"). */
+  aliases?: string[];
+  /** The number the act is cited by, where it differs from actNumber. */
+  naturalNumber?: number | null;
+  /** EUR-Lex's number for the act, for an EU one. */
+  celex?: string | null;
   /** EU acts: marked "(Text with EEA relevance)". */
   eeaRelevant?: boolean;
   /** EU acts: decisions of the EEA Joint Committee naming this act. */

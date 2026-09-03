@@ -278,7 +278,7 @@ export async function searchActsPostgres(req: ActSearchRequest): Promise<ActHit[
 
   const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
     SELECT a.id, a.jurisdiction, a.act_number, a.year, a.title, a.citation, a.celex,
-           a.eea_relevant, a.eea_incorporated_by,
+           a.eea_relevant, a.eea_incorporated_by, a.aliases, a.natural_number,
            (SELECT count(*)::int FROM provisions p WHERE p.act_id = a.id AND p.kind = 'article') AS provision_count,
            CASE
              WHEN ${celex}::text IS NOT NULL AND a.celex = ${celex}::text THEN 0
@@ -326,6 +326,12 @@ export async function searchActsPostgres(req: ActSearchRequest): Promise<ActHit[
       year: r.year,
     }),
     provisionCount: Number(r.provision_count ?? 0),
+    // Carried on the hit because the search page has to judge *how well* an
+    // act answers the query before it may head the results — see
+    // lib/act-match.ts. The provider's own ranking cannot say that.
+    aliases: r.aliases ?? [],
+    naturalNumber: r.natural_number ?? null,
+    celex: r.celex ?? null,
     eeaRelevant: r.eea_relevant ?? false,
     eeaIncorporatedBy: r.eea_incorporated_by ?? [],
   }));
