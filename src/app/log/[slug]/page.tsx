@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ProvisionCases } from "@/components/ProvisionCases";
+import { eeaTag } from "@/lib/eea-tag";
 
 interface Paragraph {
   number: number;
@@ -187,8 +188,8 @@ export default function ActPage({ params }: { params: { slug: string } }) {
           <div className="mt-3 rounded border border-line bg-paper px-3 py-2 text-xs text-inkSoft">
             {act.eeaIncorporatedBy.length > 0 ? (
               <p>
-                <span className="font-medium text-ink">Tekin upp í EES-samninginn</span> — nefnd í
-                ákvörðun sameiginlegu EES-nefndarinnar nr. {act.eeaIncorporatedBy.join(", ")}.{" "}
+                <span className="font-medium text-ink">Tekin upp í EES-samninginn</span> —{" "}
+                {eeaTag(act)?.detail}{" "}
                 <Link href={`/?q=${encodeURIComponent(act.eeaIncorporatedBy[0])}`} className="text-accent hover:underline">
                   Leita að ákvörðuninni →
                 </Link>
@@ -196,9 +197,8 @@ export default function ActPage({ params }: { params: { slug: string } }) {
             ) : act.eeaRelevant ? (
               <p>
                 <span className="font-medium text-ink">Merkt „Text with EEA relevance“</span> — ESB
-                telur gerðina eiga erindi í EES-samninginn. Engin ákvörðun sameiginlegu
-                EES-nefndarinnar sem nefnir hana er í safninu, sem þarf ekki að þýða að hún hafi
-                ekki verið tekin upp.
+                telur gerðina eiga erindi í EES-samninginn. {eeaTag(act)?.detail} Það þarf ekki að
+                þýða að hún hafi ekki verið tekin upp.
               </p>
             ) : (
               <p>

@@ -105,7 +105,13 @@ export function euLexUrl(celex: string): string {
  * instead of 404-ing on the one it does not.
  */
 export function cellarTextUrl(celex: string): string {
-  return `https://publications.europa.eu/resource/celex/${encodeURIComponent(celex)}`;
+  // Parentheses have to be percent-encoded, and encodeURIComponent leaves them
+  // alone: Cellar answers 404 for ".../celex/21994D0330(01)" and 200 for the
+  // same number encoded. Only the suffixed CELEX numbers carry them — which is
+  // every decision of the EEA Joint Committee published before about 2005, so
+  // this is the difference between reading a decade of them and none.
+  const encoded = encodeURIComponent(celex).replace(/\(/g, "%28").replace(/\)/g, "%29");
+  return `https://publications.europa.eu/resource/celex/${encoded}`;
 }
 
 /** Headers cellarTextUrl() must be fetched with. See above. */
@@ -150,6 +156,12 @@ export function euCitation(title: string, celex: ParsedCelex, naturalNumber?: nu
     // "Decision (EU) 2016/245 of the European Central Bank" → drop the
     // adopting body, which the title states again after the date.
     const cited = head.replace(/\s+of\s+the\s+.+$/, "").trim();
+    // The Official Journal files the decisions of that era under a number
+    // printed *before* the instrument: "2000/111/EC: Commission Decision".
+    // Left as written it reads backwards and sorts under the year; the
+    // citation is "Commission Decision 2000/111/EC".
+    const filed = /^(\d{4}\/\d{1,4}\/[A-Z]+(?:,\s*[A-Z]+)*)\s*:\s*(.+)$/.exec(cited);
+    if (filed) return `${filed[2].trim()} ${filed[1]}`;
     if (cited) return cited;
   }
   const kind = celex.docType[0].toUpperCase() + celex.docType.slice(1);

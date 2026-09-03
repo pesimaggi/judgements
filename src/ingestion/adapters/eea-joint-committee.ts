@@ -1,8 +1,12 @@
 import pdfParse from "pdf-parse";
+import { load } from "cheerio";
 import { prisma } from "@/lib/db";
 import { normalizeJudgmentText } from "@/lib/judgment-text";
+import { CELLAR_HEADERS, cellarTextUrl, euLexUrl } from "@/lib/eur-lex";
+import { listJointCommitteeDecisions } from "../eurlex-sparql";
 import {
   politeFetchBytes,
+  politeFetchText,
   type IngestionAdapter,
   type IngestContext,
   type IngestStats,
@@ -88,6 +92,38 @@ const FORMER_ADAPTER_KEY = "eea-lex";
 const MIN_DECISION_CHARS = 600;
 
 const BULLET = "–";
+
+/**
+ * Whether a ledger row points at EUR-Lex rather than at efta.int.
+ *
+ * The two sources are held in one ledger because they hold the same
+ * decisions: efta.int publishes each as a PDF per language, EUR-Lex as the
+ * Official Journal text. Which one a row names decides how its text is read,
+ * and nothing else — the record stored is the same either way.
+ */
+function isEurLexUrl(url: string): boolean {
+  return /eur-lex\.europa\.eu|publications\.europa\.eu/.test(url);
+}
+
+/** The CELEX in a EUR-Lex URL this adapter wrote, e.g. "22018D1022". */
+export function celexFromUrl(url: string): string | null {
+  return /CELEX[:%3A]+([0-9A-Z()]+)/i.exec(url)?.[1]?.toUpperCase() ?? null;
+}
+
+/**
+ * A decision's text out of the Official Journal's HTML.
+ *
+ * Deliberately not the act parser in lib/eur-lex.ts: a JCD is stored as a
+ * document, not as an act with articles, so what is wanted here is its prose
+ * — the same shape the PDF path produces, so that both sources compose into
+ * the same record and parseDecisionHeading reads either.
+ */
+export function decisionTextFromHtml(html: string): string {
+  const $ = load(html);
+  $("script, style, noscript").remove();
+  return normalizeJudgmentText($("body").text());
+}
+
 
 function squish(text: string): string {
   return text.replace(/\s+/g, " ").trim();
@@ -340,9 +376,97 @@ async function tidyDecisionsSource(ctx: IngestContext): Promise<void> {
   if (restamped.count) ctx.log(`Restamped ${restamped.count} gap row(s) onto this adapter's name.`);
 }
 
+/**
+ * Seeds the ledger from EUR-Lex's listing of the Committee's decisions.
+ *
+ * This is the listing this source never had. Its backlog was seeded once, from
+ * the EEA-Lex acts register, on the day that register was withdrawn — complete
+ * as of that day and unable to grow, because nothing here walked a listing of
+ * its own. A decision adopted since could not be discovered at all.
+ *
+ * EUR-Lex publishes every one of them (about 6,900, back to No 1/94), so this
+ * asks for the lot and writes a "pending" row for each decision that is
+ * neither held nor already in the ledger. Cheap — a handful of SPARQL queries,
+ * no document fetches — and idempotent: a run that discovers nothing writes
+ * nothing.
+ *
+ * Decisions are matched by their own number ("154/2018"), never by URL, so a
+ * decision already held from efta.int is not queued a second time from
+ * EUR-Lex. The two sources publish the same instrument and this source stores
+ * it once.
+ *
+ * Returns the size of the listing, which is the honest denominator for the
+ * progress bar: what the Committee has adopted, rather than what we happen to
+ * know about.
+ */
+async function seedFromEurLex(ctx: IngestContext): Promise<number | null> {
+  if (process.env.JCD_LISTING === "0") {
+    ctx.log("JCD_LISTING=0 — not asking EUR-Lex what decisions exist.");
+    return null;
+  }
+
+  let listing;
+  try {
+    listing = await listJointCommitteeDecisions();
+  } catch (e) {
+    // A listing that cannot be fetched must not cost the run its backlog: the
+    // ledger already holds work, and this step only adds to it.
+    ctx.log(`Could not read the EUR-Lex listing: ${String(e).slice(0, 200)}`);
+    return null;
+  }
+  if (listing.length === 0) {
+    ctx.log("The EUR-Lex listing came back empty — leaving the ledger alone.");
+    return null;
+  }
+
+  // What is already accounted for, by decision number: everything stored, and
+  // every ledger row, resolved or not.
+  const [stored, ledger] = await Promise.all([
+    prisma.document.findMany({
+      where: { source: DECISIONS_SOURCE_KEY },
+      select: { caseNumber: true },
+    }),
+    prisma.ingestGap.findMany({
+      where: { source: DECISIONS_SOURCE_KEY },
+      select: { caseNumber: true },
+    }),
+  ]);
+  const known = new Set(
+    [...stored, ...ledger].map((row) => row.caseNumber).filter((n): n is string => Boolean(n))
+  );
+
+  const missing = listing.filter((decision) => !known.has(decision.number));
+  ctx.log(
+    `EUR-Lex lists ${listing.length} decision(s); ${known.size} already accounted for, ` +
+      `${missing.length} to queue.`
+  );
+  if (missing.length === 0 || ctx.dryRun) {
+    if (ctx.dryRun && missing.length) ctx.log(`[dry-run] would queue ${missing.length} decision(s)`);
+    return listing.length;
+  }
+
+  for (const decision of missing) {
+    await ctx.recordGap({
+      adapter: eeaJointCommitteeAdapter.key,
+      source: DECISIONS_SOURCE_KEY,
+      // The Official Journal's reading page: what a person should be sent to,
+      // and what the fetch derives the CELEX from.
+      officialUrl: euLexUrl(decision.celex),
+      court: DECISIONS_NAME,
+      caseNumber: decision.number,
+      title: `Decision of the EEA Joint Committee No ${decision.number}`,
+      date: decision.date,
+      reason: "pending",
+      detail: `listed by EUR-Lex as ${decision.celex}`,
+    });
+  }
+  ctx.log(`Queued ${missing.length} decision(s) from the EUR-Lex listing.`);
+  return listing.length;
+}
+
 export const eeaJointCommitteeAdapter: IngestionAdapter = {
   key: "eea-joint-committee",
-  name: "EEA Joint Committee decisions (efta.int)",
+  name: "EEA Joint Committee decisions (EUR-Lex listing, efta.int and Cellar texts)",
   sourceKeys: [DECISIONS_SOURCE_KEY],
 
   async run(ctx: IngestContext): Promise<IngestStats> {
@@ -365,8 +489,18 @@ export const eeaJointCommitteeAdapter: IngestionAdapter = {
 
       let body: string;
       try {
-        const { body: bytes } = await politeFetchBytes(seed.url);
-        body = normalizeJudgmentText((await pdfParse(bytes)).text);
+        if (isEurLexUrl(seed.url)) {
+          // Cellar serves the decision's text to a machine that asks for a
+          // format it holds it in; the URL stored on the row is the reading
+          // page a person would open, so the CELEX is taken from it and the
+          // text asked for separately.
+          const celex = celexFromUrl(seed.url);
+          if (!celex) throw new Error(`no CELEX in ${seed.url}`);
+          body = decisionTextFromHtml(await politeFetchText(cellarTextUrl(celex), CELLAR_HEADERS));
+        } else {
+          const { body: bytes } = await politeFetchBytes(seed.url);
+          body = normalizeJudgmentText((await pdfParse(bytes)).text);
+        }
       } catch (e) {
         stats.errors++;
         stats.errorSample = stats.errorSample ?? String(e);
@@ -381,8 +515,8 @@ export const eeaJointCommitteeAdapter: IngestionAdapter = {
           ...identity,
           reason: "no-text",
           detail: body.length
-            ? `the decision PDF extracted only ${body.length} chars`
-            : "the decision PDF extracted no text at all",
+            ? `the decision text extracted only ${body.length} chars`
+            : "the decision published at this URL extracted no text at all",
         });
         return;
       }
@@ -405,7 +539,9 @@ export const eeaJointCommitteeAdapter: IngestionAdapter = {
           language: "en",
           subjectTags: seed.areas,
           officialUrl: seed.url,
-          pdfUrl: seed.url,
+          // Only the efta.int half is a PDF. A EUR-Lex row's officialUrl is
+          // the Official Journal's reading page, which is not one.
+          pdfUrl: isEurLexUrl(seed.url) ? undefined : seed.url,
           fullText: composeDecision(seed, heading, body),
         });
         if (result === "indexed") stats.indexed++;
@@ -420,6 +556,7 @@ export const eeaJointCommitteeAdapter: IngestionAdapter = {
 
     await purgeRetiredActs(ctx);
     await tidyDecisionsSource(ctx);
+    const listed = await seedFromEurLex(ctx);
 
     // -----------------------------------------------------------------------
     // The pass itself: the gap ledger and nothing else. Every decision we know
@@ -433,11 +570,12 @@ export const eeaJointCommitteeAdapter: IngestionAdapter = {
     const open = await ctx.openGaps([DECISIONS_SOURCE_KEY]);
     const held = await prisma.document.count({ where: { source: DECISIONS_SOURCE_KEY } });
 
-    // The denominator for the progress bar: what we hold plus what we know is
-    // still to come. It shrinks as the backlog is worked only if a row turns
-    // out not to be a decision at all, which is the honest behaviour — this
-    // adapter has no listing to read a total off.
-    await recordTotal(ctx, DECISIONS_SOURCE_KEY, held + open.length);
+    // The denominator for the progress bar. EUR-Lex's listing is the real
+    // total — every decision the Committee has adopted — so it is used when
+    // the listing was read. Falling back to "what we hold plus what we know is
+    // still to come" keeps the bar honest on a run that could not reach
+    // EUR-Lex, at the cost of a denominator that only knows about the backlog.
+    await recordTotal(ctx, DECISIONS_SOURCE_KEY, listed ?? held + open.length);
 
     ctx.log(
       `${held} decision(s) stored; ${open.length} outstanding. Up to ${maxFetches} fetches this run.`

@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ScopeToggle, useActScope } from "./ScopeToggle";
+import { eeaTag } from "@/lib/eea-tag";
 
 export interface LegalSelection {
   kind: "act" | "provision";
@@ -11,6 +12,10 @@ export interface LegalSelection {
   sublabel: string;
   /** Route to the act reader, for "open the text" alongside the case list. */
   path: string;
+  /** "is" | "eu" — what the EES tag is drawn from. See lib/eea-tag.ts. */
+  jurisdiction?: string;
+  eeaRelevant?: boolean;
+  eeaIncorporatedBy?: string[];
 }
 
 interface Suggestion extends LegalSelection {}
@@ -134,7 +139,10 @@ export function SpecificSearch({ legal, onLegalChange, tags: activeTags, onTagsC
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <span className="block text-sm leading-snug">{l.label}</span>
-                    <span className="block text-[11px] text-inkSoft">{l.sublabel}</span>
+                    <span className="block text-[11px] text-inkSoft">
+                      {l.sublabel}
+                      <EeaTagChip item={l} />
+                    </span>
                   </div>
                   <button
                     type="button"
@@ -184,7 +192,10 @@ export function SpecificSearch({ legal, onLegalChange, tags: activeTags, onTagsC
                   className="w-full rounded border border-line px-2 py-1.5 text-left hover:border-ink"
                 >
                   <span className="block text-sm leading-snug">{s.label}</span>
-                  <span className="block text-[11px] text-inkSoft">{s.sublabel}</span>
+                  <span className="block text-[11px] text-inkSoft">
+                    {s.sublabel}
+                    <EeaTagChip item={s} />
+                  </span>
                 </button>
               </li>
             ))}
@@ -257,5 +268,30 @@ export function SpecificSearch({ legal, onLegalChange, tags: activeTags, onTagsC
       </div>
 
     </section>
+  );
+}
+
+/**
+ * The EES tag, inline after an act's citation: two words saying whether a
+ * decision of the Joint Committee has taken this act into the EEA Agreement.
+ *
+ * It belongs here as much as in the catalogue — this box is where an act is
+ * actually chosen, and "is this part of EEA law" is the question a reader is
+ * answering when they choose one.
+ */
+function EeaTagChip({ item }: { item: LegalSelection }) {
+  const tag = eeaTag(item);
+  if (!tag) return null;
+  return (
+    <span
+      title={tag.detail}
+      className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] ${
+        tag.status === "incorporated"
+          ? "bg-accentSoft font-medium text-accent"
+          : "border border-line text-inkSoft"
+      }`}
+    >
+      {tag.label}
+    </span>
   );
 }

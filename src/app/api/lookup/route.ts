@@ -50,6 +50,11 @@ export async function GET(req: Request) {
           label: a.title,
           sublabel: a.citation,
           path: a.path,
+          // What the EES tag beside the suggestion is drawn from — see
+          // lib/eea-tag.ts. Null throughout on the Icelandic side.
+          jurisdiction: a.jurisdiction,
+          eeaRelevant: a.eeaRelevant ?? false,
+          eeaIncorporatedBy: a.eeaIncorporatedBy ?? [],
         })),
       });
     }
@@ -77,6 +82,9 @@ export async function GET(req: Request) {
         label: `${p.displayLabel}${p.heading ? ` — ${p.heading}` : ""}`,
         sublabel: `${p.act.title} (${actCitation(p.act)})`,
         path: `${actPath(p.act)}#${p.anchor}`,
+        jurisdiction: p.act.jurisdiction,
+        eeaRelevant: p.act.eeaRelevant,
+        eeaIncorporatedBy: p.act.eeaIncorporatedBy ?? [],
       })),
       // Offered as a fallback when the article does not exist in any match —
       // better to show the act than nothing at all.
@@ -89,6 +97,9 @@ export async function GET(req: Request) {
               label: a.title,
               sublabel: `${a.citation} — ${formatArticleLabel(parsed)} fannst ekki`,
               path: a.path,
+              jurisdiction: a.jurisdiction,
+              eeaRelevant: a.eeaRelevant ?? false,
+              eeaIncorporatedBy: a.eeaIncorporatedBy ?? [],
             }))
           : [],
     });

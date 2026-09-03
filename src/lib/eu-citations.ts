@@ -152,7 +152,55 @@ export function refLookupKeys(ref: EuActRef): string[] {
   return keys;
 }
 
-/** "7/1994" as the Joint Committee numbers its decisions, off a stored title. */
+/**
+ * The decision's own number — "154/2018" — read off its title.
+ *
+ * A JCD carries two numbers and only this one is ever cited: EUR-Lex files
+ * the decision by its place in the Official Journal ("22018D1022"), and the
+ * title is the only place the Committee's own numbering appears.
+ *
+ * The shape of the rule is set by what the corpus actually contains, measured
+ * over all 6,784 decisions EUR-Lex lists:
+ *
+ *  - "Decision" must be singular. The plural opens the "Decisions of the EEA
+ *    Joint Committee for which the constitutional requirements … have been
+ *    fulfilled" notices, which are announcements *about* decisions and carry
+ *    no number of their own — reading one as a decision would file a notice
+ *    under a real decision's number.
+ *  - The Committee's name is skipped over rather than matched, because
+ *    EUR-Lex misspells it: "Decision of the EEA joint committe No 139/2006"
+ *    and "the EEA joJint Committee No 254/2021" are both real, and both are
+ *    real decisions that a stricter rule silently drops.
+ *  - The number may be preceded by an Official Journal filing prefix
+ *    ("2004/69/: Decision of the EEA Joint Committee No 69/2004 …"), so the
+ *    match is not anchored to the start of the title.
+ */
+const DECISION_NUMBER_RE =
+  /\bDecision(?!s)\b[^.]{0,60}?\bNo\.?\s*(\d{1,3}\s*\/\s*\d{2,4})/i;
+
 export function decisionNumberFromTitle(title: string): string | null {
-  return /No\s*(\d{1,3}\/\d{2,4})/i.exec(title)?.[1] ?? null;
+  const number = DECISION_NUMBER_RE.exec(title)?.[1];
+  return number ? number.replace(/\s+/g, "") : null;
+}
+
+/**
+ * Orders decision numbers the way the Committee adopted them: by year, then
+ * by number within the year.
+ *
+ * Sorting them as strings puts "120/2006" before "91/2000", which reads as
+ * nonsense wherever a list of them is printed — the numbering restarts every
+ * year and the year is the second half. The early decisions are numbered with
+ * a two-digit year ("7/94"), so the year is expanded before comparing.
+ */
+export function compareDecisionNumbers(a: string, b: string): number {
+  const parse = (value: string): [number, number] => {
+    const m = /^(\d{1,3})\/(\d{2,4})$/.exec(value);
+    if (!m) return [Number.MAX_SAFE_INTEGER, 0];
+    const raw = Number(m[2]);
+    const year = m[2].length === 4 ? raw : raw >= 90 ? 1900 + raw : 2000 + raw;
+    return [year, Number(m[1])];
+  };
+  const [yearA, numberA] = parse(a);
+  const [yearB, numberB] = parse(b);
+  return yearA - yearB || numberA - numberB || a.localeCompare(b);
 }

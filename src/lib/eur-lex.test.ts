@@ -66,6 +66,13 @@ describe("CELEX numbers", () => {
     assert.equal(euActPath("32016R0679"), "/log/32016R0679");
     assert.match(cellarTextUrl("32016R0679"), /publications\.europa\.eu\/resource\/celex\/32016R0679$/);
   });
+
+  test("percent-encodes the parentheses a suffixed CELEX carries", () => {
+    // Cellar answers 404 for a literal "(01)" and 200 for "%2801%29", and
+    // encodeURIComponent does not encode parentheses. Every EEA Joint
+    // Committee decision published before about 2005 is numbered this way.
+    assert.match(cellarTextUrl("21994D0330(01)"), /celex\/21994D0330%2801%29$/);
+  });
 });
 
 describe("citations", () => {
@@ -93,6 +100,19 @@ describe("citations", () => {
     assert.equal(
       cite("Directive 2000/31/EC of the European Parliament and of the Council of 8 June 2000 on certain", "32000L0031"),
       "Directive 2000/31/EC"
+    );
+  });
+
+  test("turns the Official Journal's filing prefix the right way round", () => {
+    // "2000/111/EC: Commission Decision of 24 January 2000 designating …" is
+    // how the OJ prints these, and left as written the citation reads
+    // backwards and sorts under its year rather than its instrument.
+    assert.equal(
+      cite(
+        "2000/111/EC: Commission Decision of 24 January 2000 designating a new antigen bank",
+        "32000D0111"
+      ),
+      "Commission Decision 2000/111/EC"
     );
   });
 

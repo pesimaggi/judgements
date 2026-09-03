@@ -60,29 +60,20 @@ import {
   parseEuActHtml,
   type ParsedEuAct,
 } from "@/lib/eur-lex";
-import { decisionNumberFromTitle, extractEuActRefs, refLookupKeys } from "@/lib/eu-citations";
-import { politeFetchText, type IngestionAdapter, type IngestContext, type IngestStats } from "../adapter";
-
-const SPARQL_ENDPOINT =
-  process.env.EURLEX_SPARQL ?? "https://publications.europa.eu/webapi/rdf/sparql";
-
-/**
- * The families of act ingested, as CELEX type letters, within sector 3 —
- * secondary legislation, and only that.
- *
- * The sector is not a detail. EUR-Lex also publishes the decisions of the EEA
- * Joint Committee, in sector 2 (Decision No 154/2018 is `22018D1022` there),
- * and this app already holds those as documents, ingested from efta.int by the
- * `eea-joint-committee` adapter. Widening the sweep to sector 2 would store a
- * second copy of every one of them — the same decision as a document and as an
- * act, in two places, findable twice. So the sweep stays sector 3, and
- * parseCelex refuses anything else besides, which is a second guard on the
- * same rule.
- */
-const TYPES = (process.env.EURLEX_TYPES ?? "R,L,D")
-  .split(",")
-  .map((t) => t.trim().toUpperCase())
-  .filter(Boolean);
+import { politeFetchText } from "../adapter";
+import {
+  compareDecisionNumbers,
+  decisionNumberFromTitle,
+  extractEuActRefs,
+  refLookupKeys,
+} from "@/lib/eu-citations";
+import {
+  catalogueYear,
+  jointCommitteeActLinks,
+  listJointCommitteeDecisions,
+  type CatalogueEntry,
+} from "../eurlex-sparql";
+import { type IngestionAdapter, type IngestContext, type IngestStats } from "../adapter";
 
 /** The first year swept. The oldest acts still in force date from the 1950s. */
 const FIRST_YEAR = Number(process.env.EURLEX_FIRST_YEAR ?? 1952);
@@ -92,175 +83,6 @@ const CURSOR_KEY = "eur-lex-catalogue";
 
 /** The source key the EEA Joint Committee's decisions are stored under. */
 const JCD_SOURCE_KEY = "eea-joint-committee";
-
-/**
- * A SPARQL result row, flattened to the values we asked for. The endpoint
- * answers in the standard JSON results format; nothing here needs the
- * datatypes back.
- */
-type Row = Record<string, string | undefined>;
-
-/**
- * Runs one SPARQL query and returns its rows.
- *
- * Paged by the caller rather than here: what a page means differs between the
- * two queries, and a query that pages itself has to know its own ordering.
- */
-async function sparql(query: string): Promise<Row[]> {
-  const url = `${SPARQL_ENDPOINT}?query=${encodeURIComponent(query)}&format=${encodeURIComponent(
-    "application/sparql-results+json"
-  )}`;
-  const body = await politeFetchText(url, { Accept: "application/sparql-results+json" });
-  let parsed: { results?: { bindings?: Record<string, { value: string }>[] } };
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    // The endpoint answers HTML on an internal error, with a 200. Failing
-    // loudly here is the point: a silently empty year would look like a year
-    // with nothing in force.
-    throw new Error(`SPARQL endpoint returned a non-JSON response (${body.slice(0, 120)}…)`);
-  }
-  return (parsed.results?.bindings ?? []).map((binding) => {
-    const row: Row = {};
-    for (const [key, value] of Object.entries(binding)) row[key] = value.value;
-    return row;
-  });
-}
-
-const PAGE_SIZE = 2000;
-
-/** SPARQL prefixes both queries open with. */
-const PREFIXES = `PREFIX cdm: <http://publications.europa.eu/ontology/cdm#>
-PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>`;
-
-/** The `VALUES` clause restricting a query to the ingested families. */
-function typeValues(): string {
-  return TYPES.map((t) => `"${t}"^^xsd:string`).join(" ");
-}
-
-/** One act as the catalogue knows it, before its text is read. */
-export interface CatalogueEntry {
-  celex: string;
-  title: string;
-  /** Short names EUR-Lex records for the act ("gdpr", "personal data"). */
-  aliases: string[];
-  /** The number the act is cited by, where EUR-Lex records one. */
-  naturalNumber: number | null;
-  date: Date | null;
-  eeaRelevant: boolean;
-  entryIntoForce: Date | null;
-  endOfValidity: Date | null;
-  /** CELEX of the most recent consolidated version, where there is one. */
-  consolidatedCelex: string | null;
-}
-
-function toDate(value: string | undefined): Date | null {
-  if (!value) return null;
-  // EUR-Lex writes an open-ended end of validity as the year 9999.
-  if (value.startsWith("9999")) return null;
-  const date = new Date(`${value.slice(0, 10)}T00:00:00Z`);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-/**
- * Reads the acts of one year in force, in two queries.
- *
- * They are two rather than one because the consolidated versions are a
- * one-to-many join: an act amended thirty times has thirty consolidated
- * versions, and joining them into the metadata query would multiply every
- * act's row by its amendment history. So the metadata is fetched flat, the
- * consolidations are fetched separately, and the latest of each is picked
- * here.
- */
-export async function catalogueYear(year: number): Promise<CatalogueEntry[]> {
-  const byCelex = new Map<string, CatalogueEntry>();
-
-  for (let offset = 0; ; offset += PAGE_SIZE) {
-    const rows = await sparql(`${PREFIXES}
-SELECT ?celex ?title ?short ?number ?date ?eea ?eif ?eov WHERE {
-  ?w cdm:resource_legal_year "${year}"^^xsd:gYear ;
-     cdm:resource_legal_id_sector "3"^^xsd:string ;
-     cdm:resource_legal_type ?type ;
-     cdm:resource_legal_in-force "true"^^xsd:boolean ;
-     cdm:resource_legal_id_celex ?celex .
-  VALUES ?type { ${typeValues()} }
-  ?e cdm:expression_belongs_to_work ?w ;
-     cdm:expression_uses_language <http://publications.europa.eu/resource/authority/language/ENG> ;
-     cdm:expression_title ?title .
-  OPTIONAL { ?e cdm:expression_title_short ?short }
-  OPTIONAL { ?w cdm:resource_legal_number_natural ?number }
-  OPTIONAL { ?w cdm:work_date_document ?date }
-  OPTIONAL { ?w cdm:resource_legal_eea ?eea }
-  OPTIONAL { ?w cdm:resource_legal_date_entry-into-force ?eif }
-  OPTIONAL { ?w cdm:resource_legal_date_end-of-validity ?eov }
-}
-ORDER BY ?celex LIMIT ${PAGE_SIZE} OFFSET ${offset}`);
-
-    for (const row of rows) {
-      const celex = parseCelex(row.celex ?? "");
-      // Corrigenda and the other suffixed forms are not acts of this library.
-      if (!celex || celex.consolidated) continue;
-      if (byCelex.has(celex.celex)) continue;
-      byCelex.set(celex.celex, {
-        celex: celex.celex,
-        title: (row.title ?? "").replace(/\s+/g, " ").trim(),
-        aliases: (row.short ?? "")
-          .split(",")
-          .map((alias) => alias.trim().toLowerCase())
-          .filter(Boolean),
-        naturalNumber: row.number ? Number(row.number) : null,
-        date: toDate(row.date),
-        // EUR-Lex writes the marker as a boolean, "1" or "0".
-        eeaRelevant: row.eea === "1" || row.eea === "true",
-        entryIntoForce: toDate(row.eif),
-        endOfValidity: toDate(row.eov),
-        consolidatedCelex: null,
-      });
-    }
-    if (rows.length < PAGE_SIZE) break;
-  }
-
-  // The consolidated versions, newest per act.
-  const latest = new Map<string, { celex: string; date: string }>();
-  for (let offset = 0; ; offset += PAGE_SIZE) {
-    const rows = await sparql(`${PREFIXES}
-SELECT ?celex ?consolidated ?date WHERE {
-  ?w cdm:resource_legal_year "${year}"^^xsd:gYear ;
-     cdm:resource_legal_id_sector "3"^^xsd:string ;
-     cdm:resource_legal_type ?type ;
-     cdm:resource_legal_in-force "true"^^xsd:boolean ;
-     cdm:resource_legal_id_celex ?celex .
-  VALUES ?type { ${typeValues()} }
-  ?c cdm:act_consolidated_consolidates_resource_legal ?w ;
-     cdm:resource_legal_id_celex ?consolidated ;
-     cdm:work_date_document ?date .
-}
-ORDER BY ?celex ?date LIMIT ${PAGE_SIZE} OFFSET ${offset}`);
-
-    for (const row of rows) {
-      const celex = (row.celex ?? "").toUpperCase();
-      const consolidated = (row.consolidated ?? "").toUpperCase();
-      const date = row.date ?? "";
-      if (!byCelex.has(celex) || !consolidated || !date) continue;
-      // A consolidated version of *another* act also "consolidates" this one
-      // when this one amended or repealed it: the consolidated text of
-      // Directive 95/46 names the GDPR as one of its sources. Only the act's
-      // own consolidation is its in-force text, and that is the one whose
-      // CELEX is this act's with a sector 0 and a date — "32016R0679" →
-      // "02016R0679-20160504". Anything else here is a different act.
-      if (!consolidated.startsWith(`0${celex.slice(1)}-`)) continue;
-      const held = latest.get(celex);
-      if (!held || held.date < date) latest.set(celex, { celex: consolidated, date });
-    }
-    if (rows.length < PAGE_SIZE) break;
-  }
-  for (const [celex, consolidated] of latest) {
-    const entry = byCelex.get(celex);
-    if (entry) entry.consolidatedCelex = consolidated.celex;
-  }
-
-  return Array.from(byCelex.values());
-}
 
 /**
  * Writes one catalogue entry, without touching its text.
@@ -605,12 +427,27 @@ async function runText(ctx: IngestContext, stats: IngestStats, retry: boolean): 
 // ---------------------------------------------------------------------------
 
 /**
- * Reads the decisions of the EEA Joint Committee this database holds and
- * records, on each EU act, the decisions that name it.
+ * Records, on each EU act, the decisions of the EEA Joint Committee that name
+ * it — the cross-reference behind the "tekin upp" tag.
  *
- * Costs no requests: both sides are already stored. What it produces is the
- * answer to "is this act part of EEA law", which the relevance marker only
- * approximates — the marker is the Commission's intention, a JCD is the fact.
+ * TWO SOURCES, MERGED, because each covers what the other misses.
+ *
+ *   EUR-Lex's own citation graph is the authority and the bulk of it: every
+ *     decision the Committee has adopted, whether or not this database holds
+ *     its text, and the Publications Office's record of the relationship
+ *     rather than our reading of a sentence. About 21,900 pairs, in a handful
+ *     of queries. See jointCommitteeActLinks().
+ *   The decisions' own text catches what the graph does not state. A decision
+ *     inserting an act names it in the Official Journal's two-part form and
+ *     EUR-Lex does not always record that as a citation, particularly for the
+ *     older decisions; this reads the stored text and costs no requests.
+ *
+ * Both answer the same question — which decisions name this act — so they
+ * merge into one sorted list per act rather than competing. What that list
+ * means is deliberately modest: the Committee has dealt with the act, and here
+ * are the decision numbers to check. It is not read as "inserted by", because
+ * a decision that deletes a point names the act it deletes and EUR-Lex offers
+ * nothing finer to tell the two apart.
  */
 async function runEeaLinks(ctx: IngestContext, stats: IngestStats): Promise<void> {
   // Every EU act, by every key a reference can name it under. An act is only
@@ -646,6 +483,35 @@ async function runEeaLinks(ctx: IngestContext, stats: IngestStats): Promise<void
   for (const key of ambiguous) byKey.delete(key);
 
   const found = new Map<string, Set<string>>();
+  const record = (actId: string, number: string) => {
+    const set = found.get(actId) ?? new Set<string>();
+    set.add(number);
+    found.set(actId, set);
+  };
+
+  // ---- EUR-Lex's citation graph -------------------------------------------
+  if (process.env.EURLEX_JCD_LINKS !== "0") {
+    const decisions = await listJointCommitteeDecisions();
+    // The decision's own number is what a reader cites and what gets stored;
+    // EUR-Lex files it under an Official Journal number instead, so the
+    // listing is what translates one to the other.
+    const numberFor = new Map(decisions.map((d) => [d.celex, d.number]));
+    const links = await jointCommitteeActLinks(decisions.map((d) => d.celex));
+    let matched = 0;
+    for (const link of links) {
+      const number = numberFor.get(link.jcdCelex);
+      const actId = byKey.get(link.actCelex);
+      if (!number || !actId) continue;
+      record(actId, number);
+      matched++;
+    }
+    ctx.log(
+      `EUR-Lex: ${decisions.length} decision(s), ${links.length} act reference(s), ` +
+        `${matched} of them to acts held here`
+    );
+  }
+
+  // ---- the decisions' own text --------------------------------------------
   const CHUNK = 200;
   let scanned = 0;
   for (let skip = 0; ; skip += CHUNK) {
@@ -668,18 +534,17 @@ async function runEeaLinks(ctx: IngestContext, stats: IngestStats): Promise<void
         const actId = refLookupKeys(ref)
           .map((key) => byKey.get(key))
           .find(Boolean);
-        if (!actId) continue;
-        const set = found.get(actId) ?? new Set<string>();
-        set.add(number);
-        found.set(actId, set);
+        if (actId) record(actId, number);
       }
     }
     if (decisions.length < CHUNK) break;
   }
-  ctx.log(`Scanned ${scanned} decision(s) of the EEA Joint Committee`);
+  ctx.log(`Scanned the text of ${scanned} stored decision(s)`);
 
   for (const [actId, numbers] of found) {
-    const incorporated = Array.from(numbers).sort();
+    // In the order the Committee adopted them, not alphabetically: a list
+    // reading "120/2006, 91/2000" is a list nobody can scan.
+    const incorporated = Array.from(numbers).sort(compareDecisionNumbers);
     const current = held.get(actId) ?? [];
     if (current.length === incorporated.length && current.every((n, i) => n === incorporated[i])) {
       stats.skipped++;

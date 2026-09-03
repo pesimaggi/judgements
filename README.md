@@ -295,10 +295,34 @@ OF THE EEA JOINT COMMITTEE No 25/2010 of 12 March 2010 amending Annex II
 Agreement"*. It is the legal instrument, and it is what someone looking for a
 decision of the Joint Committee is looking for.
 
-A JCD has no page of its own on efta.int; it is published as a PDF per
-language under `/sites/default/files/…/adopted-joint-committee-decisions/`. So
-the English PDF is the decision's `officialUrl`, as the ruling PDF already is
-for Óbyggðanefnd and for ESA's documents. The decisions are small — measured
+**Which decisions exist comes from EUR-Lex.** The Official Journal publishes
+every one of them — about 6,780, from No 1/94 to the present — and the SPARQL
+endpoint lists them by their authoring body, `CMT_MIX_EEAREA`, which is the
+Committee itself. That is the precise filter: sector 2 also holds every other
+joint body's decisions, and CELEX shape alone would not separate them. Each run
+asks for the list and queues, as `pending` ledger rows, whatever is neither
+held nor already queued — matched on the decision's own number ("154/2018"),
+never on a URL, so a decision already held from efta.int is not fetched twice.
+`JCD_LISTING=0` turns the listing off and leaves the adapter working the ledger
+it has.
+
+This is what unfroze the source. Its backlog was seeded once, from a register
+that has since been withdrawn (below), and a decision adopted after that day
+could not be discovered at all. The listing also gives the progress bar an
+honest denominator: what the Committee has adopted, rather than what we happen
+to know about.
+
+**The text comes from whichever source the row names.** A JCD has no page of
+its own on efta.int; it is published as a PDF per language under
+`/sites/default/files/…/adopted-joint-committee-decisions/`, and the English
+PDF is that row's `officialUrl`, as the ruling PDF already is for Óbyggðanefnd
+and for ESA's documents. A row queued from the listing instead carries the
+EUR-Lex reading page, and its text is read from Cellar — no PDF to parse, and
+the same record either way: the heading parse below reads both. Note that
+Cellar needs the parentheses in a suffixed CELEX percent-encoded
+(`21994D0330%2801%29`), which is every decision published before about 2005.
+
+The decisions are small — measured
 across 1994–2026, a JCD runs 2–3 pages and 1,700–5,200 characters. The 1994
 omnibus decisions are the exception: 7/1994 is 213 pages and 359,000
 characters, and it is stored **once**, which is why the decisions are a source
@@ -334,12 +358,12 @@ from the acts **before** deleting them — as `pending` rows, the one gap reason
 that is not a failure — so the backlog is carried forward rather than lost with
 the register that knew about it.
 
-That leaves a complete to-do list but not a growing one. The adapter will work
-the backlog to the end; it discovers nothing new, because it walks no listing
-of its own. New decisions start appearing again when EEA-Lex is re-ingested, or
-when this adapter is given the Committee's own published listing to walk. Until
-then the source is complete as of the day the register was withdrawn, and says
-so on `/admin/ingestion` rather than being silently frozen half-fetched.
+That left a complete to-do list but not a growing one: the adapter would work
+the backlog to the end and then discover nothing, because it walked no listing
+of its own. **EUR-Lex is now that listing** — see above — so the ledger grows
+again, and a decision adopted next month is queued on the next firing. The
+purge's seeding still matters: it carried the backlog forward rather than
+losing it with the register, and those rows keep their efta.int PDFs.
 
 **Nothing is retired any more.** The acts pass filtered to what was in force and
 removed a decision once the last act it incorporated fell out of force. Without
@@ -400,7 +424,7 @@ So every act query takes a scope, and the toggle sets it:
 
 | | What an act lookup sees |
 |---|---|
-| **EES** (default) | Icelandic acts, plus EU acts that may be part of EEA law: those EUR-Lex marks *"(Text with EEA relevance)"*, **or** that a decision of the EEA Joint Committee held here names. |
+| **EES** (default) | Icelandic acts, plus EU acts that may be part of EEA law: those EUR-Lex marks *"(Text with EEA relevance)"*, **or** that a decision of the EEA Joint Committee names. |
 | **ESB** | Everything. The whole EU library, incorporated or not. |
 
 Icelandic law is in both. The toggle says how much of the EU library comes
@@ -409,14 +433,44 @@ with it, not whether Icelandic law is searched.
 The EES side is deliberately generous — a marker *or* a naming is enough —
 because the question it answers is "might this matter here": an act wrongly
 kept is a line in a list, and an act wrongly dropped is a search that silently
-fails. The two criteria also cover different eras. The relevance marker is the
-Commission's intention and only became standard practice in the 1990s, so a
-directive of 1989 that the EEA Agreement carries from the start states nothing
-at all. A Joint Committee decision naming an act is the fact of incorporation,
-and it is derived from decisions this database already holds — the JCDs print
-the act they are inserting in the Official Journal's two-part form,
-`32016 R 0679: Regulation (EU) 2016/679 …`, and both halves are read. See
-`src/lib/eu-citations.ts`.
+fails.
+
+The two criteria are not one criterion and its backup. They are different
+claims, and they cover different eras:
+
+- **The marker** is the Commission's view that an act *belongs* in the
+  Agreement. It only became standard practice in the 1990s, so of the EU acts
+  of 2000 still in force, **not one carries it**.
+- **A naming by the Joint Committee** is the fact: the Committee is what
+  actually takes an act into the Agreement. Of those same acts of 2000, **61
+  are named by a decision** — every one of which the marker alone would have
+  hidden. The e-Commerce Directive (2000/31/EC) is the plain example: no
+  marker, and incorporated by Decision No 91/2000.
+
+#### The EES tag
+
+Where an act appears — in the catalogue, in the act reader, in the act
+type-ahead — it carries a tag saying which of those two it is, from one shared
+definition in `src/lib/eea-tag.ts` so all three make the same claim:
+
+| Tag | Means |
+|---|---|
+| **EES** | A decision of the Joint Committee names this act. Hovering gives the decision numbers, in the order they were adopted; the act reader prints them with a link to search for the decision itself. |
+| **EES?** | Marked *"(Text with EEA relevance)"*, but no decision we know of names it. Often a decision not yet adopted; sometimes a gap in what we hold. |
+| *(none)* | Neither. The act is in the library because the ESB scope shows the whole EU corpus, not because it binds anything here. |
+
+The tag says *named by*, not *inserted by*, and the wording under it is careful
+about the difference: a decision that deletes a point names the act it is
+deleting, and a later decision amending an act names it again. EUR-Lex records
+both as citations and offers nothing finer, so nothing here pretends to know
+which. What the tag asserts is the useful and defensible thing — the Committee
+has dealt with this act — with the decision numbers there to check.
+
+The cross-reference itself comes from two places, merged: EUR-Lex's citation
+graph (every decision that exists) and the text of the decisions this database
+holds, where the JCDs print the act they are inserting in the Official
+Journal's two-part form, `32016 R 0679: Regulation (EU) 2016/679 …`, and both
+halves are read. See `src/lib/eu-citations.ts` and `src/ingestion/eurlex-sparql.ts`.
 
 The choice is remembered in `localStorage` rather than asked per query: it is a
 research posture, and someone who set ESB on the catalogue page should not find
@@ -483,8 +537,13 @@ INGEST_MODE=eea-links  npm run ingest -- --adapter=eur-lex   # what the JCDs nam
   through the rest, which is weeks of runs at the polite fetch rate. The
   catalogue is complete either way, so an act with no text yet is still
   findable, still says what it is, and still links to EUR-Lex.
-- **eea-links** — no requests at all: it reads the Joint Committee decisions
-  already stored and records, on each act, the decisions that name it.
+- **eea-links** — the cross-reference behind the EES tag: which decisions of
+  the Joint Committee name each act. Two sources, merged, because each covers
+  what the other misses. EUR-Lex's own citation graph is the bulk of it — every
+  decision that exists, about 20,400 act references, in ~34 queries — and the
+  stored decisions' text catches what the graph does not record, at no request
+  cost. Both answer the same question, so they merge into one list of decision
+  numbers per act, ordered as the Committee adopted them.
 
 **The act table is the ledger.** There is no `IngestGap` row here, because that
 ledger is keyed by `(source, officialUrl)` and these are not documents. The
@@ -502,19 +561,17 @@ quietly stale.
 
 #### What is deliberately not here
 
-- **Not the Joint Committee's decisions.** EUR-Lex publishes those too, in
-  sector 2 — Decision No 154/2018 is CELEX `22018D1022` there, numbered by its
-  place in the Official Journal rather than by its decision number — but this
-  app already holds them as documents, from efta.int. Sweeping sector 2 would
-  store every one of them a second time, as a document and as an act, findable
-  twice. The catalogue query asks Cellar for sector 3 only, and `parseCelex()`
-  refuses anything else besides, which is a second guard on the same rule.
+- **Not the Joint Committee's decisions, as acts.** EUR-Lex publishes those
+  too, in sector 2 — Decision No 154/2018 is CELEX `22018D1022` there, numbered
+  by its place in the Official Journal rather than by its decision number — but
+  this app already holds them as documents. Sweeping sector 2 would store every
+  one of them a second time, as a document and as an act, findable twice. The
+  catalogue query asks Cellar for sector 3 only, and `parseCelex()` refuses
+  anything else besides, which is a second guard on the same rule.
 
-  What EUR-Lex *is* worth using for there is the listing the JCD source does
-  not have: its backlog is finite and it discovers nothing new, because it
-  walks no listing of its own. The SPARQL endpoint can enumerate every decision
-  that exists, which would unfreeze that backlog without a second copy of the
-  text. See the EEA Joint Committee adapter's header.
+  EUR-Lex *is* what the decisions source reads its listing from, which is a
+  different thing: see *EEA Joint Committee decisions* above. One copy of each
+  decision, stored as a document; EUR-Lex says which ones exist.
 - **Only the binding families.** Regulations, directives and decisions
   (`EURLEX_TYPES=R,L,D`). Not opinions, recommendations, treaties or
   international agreements — they are in EUR-Lex, they are not what "the EU

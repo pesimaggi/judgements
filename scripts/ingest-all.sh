@@ -91,6 +91,12 @@
 #                                           library (~33,000 acts, weeks of runs)
 #   EURLEX_RETRY            default 50    — acts whose text failed that the retry
 #                                           pass re-attempts
+#   EURLEX_JCD_LINKS        default on    — "0" skips the EUR-Lex half of the EEA
+#                                           incorporation pass, leaving only what
+#                                           the stored decisions' own text says
+#   JCD_LISTING             default on    — "0" stops the EEA Joint Committee pass
+#                                           asking EUR-Lex which decisions exist,
+#                                           leaving it to work the ledger it has
 #
 set -u
 
@@ -278,6 +284,18 @@ for adapter in $ADAPTERS; do
       # row until the budget is spent. A run whose ledger is empty makes no
       # requests at all.
       #
+      # It now walks a listing, which it did not before: EUR-Lex publishes every
+      # decision the Committee has adopted (about 6,780, back to No 1/94), so
+      # each run asks for that list and queues whatever is neither held nor
+      # already in the ledger. That is what unfroze this source — its backlog
+      # was seeded once from a register that has since been withdrawn, and a
+      # decision adopted after that day could not be discovered at all. Set
+      # JCD_LISTING=0 to skip the listing and work only the existing ledger.
+      #
+      # Decisions queued from the listing are read from EUR-Lex rather than as
+      # PDFs from efta.int; both halves compose the same record. See the
+      # adapter's header.
+      #
       # This pass also carries out the one-time purge of the withdrawn EEA-Lex
       # acts register, which is why it needs no variable set to happen: it runs
       # on the next firing, and costs one count query on every firing after.
@@ -340,10 +358,14 @@ for adapter in $ADAPTERS; do
         npm run ingest -- --adapter=eur-lex
       ;;
     eur-lex-eea)
-      # Which EU acts the EEA Joint Committee actually took into the Agreement,
-      # read out of the decisions already stored. No requests at all: both
-      # sides are in the database, and this is the pass that lets the EEA scope
-      # include an act too old to carry a relevance marker.
+      # Which EU acts the EEA Joint Committee has taken into the Agreement —
+      # the cross-reference behind the EES tag. Two sources merged: EUR-Lex's
+      # own citation graph, which covers every decision that exists (about
+      # 20,400 act references in ~34 queries), and the text of the decisions
+      # already stored, which costs no requests. This is the pass that lets the
+      # EEA scope include an act too old to carry a relevance marker — of the
+      # EU acts of 2000 in force, none carries the marker and 61 are named by a
+      # decision.
       INGEST_MODE=eea-links \
         npm run ingest -- --adapter=eur-lex
       ;;

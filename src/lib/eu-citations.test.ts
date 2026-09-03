@@ -10,7 +10,12 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { extractEuActRefs, refLookupKeys, decisionNumberFromTitle } from "@/lib/eu-citations";
+import {
+  extractEuActRefs,
+  refLookupKeys,
+  decisionNumberFromTitle,
+  compareDecisionNumbers,
+} from "@/lib/eu-citations";
 
 describe("the Official Journal's reference form", () => {
   test("reads the spaced CELEX an annex point opens with", () => {
@@ -108,5 +113,54 @@ describe("the whole decision", () => {
     );
     assert.equal(decisionNumberFromTitle("Decision of the EEA Joint Committee No 7/94"), "7/94");
     assert.equal(decisionNumberFromTitle("A decision with no number"), null);
+  });
+
+  test("survives the Official Journal's own filing prefix and typos", () => {
+    // All three are real titles as EUR-Lex publishes them. A rule anchored to
+    // the start of the title, or one that spells the Committee's name out,
+    // drops the last two — 34 real decisions between them.
+    assert.equal(
+      decisionNumberFromTitle(
+        "2004/69/: Decision of the EEA Joint Committee No 69/2004 of 8 June 2004 amending Annex I"
+      ),
+      "69/2004"
+    );
+    assert.equal(
+      decisionNumberFromTitle("Decision of the EEA joint committe No 139/2006 of 27 October 2006"),
+      "139/2006"
+    );
+    assert.equal(
+      decisionNumberFromTitle("Decision of the EEA joJint Committee No 254/2021 of 24 September 2021"),
+      "254/2021"
+    );
+  });
+
+  test("refuses the constitutional-requirements notices", () => {
+    // These are announcements about decisions, not decisions. Reading a number
+    // out of one files the notice under a real decision's number, and the act
+    // that decision incorporated would then cite a document that is not it.
+    assert.equal(
+      decisionNumberFromTitle(
+        "Decisions of the EEA Joint Committee for which the constitutional requirements under " +
+          "Article 103 of the EEA Agreement have been fulfilled in 2018 and related Decisions No 12/2019"
+      ),
+      null
+    );
+  });
+});
+
+describe("ordering decision numbers", () => {
+  test("sorts by year, then by number within it", () => {
+    // The numbering restarts every year and the year is the second half, so
+    // sorting these as strings puts 120/2006 before 91/2000.
+    assert.deepEqual(
+      ["120/2006", "91/2000", "154/2018", "7/94", "12/2000"].sort(compareDecisionNumbers),
+      ["7/94", "12/2000", "91/2000", "120/2006", "154/2018"]
+    );
+  });
+
+  test("expands the two-digit years of the early decisions", () => {
+    assert.ok(compareDecisionNumbers("7/94", "1/2000") < 0);
+    assert.ok(compareDecisionNumbers("1/2000", "7/94") > 0);
   });
 });

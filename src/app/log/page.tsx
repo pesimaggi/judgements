@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Pagination } from "@/components/Pagination";
 import { ScopeToggle, useActScope } from "@/components/ScopeToggle";
+import { eeaTag } from "@/lib/eea-tag";
 
 interface ActListItem {
   id: string;
@@ -268,18 +269,7 @@ export default function ActIndexPage() {
               {a.title}
             </Link>
             <span className="font-mono text-[11px] text-inkSoft">{a.citation}</span>
-            {a.jurisdiction === "eu" && (a.eeaRelevant || a.eeaIncorporatedBy.length > 0) && (
-              <span
-                className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[10px] text-inkSoft"
-                title={
-                  a.eeaIncorporatedBy.length > 0
-                    ? `Tekin upp með ákvörðun sameiginlegu EES-nefndarinnar nr. ${a.eeaIncorporatedBy.join(", ")}`
-                    : "Merkt „Text with EEA relevance“ í EUR-Lex"
-                }
-              >
-                {a.eeaIncorporatedBy.length > 0 ? "EES — tekin upp" : "EES-þýðing"}
-              </span>
-            )}
+            <EeaBadge act={a} />
             {a.status === "no_longer_in_force" && (
               <span className="shrink-0 text-[10px] text-inkSoft">fallin úr gildi</span>
             )}
@@ -319,5 +309,27 @@ export default function ActIndexPage() {
         Unofficial reproduction of the consolidated text. Always verify against the official source.
       </p>
     </main>
+  );
+}
+
+/**
+ * The EES tag, as it appears in a list: two words and a tooltip carrying the
+ * decision numbers. Shared with the act reader and the act type-ahead through
+ * eeaTag(), so all three make the same claim.
+ */
+function EeaBadge({ act }: { act: { jurisdiction: string; eeaRelevant: boolean; eeaIncorporatedBy: string[] } }) {
+  const tag = eeaTag(act);
+  if (!tag) return null;
+  return (
+    <span
+      title={tag.detail}
+      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${
+        tag.status === "incorporated"
+          ? "bg-accentSoft font-medium text-accent"
+          : "border border-line text-inkSoft"
+      }`}
+    >
+      {tag.label}
+    </span>
   );
 }
