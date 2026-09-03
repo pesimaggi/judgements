@@ -128,6 +128,9 @@ export class MeilisearchProvider implements SearchProvider {
       citation: h.citation ?? `lög nr. ${h.actNumber}/${h.year}`,
       path: h.path ?? `/log/${h.actNumber}-${h.year}`,
       provisionCount: h.provisionCount ?? 0,
+      aliases: h.aliases ?? [],
+      naturalNumber: h.naturalNumber ?? null,
+      celex: h.celex ?? null,
       eeaRelevant: h.eeaRelevant ?? false,
       eeaIncorporatedBy: h.eeaIncorporatedBy ?? [],
     }));
@@ -279,6 +282,7 @@ export async function syncActToMeilisearch(act: {
   aliases: string[];
   citation?: string | null;
   celex?: string | null;
+  naturalNumber?: number | null;
   eeaRelevant?: boolean;
   eeaIncorporatedBy?: string[];
   provisions: {
@@ -322,6 +326,7 @@ export async function syncActToMeilisearch(act: {
       // scalar and the scope filter asks "is it incorporated at all".
       eeaIncorporated: (act.eeaIncorporatedBy ?? []).length > 0,
       eeaIncorporatedBy: act.eeaIncorporatedBy ?? [],
+      naturalNumber: act.naturalNumber ?? null,
       provisionCount: act.provisions.filter((p) => p.kind === "article").length,
     },
   ]);
