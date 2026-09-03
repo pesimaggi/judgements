@@ -528,10 +528,13 @@ INGEST_MODE=eea-links  npm run ingest -- --adapter=eur-lex   # what the JCDs nam
   names (EUR-Lex records "gdpr" as one, which is what makes the type-ahead
   find it), its dates, its EEA marker and its current consolidated version.
   Seconds per year, no document fetches, resumable from a cursor:
-  `EURLEX_YEARS_PER_RUN` (default 3) years per firing, 1952 to this year and
-  then round again. An act the catalogue stops listing is marked
-  `no_longer_in_force` rather than deleted — it is still the law a judgment of
-  2011 applied.
+  `EURLEX_YEARS_PER_RUN` (default 8) years per firing, **backwards from this
+  year** to 1952 and then round again. The direction matters more than the
+  rate — the first version swept forwards from 1952 at three years a firing,
+  and the production log read "1955: 0 acts in force. 1956: 0. 1957: 0" while
+  the acts anyone would actually search for sat two decades of firings away.
+  An act the catalogue stops listing is marked `no_longer_in_force` rather than
+  deleted — it is still the law a judgment of 2011 applied.
 - **text** — one Cellar request per act, bounded by `EURLEX_ACTS` (default
   150) and ordered EEA-relevant first. `EURLEX_TEXT_SCOPE` is `eea` by default,
   so the acts that reached Icelandic law arrive first; set it to `all` to work

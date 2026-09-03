@@ -78,11 +78,28 @@ import { type IngestionAdapter, type IngestContext, type IngestStats } from "../
 /** The first year swept. The oldest acts still in force date from the 1950s. */
 const FIRST_YEAR = Number(process.env.EURLEX_FIRST_YEAR ?? 1952);
 
-/** Cursor key for the catalogue sweep, in the table the court sweeps use. */
-const CURSOR_KEY = "eur-lex-catalogue";
+/**
+ * Cursor key for the catalogue sweep, in the table the court sweeps use.
+ *
+ * The "-desc" is deliberate and is what retires the old cursor. The sweep used
+ * to run forwards from 1952, and a stored year means the opposite thing under
+ * a sweep that runs backwards: resuming a descending walk at the ascending
+ * walk's 1958 would spend the next decade of runs on the 1950s, which is
+ * exactly the problem this key change is fixing. A new key starts the new
+ * sweep at this year, where it should have started.
+ */
+const CURSOR_KEY = "eur-lex-catalogue-desc";
 
 /** The source key the EEA Joint Committee's decisions are stored under. */
 const JCD_SOURCE_KEY = "eea-joint-committee";
+
+/**
+ * How many EU acts must be stored before the incorporation pass is worth its
+ * requests. Roughly one calendar year of acts in force: below that the
+ * catalogue sweep has not meaningfully begun, and the pass would ask EUR-Lex
+ * for its whole citation graph to match none of it.
+ */
+const MIN_ACTS_FOR_LINKS = 200;
 
 /**
  * Writes one catalogue entry, without touching its text.
@@ -176,18 +193,36 @@ async function retireMissing(year: number, live: Set<string>, ctx: IngestContext
   return gone.length;
 }
 
-/** The catalogue pass: what exists, year by year. */
+/**
+ * The catalogue pass: what exists, year by year, **newest year first**.
+ *
+ * The direction is the whole point. The first version of this swept forwards
+ * from 1952 at three years a firing, and in production that meant the log read
+ * "1955: 0 acts in force. 1956: 0. 1957: 0" while the library stayed empty:
+ * almost nothing from the 1950s is still in force, and at that rate the acts
+ * anyone would search for were two decades of firings away. A corpus that
+ * arrives in the wrong order is not a slow corpus, it is an absent one.
+ *
+ * Backwards from this year puts the acts that matter first — the EEA-relevant
+ * ones are overwhelmingly recent — and the empty early years cost their two
+ * queries at the end of the sweep rather than at the start. The sweep then
+ * wraps to this year again, which is also how amendments and acts falling out
+ * of force are picked up.
+ */
 async function runCatalogue(ctx: IngestContext, stats: IngestStats): Promise<void> {
   const thisYear = new Date().getUTCFullYear();
-  const perRun = Math.max(1, Number(process.env.EURLEX_YEARS_PER_RUN ?? 3));
+  // Eight years is one to two minutes of queries, so a full sweep of the ~75
+  // years is about ten firings — a day and a bit, rather than a decade.
+  const perRun = Math.max(1, Number(process.env.EURLEX_YEARS_PER_RUN ?? 8));
 
   const cursor = await prisma.ingestCursor.findUnique({ where: { key: CURSOR_KEY } });
-  let year = cursor?.year && cursor.year >= FIRST_YEAR ? cursor.year : FIRST_YEAR;
+  let year =
+    cursor?.year && cursor.year >= FIRST_YEAR && cursor.year <= thisYear ? cursor.year : thisYear;
 
   for (let swept = 0; swept < perRun; swept++) {
-    if (year > thisYear) {
-      ctx.log(`Reached ${thisYear}; starting the sweep again at ${FIRST_YEAR}.`);
-      year = FIRST_YEAR;
+    if (year < FIRST_YEAR) {
+      ctx.log(`Reached ${FIRST_YEAR}; starting the sweep again at ${thisYear}.`);
+      year = thisYear;
     }
     try {
       const entries = await catalogueYear(year);
@@ -208,7 +243,7 @@ async function runCatalogue(ctx: IngestContext, stats: IngestStats): Promise<voi
       stats.errorSample = stats.errorSample ?? `${year}: ${String(e)}`;
       ctx.log(`  error on ${year}: ${String(e).slice(0, 200)}`);
     }
-    year++;
+    year--;
   }
 
   if (!ctx.dryRun) {
@@ -218,7 +253,7 @@ async function runCatalogue(ctx: IngestContext, stats: IngestStats): Promise<voi
       update: { year },
     });
   }
-  ctx.log(`Cursor: next run resumes at ${year > thisYear ? FIRST_YEAR : year}`);
+  ctx.log(`Cursor: next run resumes at ${year < FIRST_YEAR ? thisYear : year}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -490,7 +525,20 @@ async function runEeaLinks(ctx: IngestContext, stats: IngestStats): Promise<void
   };
 
   // ---- EUR-Lex's citation graph -------------------------------------------
-  if (process.env.EURLEX_JCD_LINKS !== "0") {
+  // Skipped while the catalogue has barely started. The listing and the link
+  // queries are about thirty-five requests, and with a handful of acts stored
+  // every one of those references resolves to nothing — which is exactly what
+  // the first production run did: "6783 decision(s), 20403 act reference(s), 0
+  // of them to acts held here". The local text scan below costs nothing and
+  // still runs.
+  const enoughToMatch = acts.length >= MIN_ACTS_FOR_LINKS;
+  if (!enoughToMatch) {
+    ctx.log(
+      `Only ${acts.length} EU act(s) stored — not asking EUR-Lex for its citation graph yet ` +
+        `(needs ${MIN_ACTS_FOR_LINKS}). The catalogue pass fills this.`
+    );
+  }
+  if (enoughToMatch && process.env.EURLEX_JCD_LINKS !== "0") {
     const decisions = await listJointCommitteeDecisions();
     // The decision's own number is what a reader cites and what gets stored;
     // EUR-Lex files it under an Official Journal number instead, so the

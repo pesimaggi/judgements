@@ -315,8 +315,36 @@ export async function retireDocuments(source: string, officialUrls: string[]): P
   return removed;
 }
 
+/**
+ * Removes the one character PostgreSQL cannot store.
+ *
+ * A `text` column holds any Unicode except U+0000: the driver sends the value
+ * as UTF-8 and the server answers `22021 invalid byte sequence for encoding
+ * "UTF8": 0x00`, which Prisma surfaces as an opaque
+ * `PrismaClientUnknownRequestError`. Nothing about the message says "your text
+ * has a NUL in it", which is why this took a reproduction to find.
+ *
+ * The documents that carry them are real: ESA publishes e-mail exports,
+ * spreadsheets and .MSG attachments as PDFs, and pdf-parse hands back their
+ * embedded binary as NUL-riddled text. Before this, every one of those failed
+ * to store, was written to the gap ledger, and was re-fetched on every retry
+ * sweep to fail again — the ledger showed the same documents at 21, 27, 29
+ * attempts. A character no database can hold is not a transient failure.
+ *
+ * Stripping is the right repair rather than rejecting the document: what
+ * surrounds the NULs is the readable text of the document, and it is what
+ * someone searching would want to find.
+ */
+export function stripNulls(text: string): string {
+  return text.includes("\u0000") ? text.replace(/\u0000/g, "") : text;
+}
+
 export async function saveDocument(doc: NormalizedDocument): Promise<"indexed" | "skipped"> {
-  const textHash = hashText(doc.fullText);
+  // Before the hash, so that a document's hash is the hash of what is stored:
+  // hashing the raw text would make every stripped document look changed on
+  // the next run and be rewritten for ever.
+  const fullText = stripNulls(doc.fullText);
+  const textHash = hashText(fullText);
   const existing = await prisma.document.findUnique({
     where: { source_officialUrl: { source: doc.source, officialUrl: doc.officialUrl } },
     select: { id: true, textHash: true },
@@ -327,21 +355,24 @@ export async function saveDocument(doc: NormalizedDocument): Promise<"indexed" |
     return "skipped";
   }
 
+  // Every text field, not just the body: a NUL anywhere in the row fails the
+  // whole insert, and these documents carry titles taken from the same
+  // extraction as their text.
   const data = {
     source: doc.source,
-    court: doc.court,
-    caseNumber: doc.caseNumber ?? null,
-    caseName: doc.caseName ?? null,
-    title: doc.title,
+    court: stripNulls(doc.court),
+    caseNumber: doc.caseNumber ? stripNulls(doc.caseNumber) : null,
+    caseName: doc.caseName ? stripNulls(doc.caseName) : null,
+    title: stripNulls(doc.title),
     date: doc.date ?? null,
     year: doc.year ?? (doc.date ? doc.date.getFullYear() : null),
     language: doc.language,
-    parties: doc.parties ?? null,
-    subjectTags: doc.subjectTags,
+    parties: doc.parties ? stripNulls(doc.parties) : null,
+    subjectTags: doc.subjectTags.map(stripNulls),
     officialUrl: doc.officialUrl,
     pdfUrl: doc.pdfUrl ?? null,
     htmlUrl: doc.htmlUrl ?? null,
-    fullText: doc.fullText,
+    fullText,
     textHash,
     isSample: doc.isSample ?? false,
   };
