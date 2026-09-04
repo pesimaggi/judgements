@@ -134,9 +134,24 @@ describe("describeProviderError", () => {
       "openai",
       "gpt-5.6-terra"
     );
-    assert.match(quota ?? "", /billing or credit/);
+    assert.match(quota ?? "", /no credit left/);
 
-    const throttled = describeProviderError(openaiError(429), "openai", "gpt-5.6-terra");
+    // The message this account actually returned, which carried no code we
+    // can rely on. Recognised from the text, because telling somebody with no
+    // credit to "wait a moment" sends them to watch a problem that will never
+    // resolve.
+    const byMessage = describeProviderError(
+      openaiError(429, undefined, "You have no credits remaining. Add credits to continue using the API."),
+      "openai",
+      "gpt-5.6-luna"
+    );
+    assert.match(byMessage ?? "", /no credit left/);
+
+    const throttled = describeProviderError(
+      openaiError(429, undefined, "Rate limit reached for requests"),
+      "openai",
+      "gpt-5.6-terra"
+    );
     assert.match(throttled ?? "", /rate-limiting/);
   });
 

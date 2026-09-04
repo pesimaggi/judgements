@@ -342,12 +342,20 @@ export function describeProviderError(
       return `The ${provider} API key is valid but not allowed to use this endpoint. If it is a project-scoped key, check that the project has access.`;
     case 404:
       return `The model "${model}" does not exist for this ${provider} key. Set ${modelVar} to a model your account can use.`;
-    case 429:
-      // A brand-new key with no billing set up returns this on every call,
-      // which is not the same problem as asking too fast.
-      return code === "insufficient_quota"
-        ? `The ${provider} account has no available quota. Add billing or credit to the account this key belongs to — a new key with no credit fails on its first request.`
+    case 429: {
+      // Two very different problems share this status. An account with no
+      // credit fails on its very first request and never recovers by waiting;
+      // being throttled does. Telling the first one to "wait a moment" is the
+      // worst thing this function could say, so it is recognised two ways —
+      // the machine-readable code where the provider sets one, and the text
+      // where it does not. Observed in the wild: "You have no credits
+      // remaining. Add credits to continue using the API."
+      const noCredit =
+        code === "insufficient_quota" || /quota|credit|billing/i.test(apiError.message);
+      return noCredit
+        ? `The ${provider} account has no credit left. Add credit or billing to the account this key belongs to — a new key with no credit fails on its very first request, and this does not clear by waiting.`
         : `The ${provider} API is rate-limiting this deployment. Wait a moment and ask again.`;
+    }
     case 400:
       return /model/i.test(apiError.message)
         ? `The ${provider} API rejected the model "${model}". Set ${modelVar} to a model your account can use.`

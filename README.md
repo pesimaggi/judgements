@@ -1727,7 +1727,7 @@ If a question comes back with an error, the error says which of these it is:
 |---|---|
 | *"The API key was rejected"* | The key is wrong, or picked up a trailing space or newline when it was pasted. |
 | *"The model … does not exist for this key"* | The default model is not one this account can use. Set `ASK_MODEL_OPENAI` (or `ASK_MODEL_ANTHROPIC`) to one it can. |
-| *"The account has no available quota"* | The key is valid but the account has no credit. A brand-new key with no billing set up fails on its very first request; this does not clear by waiting. |
+| *"The account has no credit left"* | The key is valid but the account has no credit — e.g. OpenAI's *"You have no credits remaining"*. A brand-new key with no billing set up fails on its very first request, and this does not clear by waiting. |
 | *"valid but not allowed to use this endpoint"* | Usually a project-scoped key whose project lacks access. |
 | *"Ég fann ekkert í brunninum" / "I found nothing in the well"* | Not a key problem at all. The model was never called: the search returned nothing, so there was nothing to answer from. |
 
