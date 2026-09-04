@@ -1,8 +1,8 @@
 /**
  * EUR-Lex adapter — the EU acts in force, as acts rather than as documents.
  *
- * WHAT IT INGESTS. Every regulation, directive and decision in force, as
- * EUR-Lex records them: about 33,000 acts, stored the way Lagasafn's acts are
+ * WHAT IT INGESTS. Every regulation and directive in force, as EUR-Lex
+ * records them: about 17,500 acts, stored the way Lagasafn's acts are
  * stored — one `Act` row with `jurisdiction = "eu"`, its chapters, its
  * articles and their numbered paragraphs. An EU act is not case law and does
  * not belong among the sources in the search panel; it belongs in the act

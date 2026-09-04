@@ -619,7 +619,7 @@ catalogue pass opens by deleting every stored EU act whose `docType` is not one
 of the kept families, in chunks, from Meilisearch as well as from Postgres:
 
 ```
-[eur-lex] Deleting 2160 EU act(s) of unwanted types; keeping regulation, directive.
+[eur-lex] Deleting 2160 EU act(s) of a kind no longer ingested; keeping regulation, directive.
 ```
 
 It refuses to delete anything when the kept list is empty, so a mistyped

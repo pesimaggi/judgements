@@ -44,7 +44,7 @@ const PAGE_SIZE = 100;
  * thousands of EU ones, which is why the search box and the paging are
  * server-side. This page used to fetch the whole list once and filter it in
  * the browser; that is a fine trick for 900 rows of metadata and a download
- * for 33,000.
+ * for 17,500.
  *
  * The EU tab carries the EEA/ESB scope toggle — see components/ScopeToggle.
  */

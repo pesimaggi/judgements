@@ -8,7 +8,7 @@
  * paginate its whole index to answer "what have we got". Searching acts still
  * goes through the provider (searchActs) — this is the catalogue view.
  *
- * THE EEA / EU SCOPE. The EU library is about 33,000 acts, and most of them
+ * THE EEA / EU SCOPE. The EU library is about 17,500 acts, and most of them
  * have never had anything to do with Iceland. So every act query takes a
  * scope:
  *
