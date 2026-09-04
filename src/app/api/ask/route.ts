@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { isAskEnabled, AskRefusal } from "@/lib/ask/llm";
+import {
+  isAskEnabled,
+  resolveProvider,
+  askModelId,
+  describeProviderError,
+  AskRefusal,
+} from "@/lib/ask/llm";
 import { planQuery } from "@/lib/ask/plan";
 import { retrieve } from "@/lib/ask/retrieve";
 import { answer } from "@/lib/ask/answer";
@@ -47,6 +53,34 @@ function rateLimited(key: string): boolean {
 function clientKey(req: Request): string {
   const forwarded = req.headers.get("x-forwarded-for");
   return forwarded?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown";
+}
+
+/**
+ * Whether the well is configured, asked by the browser on every page load.
+ *
+ * This is a request rather than a prop for one reason: the pages that carry
+ * the launcher are statically prerendered, so anything the *layout* reads from
+ * the environment is read once at build time and baked into the HTML. A key
+ * added to the deployment afterwards would then never appear to exist, and the
+ * launcher would stay missing until the next rebuild — silently, with a
+ * correctly configured service. Asking here moves the question to where the
+ * answer can change.
+ *
+ * `provider` and `model` are returned as well, so "did my ASK_PROVIDER change
+ * take effect?" and "which model is it actually asking for?" have answers that
+ * do not require reading the deploy logs. Neither is a secret — no key, and
+ * nothing that is not already a product decision.
+ */
+export async function GET() {
+  const provider = resolveProvider();
+  return NextResponse.json(
+    {
+      enabled: isAskEnabled(),
+      provider,
+      model: provider ? askModelId(provider) : null,
+    },
+    { headers: { "Cache-Control": "no-store" } }
+  );
 }
 
 /**
@@ -112,7 +146,21 @@ export async function POST(req: Request) {
     if (e instanceof AskRefusal) {
       return NextResponse.json({ error: e.message }, { status: 422 });
     }
+
+    // Always logged in full, whatever is shown. The message below is a
+    // summary; the stack is what a real bug is diagnosed from.
     console.error("Ask failed:", e);
+
+    // A rejected key, an unavailable model and an unpaid account are the three
+    // ways this feature fails on its first day, and each has a specific fix.
+    // Saying "try again in a moment" to any of them sends someone looking in
+    // the wrong place.
+    const provider = resolveProvider();
+    const described = provider
+      ? describeProviderError(e, provider, askModelId(provider))
+      : null;
+    if (described) return NextResponse.json({ error: described }, { status: 502 });
+
     return NextResponse.json(
       { error: "The well could not answer that. Try again in a moment." },
       { status: 500 }

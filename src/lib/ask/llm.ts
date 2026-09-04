@@ -305,6 +305,61 @@ class OpenAIAskModel implements AskModel {
   }
 }
 
+
+/**
+ * Turns a provider's error into something the person who configured this
+ * deployment can act on.
+ *
+ * This exists because of how the well fails. A planning failure is swallowed
+ * on purpose — it degrades to keywords — so the *first* place a bad key or an
+ * unavailable model actually surfaces is the answer call, and from the outside
+ * that looked identical to every other kind of failure: "the well could not
+ * answer that". Every one of the cases below is a setup mistake with a
+ * specific fix, and none of them is fixable from a generic message.
+ *
+ * Returns null for anything unrecognised, which stays generic and goes to the
+ * log.
+ */
+export function describeProviderError(
+  error: unknown,
+  provider: AskProvider,
+  model: string
+): string | null {
+  const apiError =
+    error instanceof OpenAI.APIError || error instanceof Anthropic.APIError ? error : null;
+  if (!apiError) return null;
+
+  const keyVar = provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
+  const modelVar = provider === "openai" ? "ASK_MODEL_OPENAI" : "ASK_MODEL_ANTHROPIC";
+  // Only the OpenAI side carries a `code`; read it off without assuming it.
+  const raw = (apiError as { code?: unknown }).code;
+  const code = typeof raw === "string" ? raw : "";
+
+  switch (apiError.status) {
+    case 401:
+      return `The ${provider} API key was rejected. Check ${keyVar} on this deployment — a copied key often picks up a trailing space or newline.`;
+    case 403:
+      return `The ${provider} API key is valid but not allowed to use this endpoint. If it is a project-scoped key, check that the project has access.`;
+    case 404:
+      return `The model "${model}" does not exist for this ${provider} key. Set ${modelVar} to a model your account can use.`;
+    case 429:
+      // A brand-new key with no billing set up returns this on every call,
+      // which is not the same problem as asking too fast.
+      return code === "insufficient_quota"
+        ? `The ${provider} account has no available quota. Add billing or credit to the account this key belongs to — a new key with no credit fails on its first request.`
+        : `The ${provider} API is rate-limiting this deployment. Wait a moment and ask again.`;
+    case 400:
+      return /model/i.test(apiError.message)
+        ? `The ${provider} API rejected the model "${model}". Set ${modelVar} to a model your account can use.`
+        : null;
+    default:
+      // A connection error carries no status at all.
+      return apiError.status === undefined
+        ? `Could not reach the ${provider} API from this deployment.`
+        : null;
+  }
+}
+
 /** The model declined the request outright. Reported, not swallowed. */
 export class AskRefusal extends Error {
   constructor(explanation?: string) {

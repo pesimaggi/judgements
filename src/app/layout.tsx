@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Inter, Source_Serif_4 } from "next/font/google";
 import Link from "next/link";
 import { WellChat } from "@/components/WellChat";
-import { isAskEnabled } from "@/lib/ask/llm";
 import "./globals.css";
 
 const sans = Inter({ subsets: ["latin", "latin-ext"], variable: "--font-sans" });
@@ -42,9 +41,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         </header>
         {children}
-        {/* Read on the server: with no API key the launcher is never rendered
-            at all, rather than offered and then failing when it is clicked. */}
-        <WellChat enabled={isAskEnabled()} />
+        {/* Asks the server whether it is configured before it renders
+            anything. Deliberately not decided here: these pages are
+            statically prerendered, so a value read from the environment in
+            this file would be frozen at build time. */}
+        <WellChat />
       </body>
     </html>
   );

@@ -10,7 +10,15 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { resolveProvider, isAskEnabled, askModelId, askEffort } from "@/lib/ask/llm";
+import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
+import {
+  resolveProvider,
+  isAskEnabled,
+  askModelId,
+  askEffort,
+  describeProviderError,
+} from "@/lib/ask/llm";
 
 describe("resolveProvider", () => {
   test("one configured key needs no ASK_PROVIDER", () => {
@@ -97,5 +105,49 @@ describe("askEffort", () => {
 
   test("ignores a value neither API would accept", () => {
     assert.equal(askEffort({ ASK_EFFORT: "maximum" }), "medium");
+  });
+});
+
+describe("describeProviderError", () => {
+  // Built through the SDK's own `generate`, which is the path a real HTTP
+  // response takes — it unwraps the body's `error` object, which is where the
+  // `code` this function branches on actually lives.
+  const openaiError = (status: number, code?: string, message = "boom") =>
+    OpenAI.APIError.generate(status, { error: { code, message } }, message, new Headers());
+
+  test("a rejected key points at the key variable", () => {
+    const described = describeProviderError(openaiError(401), "openai", "gpt-5.6-terra");
+    assert.match(described ?? "", /OPENAI_API_KEY/);
+  });
+
+  test("an unknown model names the model and the variable that sets it", () => {
+    const described = describeProviderError(openaiError(404), "openai", "gpt-5.6-terra");
+    assert.match(described ?? "", /gpt-5\.6-terra/);
+    assert.match(described ?? "", /ASK_MODEL_OPENAI/);
+  });
+
+  test("no quota is told apart from being rate-limited", () => {
+    // A new key with no billing 429s on its very first call, which is not the
+    // same problem as asking too fast, and does not go away by waiting.
+    const quota = describeProviderError(
+      openaiError(429, "insufficient_quota"),
+      "openai",
+      "gpt-5.6-terra"
+    );
+    assert.match(quota ?? "", /billing or credit/);
+
+    const throttled = describeProviderError(openaiError(429), "openai", "gpt-5.6-terra");
+    assert.match(throttled ?? "", /rate-limiting/);
+  });
+
+  test("names the right variables for the Anthropic side", () => {
+    const e = Anthropic.APIError.generate(404, { error: { message: "nope" } }, "nope", new Headers());
+    const described = describeProviderError(e, "anthropic", "claude-opus-5");
+    assert.match(described ?? "", /ASK_MODEL_ANTHROPIC/);
+  });
+
+  test("anything that is not a provider error stays generic", () => {
+    assert.equal(describeProviderError(new Error("kaboom"), "openai", "m"), null);
+    assert.equal(describeProviderError(openaiError(500), "openai", "m"), null);
   });
 });

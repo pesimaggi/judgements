@@ -44,7 +44,11 @@ const EXAMPLES = [
   "Hvaða reglur gilda um uppsögn ráðningarsamnings?",
 ];
 
-export function WellChat({ enabled }: { enabled: boolean }) {
+export function WellChat() {
+  // null until the server has been asked. The launcher is not rendered
+  // optimistically: a control that appears and then vanishes is worse than
+  // one that arrives a moment late.
+  const [enabled, setEnabled] = useState<boolean | null>(null);
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [phase, setPhase] = useState<WellPhase>("idle");
@@ -54,6 +58,20 @@ export function WellChat({ enabled }: { enabled: boolean }) {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const busy = phase === "dropping" || phase === "loading";
+
+  useEffect(() => {
+    // Whether a provider is configured is a property of the running server,
+    // not of the build that produced this page — see GET /api/ask. A failure
+    // here leaves the well switched off, which is the safe way to be wrong.
+    let live = true;
+    fetch("/api/ask")
+      .then((res) => (res.ok ? res.json() : { enabled: false }))
+      .then((data) => live && setEnabled(Boolean(data.enabled)))
+      .catch(() => live && setEnabled(false));
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (open) inputRef.current?.focus();
@@ -153,7 +171,7 @@ export function WellChat({ enabled }: { enabled: boolean }) {
     [busy, messages]
   );
 
-  if (!enabled) return null;
+  if (enabled !== true) return null;
 
   if (!open) {
     return (

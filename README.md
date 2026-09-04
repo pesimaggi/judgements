@@ -1705,6 +1705,39 @@ language }`. It is rate-limited to 12 questions per 10 minutes per address, in
 memory — enough to stop an unmetered public endpoint spending money, and no
 substitute for a real limit in front of the app.
 
+#### When the well says it cannot answer
+
+`GET /api/ask` reports what the running server is configured with — not what
+it was built with:
+
+```bash
+curl https://<your-app>/api/ask
+# {"enabled":true,"provider":"openai","model":"gpt-5.6-terra"}
+```
+
+That endpoint is also what the launcher itself asks before it renders, which
+is why enabling the well does **not** need a rebuild: the pages that carry the
+launcher are statically prerendered, so anything the layout read from the
+environment would be frozen at build time and a key added afterwards would
+never appear to exist.
+
+If a question comes back with an error, the error says which of these it is:
+
+| What you see | What it means |
+|---|---|
+| *"The API key was rejected"* | The key is wrong, or picked up a trailing space or newline when it was pasted. |
+| *"The model … does not exist for this key"* | The default model is not one this account can use. Set `ASK_MODEL_OPENAI` (or `ASK_MODEL_ANTHROPIC`) to one it can. |
+| *"The account has no available quota"* | The key is valid but the account has no credit. A brand-new key with no billing set up fails on its very first request; this does not clear by waiting. |
+| *"valid but not allowed to use this endpoint"* | Usually a project-scoped key whose project lacks access. |
+| *"Ég fann ekkert í brunninum" / "I found nothing in the well"* | Not a key problem at all. The model was never called: the search returned nothing, so there was nothing to answer from. |
+
+That last row is the useful distinction. The well never calls a model without
+retrieved law, so *"I found nothing"* means the database and the search are the
+thing to look at, and any other error means the provider call is.
+
+The full stack for anything unrecognised goes to the server log
+(`console.error("Ask failed:", …)`) — on Railway, the service's **Deploy Logs**.
+
 ### What it will not do
 
 It describes what the law says. It does not advise on what to do, does not
