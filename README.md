@@ -24,7 +24,7 @@ The three Icelandic courts published at [island.is/domar](https://island.is/doma
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
 - **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force Icelandic act; `eur-lex` ingests the EU regulations and directives in force from the Publications Office; `cjeu` ingests the judgments of the Court of Justice and the General Court from the same endpoint; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `eea-joint-committee` ingests the EEA Joint Committee's decisions (their own text, one record each); `eftasurv` ingests the EFTA Surveillance Authority's ~6,725 public documents; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court, both halves of it; `uua` ingests Úrskurðarnefnd umhverfis- og auðlindamála (~3,000 planning and environmental rulings, on its own site); `obyggdanefnd` ingests the þjóðlendu commission's 84 úrskurðir; `neytendamal` ingests Áfrýjunarnefnd neytendamála; `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
 - **Scholarly commentary** — Tímarit Lögréttu and Vefrit Úlfljóts, searched alongside the case law rather than in a separate silo, so a query about an unsettled point returns both the judgments and the articles arguing about them. Articles are indexed in full but read at the journal that published them: their cards and pages link out rather than reproducing the text here.
-- **The well** — an assistant in the bottom-right corner that answers a question in prose instead of returning a result list. Drop a question in ("Hvernig sæki ég um íslenskan ríkisborgararétt?") and it searches the acts, the provisions and every decision source, then writes an answer in the language you asked in with a numbered citation on every proposition — each one a link to the article or the judgment it rests on. It answers only from what the search returned: with nothing retrieved it says so rather than answering from the model's own memory of the law. Off unless an `ANTHROPIC_API_KEY` is configured. See *Asking the well* below.
+- **The well** — an assistant in the bottom-right corner that answers a question in prose instead of returning a result list. Drop a question in ("Hvernig sæki ég um íslenskan ríkisborgararétt?") and it searches the acts, the provisions and every decision source, then writes an answer in the language you asked in with a numbered citation on every proposition — each one a link to the article or the judgment it rests on. It answers only from what the search returned: with nothing retrieved it says so rather than answering from the model's own memory of the law. Off unless an LLM API key is configured; OpenAI and Anthropic are both supported and swap with one variable. See *Asking the well* below.
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
 
 ## Quick start
@@ -44,12 +44,15 @@ Try it: tick a court or two, then search `stjórnsýsla`, `"sönnun um orsakaten
 ### Optional: switch on the well
 
 ```bash
-# .env
+# .env — one key is enough
+OPENAI_API_KEY=sk-...
+# or
 ANTHROPIC_API_KEY=sk-ant-...
 ```
-The assistant in the bottom-right corner is off until this is set — the
-launcher is not rendered at all rather than offered and then failing. See
-*Asking the well* below.
+The assistant in the bottom-right corner is off until one of these is set —
+the launcher is not rendered at all rather than offered and then failing. With
+one key configured there is nothing else to set: the provider is whichever key
+is present. See *Asking the well* below.
 
 ### Optional: Meilisearch instead of Postgres FTS
 
@@ -1651,15 +1654,51 @@ the air, so the animation covers the wait rather than adding to it.
 
 ### Configuration
 
+The well runs on **OpenAI or Anthropic**, chosen at runtime. Everything above
+`src/lib/ask/llm.ts` — the planning, the retrieval, the answer's rules — is
+written against a two-method interface and does not know which one answered,
+so switching is one variable and no code.
+
 | Variable | Default | What it does |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | — | **Required.** Without it the launcher never renders and `/api/ask` answers 503. The well is off by default. |
-| `ASK_MODEL` | `claude-opus-5` | The model that plans and answers. |
-| `ASK_EFFORT` | `medium` | `low` … `max`. How hard the model works on the answer. A legal answer is worth thinking about, but somebody is watching a bucket go down a well while it does, so the default sits below the API's own `high`. Raise it if you would rather wait. |
+| `OPENAI_API_KEY` | — | The key for the OpenAI side. |
+| `ANTHROPIC_API_KEY` | — | The key for the Anthropic side. |
+| `ASK_PROVIDER` | *the key that is set* | `openai` or `anthropic`. Only needed when both keys are configured — then this is the switch. |
+| `ASK_MODEL_OPENAI` | `gpt-5.6-terra` | Model on the OpenAI side. `gpt-5.6-sol` or `gpt-6-astra` for a better answer, `gpt-5.6-luna` for a much cheaper one. |
+| `ASK_MODEL_ANTHROPIC` | `claude-opus-5` | Model on the Anthropic side. |
+| `ASK_MODEL` | — | Overrides whichever of those two is active. Set the per-provider pair once and flip `ASK_PROVIDER`; use this for a quick one-off. |
+| `ASK_EFFORT` | `medium` | `low` … `max`. How hard the model works on the answer — both APIs happen to take the same five words. A legal answer is worth thinking about, but somebody is watching a bucket go down a well while it does, so the default sits below either API's own `high`. Raise it if you would rather wait. |
 
-Server-side refusal fallbacks are on: if the model declines a request, the API
-re-runs it on a substitute chosen by refusal category rather than returning an
-empty answer to the well.
+**With no key at all the well is off**, and off means absent: the launcher is
+never rendered rather than offered and then failing, and `/api/ask` answers
+503. The same holds for `ASK_PROVIDER=openai` with no OpenAI key — naming a
+provider whose key is missing switches the well off rather than quietly
+answering from the other one.
+
+#### Swapping providers to compare them
+
+Set both keys and both model variables once, then flip the one switch:
+
+```bash
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+ASK_MODEL_OPENAI=gpt-5.6-terra
+ASK_MODEL_ANTHROPIC=claude-opus-5
+
+ASK_PROVIDER=openai      # ← the only line that changes
+```
+
+On Railway these are ordinary service variables, so changing `ASK_PROVIDER`
+triggers a redeploy and takes effect a minute or so later — it is a
+deploy-time switch, not a per-request one. Ask the same question on each side
+and compare; the retrieval is identical either way, so what differs is only
+how the retrieved law was written up.
+
+On the Anthropic side, server-side refusal fallbacks are on: if the model
+declines a request, the API re-runs it on a substitute chosen by refusal
+category rather than returning an empty answer to the well. The OpenAI side
+reports a filtered completion through `finish_reason` instead, and the well
+says so rather than showing a blank card.
 
 `POST /api/ask` takes `{ question, history }` and returns `{ answer, sources,
 language }`. It is rate-limited to 12 questions per 10 minutes per address, in
@@ -1723,6 +1762,7 @@ What is covered, and why those:
 | `lib/query-parser.ts` | case-number detection and the boolean → `websearch_to_tsquery` translation |
 | `lib/sources.ts`, `lib/adr-boards.ts` | registry invariants: unique keys, every board a source, Félagsdómur not among the boards, exotic `Committee=` values surviving URL encoding |
 | `search-eval/metrics.ts` | the ranking metrics themselves |
+| `lib/ask/llm.ts` | which provider answers and on which model — configuration flipped on a dashboard, whose failure modes (a silent fallback to the other provider, a launcher with no key behind it) are quiet ones |
 | `lib/ask/plan.ts` | that a plan is sanitised before it reaches the search, and that a planning failure degrades to keywords instead of failing the question |
 | `lib/ask/answer.ts` | that a question with no retrieved law, and a question that is not a legal one, never reach the model at all |
 | `lib/ask/render.ts` | that `[3]` becomes the link to source 3 and not four characters of prose |
@@ -1835,7 +1875,8 @@ src/
     legal-citations.ts           recognises act/regulation citations in judgment text
     search/                      provider abstraction: postgres (default) + meilisearch
     ask/                         the well — see "Asking the well"
-      llm.ts                     the one place this app talks to a model
+      llm.ts                     the one place this app talks to a model;
+                                 OpenAI and Anthropic behind one interface
       plan.ts                    question → search terms in the corpus's language
       retrieve.ts                acts + provisions + decisions, numbered
       answer.ts                  the grounding rules, and the two short-circuits
@@ -1998,7 +2039,7 @@ This repo runs as **two Railway services** from the same GitHub repo: the always
 2. On the app service, go to **Variables** → **Add Reference Variable** → select the Postgres service's `DATABASE_URL`.
 3. The repo's `railway.json` already sets the **Pre-Deploy Command** to `npm run db:deploy`, so this runs automatically on every deploy — entirely from the Railway website, no CLI required. It runs `prisma db push` (creates/updates tables from `schema.prisma`) and the search setup script (`pg_trgm`/`unaccent` extensions, the full-text search function, the `search_vector` column and its trigger, and the GIN/trigram indexes) against the linked `DATABASE_URL`, with no `psql` binary required. The first deploy after the `search_vector` column was introduced backfills it for every existing row, so expect that one pre-deploy run to take noticeably longer than usual. (If you'd rather manage this from the dashboard instead, remove `deploy.preDeployCommand` from `railway.json` and set the same command under **Settings** → **Deploy** → **Pre-Deploy Command**.)
 4. Deploy. `npm install` will also run `prisma generate` automatically (via `postinstall`) before `next build`, so the Prisma Client exists at build time.
-5. To switch on the well, add `ANTHROPIC_API_KEY` under **Variables** (and optionally `ASK_MODEL` / `ASK_EFFORT`). Without it the app deploys and runs exactly as before, with no launcher. See *Asking the well*.
+5. To switch on the well, add `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) under **Variables**. Without one the app deploys and runs exactly as before, with no launcher. To be able to compare the two providers, add both keys plus `ASK_MODEL_OPENAI` / `ASK_MODEL_ANTHROPIC`, and flip `ASK_PROVIDER` between `openai` and `anthropic` — Railway redeploys the service on any variable change, so the swap takes effect a minute or so later. See *Asking the well*.
 
 ### Ingestion service (scheduled)
 

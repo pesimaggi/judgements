@@ -4,33 +4,58 @@
  * Everything above it — planning, retrieval, answering — is written against
  * the two methods below and knows nothing about which model answers. That is
  * deliberate: the retrieval is the part that makes the well worth using, and
- * it should survive changing your mind about the model.
+ * it should survive changing your mind about the model. Both providers are
+ * implemented here and nowhere else; swapping between them is one environment
+ * variable and no code.
  *
  * Configuration, all from the environment:
  *
- *   ANTHROPIC_API_KEY   required. Without it the well is switched off — the
- *                       launcher never renders and /api/ask answers 503.
- *   ASK_MODEL           model id, default "claude-opus-5".
- *   ASK_EFFORT          "low" | "medium" | "high" | "xhigh" | "max", default
- *                       "medium". How hard the model works on the answer. A
- *                       legal answer is worth thinking about, but somebody is
- *                       watching a bucket go down a well while it does, so the
- *                       default sits below the API's own default of "high".
- *                       Raise it if you would rather wait.
+ *   ASK_PROVIDER         "openai" | "anthropic". The switch. Leave it unset
+ *                        and the provider is whichever key is present; set it
+ *                        to pick, which is what you want with both keys
+ *                        configured and a comparison to run.
+ *   OPENAI_API_KEY       the key for the OpenAI side.
+ *   ANTHROPIC_API_KEY    the key for the Anthropic side.
+ *   With neither, the well is switched off: the launcher never renders and
+ *   /api/ask answers 503.
+ *
+ *   ASK_MODEL_OPENAI     model id, default "gpt-5.6-terra".
+ *   ASK_MODEL_ANTHROPIC  model id, default "claude-opus-5".
+ *   ASK_MODEL            overrides whichever of those is active. Set the two
+ *                        above once and flip ASK_PROVIDER; use this one for a
+ *                        quick one-off.
+ *
+ *   ASK_EFFORT           "low" | "medium" | "high" | "xhigh" | "max", default
+ *                        "medium". How hard the model works on the answer.
+ *                        Both APIs take this same vocabulary. A legal answer
+ *                        is worth thinking about, but somebody is watching a
+ *                        bucket go down a well while it does, so the default
+ *                        sits below either API's own default of "high". Raise
+ *                        it if you would rather wait.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import type { AskTurn } from "./types";
 
-/** How hard the model is asked to work. The Messages API's own vocabulary. */
+/**
+ * How hard the model is asked to work. Both providers happen to take the same
+ * five words, so nothing has to be translated between them.
+ */
 export type AskEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
-const DEFAULT_MODEL = "claude-opus-5";
+export type AskProvider = "openai" | "anthropic";
+
+const DEFAULT_MODELS: Record<AskProvider, string> = {
+  openai: "gpt-5.6-terra",
+  anthropic: "claude-opus-5",
+};
 
 /**
  * Claude Opus 5's safety classifiers can decline a request outright. With
  * this beta on, a declined request is re-run server-side on a substitute
  * model chosen by refusal category, instead of the refusal coming back to us
- * as an empty answer in the well.
+ * as an empty answer in the well. Anthropic only; the OpenAI side reports a
+ * filtered completion through `finish_reason` instead.
  */
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
@@ -47,9 +72,9 @@ export interface ExtractRequest<T> {
   maxTokens: number;
   effort: AskEffort;
   /**
-   * The shape to extract, as a tool the model is made to call. A strict tool
-   * rather than a "reply with JSON" instruction, so the arguments are
-   * validated against the schema before they ever reach us.
+   * The shape to extract. Sent as a strict tool to Anthropic and as a strict
+   * `json_schema` response format to OpenAI — both validate the arguments
+   * against the schema before they reach us, so one JSON Schema serves both.
    */
   tool: {
     name: string;
@@ -71,30 +96,88 @@ export interface AskModel {
   extract<T>(req: ExtractRequest<T>): Promise<T | null>;
 }
 
-/** True when the well has an API key to work with. */
-export function isAskEnabled(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY);
+/**
+ * The environment this module reads. Passed in so it can be tested, and with
+ * an index signature so `process.env` itself is assignable to it.
+ */
+export interface AskEnv {
+  [key: string]: string | undefined;
+  ASK_PROVIDER?: string;
+  OPENAI_API_KEY?: string;
+  ANTHROPIC_API_KEY?: string;
+  ASK_MODEL?: string;
+  ASK_MODEL_OPENAI?: string;
+  ASK_MODEL_ANTHROPIC?: string;
+  ASK_EFFORT?: string;
 }
 
-export function askEffort(): AskEffort {
-  const raw = process.env.ASK_EFFORT;
+/**
+ * Which provider answers, and whether one can.
+ *
+ * `ASK_PROVIDER` wins outright, including when its key is missing: naming a
+ * provider and getting the other one silently is worse than an error that
+ * says the key is not set. With it unset, the one configured key decides,
+ * which is the case that wants no thought at all.
+ *
+ * Both keys and no `ASK_PROVIDER` is genuinely ambiguous. It resolves to
+ * OpenAI and says so in the log, rather than switching the well off over a
+ * config that plainly meant to enable it.
+ */
+export function resolveProvider(env: AskEnv = process.env): AskProvider | null {
+  const named = env.ASK_PROVIDER?.trim().toLowerCase();
+  if (named === "openai" || named === "anthropic") return named;
+
+  const openai = Boolean(env.OPENAI_API_KEY);
+  const anthropic = Boolean(env.ANTHROPIC_API_KEY);
+
+  if (openai && anthropic) {
+    console.warn(
+      "Ask: both OPENAI_API_KEY and ANTHROPIC_API_KEY are set and ASK_PROVIDER is not. Using OpenAI; set ASK_PROVIDER to choose."
+    );
+    return "openai";
+  }
+  if (openai) return "openai";
+  if (anthropic) return "anthropic";
+  return null;
+}
+
+/** The key the resolved provider needs, which it may not actually have. */
+export function providerKey(provider: AskProvider, env: AskEnv = process.env): string | undefined {
+  return provider === "openai" ? env.OPENAI_API_KEY : env.ANTHROPIC_API_KEY;
+}
+
+/**
+ * True when a provider is resolved *and* holds a key. Both halves matter:
+ * `ASK_PROVIDER=openai` with no OpenAI key is a well that would render a
+ * launcher and then fail on the first question.
+ */
+export function isAskEnabled(env: AskEnv = process.env): boolean {
+  const provider = resolveProvider(env);
+  return provider !== null && Boolean(providerKey(provider, env));
+}
+
+export function askEffort(env: AskEnv = process.env): AskEffort {
+  const raw = env.ASK_EFFORT;
   const allowed: AskEffort[] = ["low", "medium", "high", "xhigh", "max"];
   return allowed.includes(raw as AskEffort) ? (raw as AskEffort) : "medium";
 }
 
-export function askModelId(): string {
-  return process.env.ASK_MODEL?.trim() || DEFAULT_MODEL;
+/** `ASK_MODEL` overrides, then the provider's own variable, then the default. */
+export function askModelId(provider: AskProvider, env: AskEnv = process.env): string {
+  const perProvider = provider === "openai" ? env.ASK_MODEL_OPENAI : env.ASK_MODEL_ANTHROPIC;
+  return env.ASK_MODEL?.trim() || perProvider?.trim() || DEFAULT_MODELS[provider];
 }
 
 /**
- * One client for the process. It holds a connection pool, and building a new
- * one per question would throw that away on every question.
+ * One client per provider for the process. Each holds a connection pool, and
+ * building a new one per question would throw that away on every question.
  */
-let client: Anthropic | undefined;
+let anthropicClient: Anthropic | undefined;
+let openaiClient: OpenAI | undefined;
 
 class AnthropicAskModel implements AskModel {
-  private client = (client ??= new Anthropic());
-  private model = askModelId();
+  private client = (anthropicClient ??= new Anthropic());
+  private model = askModelId("anthropic");
 
   async complete(req: CompleteRequest): Promise<string> {
     const response = await this.client.beta.messages.create({
@@ -158,6 +241,70 @@ class AnthropicAskModel implements AskModel {
   }
 }
 
+class OpenAIAskModel implements AskModel {
+  private client = (openaiClient ??= new OpenAI());
+  private model = askModelId("openai");
+
+  /**
+   * The system prompt goes in a `developer` message, which is what the role
+   * is called on this API. `max_completion_tokens`, not `max_tokens`: the
+   * older name does not cover the reasoning tokens these models spend before
+   * they write anything.
+   */
+  private messages(req: CompleteRequest | ExtractRequest<unknown>) {
+    return [
+      { role: "developer" as const, content: req.system },
+      ...req.messages.map((m) => ({ role: m.role, content: m.content })),
+    ];
+  }
+
+  async complete(req: CompleteRequest): Promise<string> {
+    const response = await this.client.chat.completions.create({
+      model: this.model,
+      max_completion_tokens: req.maxTokens,
+      reasoning_effort: req.effort,
+      messages: this.messages(req),
+    });
+
+    const choice = response.choices[0];
+    if (choice?.finish_reason === "content_filter") throw new AskRefusal();
+    return choice?.message?.content?.trim() ?? "";
+  }
+
+  async extract<T>(req: ExtractRequest<T>): Promise<T | null> {
+    const response = await this.client.chat.completions.create({
+      model: this.model,
+      max_completion_tokens: req.maxTokens,
+      reasoning_effort: req.effort,
+      messages: this.messages(req),
+      // Strict, so the JSON validates against the schema before it reaches
+      // `parse` — the same guarantee the Anthropic side gets from a strict
+      // tool, from the same one schema.
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: req.tool.name,
+          description: req.tool.description,
+          schema: req.tool.schema,
+          strict: true,
+        },
+      },
+    });
+
+    const choice = response.choices[0];
+    if (choice?.finish_reason === "content_filter") return null;
+    const text = choice?.message?.content;
+    if (!text) return null;
+    try {
+      return req.parse(JSON.parse(text));
+    } catch {
+      // A truncated or non-JSON body is a failed plan, not a failed question:
+      // the caller falls back to keywords.
+      return null;
+    }
+  }
+}
+
 /** The model declined the request outright. Reported, not swallowed. */
 export class AskRefusal extends Error {
   constructor(explanation?: string) {
@@ -167,5 +314,10 @@ export class AskRefusal extends Error {
 }
 
 export function getAskModel(): AskModel {
-  return new AnthropicAskModel();
+  const provider = resolveProvider();
+  if (provider === "anthropic") return new AnthropicAskModel();
+  if (provider === "openai") return new OpenAIAskModel();
+  // The route checks isAskEnabled() first, so this is a misconfiguration
+  // reached only by calling into the well directly.
+  throw new Error("No LLM provider configured: set OPENAI_API_KEY or ANTHROPIC_API_KEY.");
 }

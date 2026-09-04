@@ -59,7 +59,10 @@ function clientKey(req: Request): string {
 export async function POST(req: Request) {
   if (!isAskEnabled()) {
     return NextResponse.json(
-      { error: "The well is dry: no ANTHROPIC_API_KEY is configured on this deployment." },
+      {
+        error:
+          "The well is dry: no LLM provider is configured on this deployment. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.",
+      },
       { status: 503 }
     );
   }
