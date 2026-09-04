@@ -80,9 +80,13 @@
 #   STJORNARRADID_RETRY     default 300   — cases the retry sweep re-attempts
 #   STJORNARRADID_BOARDS    unset         — comma-separated board keys; all 40 by default
 #   LOGRETTA_FETCH_PDFS     unset         — see README on the Prismic CDN's robots.txt
-#   EURLEX_YEARS_PER_RUN    default 3     — calendar years of the EU act catalogue
-#                                           swept per run; the sweep runs 1952 to
-#                                           this year and then starts over
+#   EURLEX_YEARS_PER_RUN    default 8     — calendar years of the EU act catalogue
+#                                           swept per run. The sweep runs backwards
+#                                           from this year to 1952 and then starts
+#                                           over: the acts anyone searches for are
+#                                           recent, and forwards from 1952 spent
+#                                           firing after firing on years with
+#                                           nothing in force
 #   EURLEX_ACTS             default 150   — EU acts whose text is fetched per run.
 #                                           One Cellar request each, EEA-relevant
 #                                           acts first
@@ -331,9 +335,9 @@ for adapter in $ADAPTERS; do
       # Publications Office's endpoint, giving every EU act of that year in
       # force with its title, its dates, its EEA relevance marker and its
       # current consolidated version. Seconds per year and no document fetches
-      # at all, so it runs every time and carries the sweep forward from a
-      # cursor — 1952 to this year, then round again to pick up amendments and
-      # acts that have fallen out of force.
+      # at all, so it runs every time and carries the sweep on from a cursor —
+      # backwards from this year to 1952, then round again to pick up
+      # amendments and acts that have fallen out of force.
       INGEST_MODE=catalogue \
       EURLEX_YEARS_PER_RUN="${EURLEX_YEARS_PER_RUN:-3}" \
         npm run ingest -- --adapter=eur-lex

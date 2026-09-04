@@ -17,6 +17,7 @@ This is a deliberately narrowed build: no CJEU. The three Icelandic courts publi
 - **EU acts (ESB-gerðir)** — the regulations, directives and decisions in force, from EUR-Lex, parsed into the same chapter / article / paragraph structure and read in the same act reader at `/log/{CELEX}` — `/log/32016R0679` is the GDPR. Each act carries whether EUR-Lex marks it *"(Text with EEA relevance)"* and which decisions of the EEA Joint Committee this database holds that name it. See *EU acts (EUR-Lex)* below.
 - **EES / ESB scope toggle** — one control, in the act catalogue and beside the specific-search act box, deciding how much of the EU library any act lookup sees. **EES** (the default) is Icelandic law plus the EU acts that may be part of EEA law — the marked ones and the ones a Joint Committee decision names. **ESB** lifts the limit, which is what you want precisely when an act has *not* been incorporated and you need to establish that. Icelandic law is in both: the toggle never hides lög nr. 91/1991.
 - **Act catalogue** — `/log` lists every ingested act with its provision count and how many judgments cite it, searchable by title, short name or number, and sortable by most-cited. Two tabs: Icelandic acts and EU acts, the second carrying the scope toggle.
+- **The law itself, above the judgments** — the main search box searches the act library as well as the case law. Type `vaxtalög`, `38/2001`, `gdpr` or `2016/679` and the act heads the results, with the judgments below it; type `130. gr. laga nr. 91/1991` and the article heads them, with its text. Each card offers the two things worth doing next — read the text, or narrow the judgments below to the ones citing it. An act is only ever shown when the query genuinely *names* one, so a search for a subject (`gæsluvarðhald`) looks exactly as it did before. See *Searching for a law* below.
 - **Specific search** — alongside the keyword search, two live lookups that narrow the results, each accepting several selections that combine as AND: an act/provision box that takes the citation as it is written ("lög um aðbúnað og hollustuhætti" finds the cases about the act; "57. gr. a. laga um aðbúnað og hollustuhætti" narrows to the cases citing that article), and a subject-tag box. Acts match on title, citation number, or the short names judgments actually use — "vaxtalög" finds lög nr. 38/2001.
 - **Administrative case law** — the úrskurðarnefndir, kærunefndir and ministry appeal desks at stjornarradid.is, each board its own tickable source rather than one undifferentiated pile. For immigration, benefits, tenancy, procurement and freedom of information this is where the case law actually is, and a search of the courts alone would miss it. See *Úrskurðarnefndir og ráðuneyti* below.
 - **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`. `Act` holds both jurisdictions: `jurisdiction` and `docType` say which corpus and which instrument, and an EU act adds its CELEX, its citation, its EEA marker and the Joint Committee decisions naming it.
@@ -527,10 +528,13 @@ INGEST_MODE=eea-links  npm run ingest -- --adapter=eur-lex   # what the JCDs nam
   names (EUR-Lex records "gdpr" as one, which is what makes the type-ahead
   find it), its dates, its EEA marker and its current consolidated version.
   Seconds per year, no document fetches, resumable from a cursor:
-  `EURLEX_YEARS_PER_RUN` (default 3) years per firing, 1952 to this year and
-  then round again. An act the catalogue stops listing is marked
-  `no_longer_in_force` rather than deleted — it is still the law a judgment of
-  2011 applied.
+  `EURLEX_YEARS_PER_RUN` (default 8) years per firing, **backwards from this
+  year** to 1952 and then round again. The direction matters more than the
+  rate — the first version swept forwards from 1952 at three years a firing,
+  and the production log read "1955: 0 acts in force. 1956: 0. 1957: 0" while
+  the acts anyone would actually search for sat two decades of firings away.
+  An act the catalogue stops listing is marked `no_longer_in_force` rather than
+  deleted — it is still the law a judgment of 2011 applied.
 - **text** — one Cellar request per act, bounded by `EURLEX_ACTS` (default
   150) and ordered EEA-relevant first. `EURLEX_TEXT_SCOPE` is `eea` by default,
   so the acts that reached Icelandic law arrive first; set it to `all` to work
@@ -1387,6 +1391,50 @@ tuned as Railway service variables without a code change:
 Note that a variable written *inline* into a start command (`FOO=1 npm run …`)
 overrides a service variable of the same name and cannot be changed from the
 Railway dashboard. That is why the limits live in the script instead.
+
+## Searching for a law
+
+The main box answers two different questions with one query, in the order they
+were asked. "Show me the judgments about X" is what it has always answered;
+"show me X" is the new half, and when the query names an act, that act is the
+top result and the case results keep the rest of the page.
+
+```
+vaxtalög                  → lög nr. 38/2001, then the judgments
+38/2001                   → the same act, found by number
+gdpr        /  2016/679   → Regulation (EU) 2016/679
+130. gr. laga nr. 91/1991 → the article, with its text, then its act
+gæsluvarðhald             → no act; judgments only, exactly as before
+```
+
+**The gate is the whole design.** The act lookup behind the type-ahead falls
+back to trigram similarity, which is right when a human is picking from a list
+and wrong when the top of the page is being decided: a search for
+`gæsluvarðhald` would otherwise be headed by whichever act title happens to
+share three letters with it. So `src/lib/act-match.ts` scores each candidate
+against the query and only three kinds of match are promoted:
+
+| Match | What it means |
+|---|---|
+| `number` | The query states the act's number, in either convention (`38/2001`, `2016/679`), or its CELEX. Nothing else can mean that. |
+| `alias` | The query is one of the short names the act is cited by — `vaxtalög`, `gdpr`. These are harvested from the corpus and from EUR-Lex's own short titles, and are why an act whose title never contains its common name is still findable by it. |
+| `title` | The query's words appear in the act's title. Right often enough to show, weak enough to rank last. |
+| `weak` | Everything else. Not shown — the type-ahead still offers it, where a human picks. |
+
+An article reference is resolved to the article rather than to its act, because
+that is what was asked for: `5. gr. vaxtalaga` and `Article 6 gdpr` both land
+on the provision, with the act one card behind it.
+
+Two things follow from where this sits. It is a **separate request** from the
+case search (`/api/search/acts`), so it cannot fail the page and does not care
+which sources are ticked — a query naming no act returns nothing and nothing
+changes. And the "N úrlausnir vísa til laganna — sýna þær" link on each card
+**narrows the results below** rather than navigating away, which is the step
+that turns a lookup into research: the act, then the cases about it, without
+leaving the page.
+
+The EES/ESB scope applies here as everywhere else, so an EU act that has not
+been taken into the EEA Agreement heads a search only when the ESB scope is on.
 
 ## Search syntax
 
