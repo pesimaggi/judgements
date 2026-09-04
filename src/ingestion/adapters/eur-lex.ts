@@ -53,6 +53,7 @@ import { createHash } from "crypto";
 import { prisma } from "@/lib/db";
 import {
   CELLAR_HEADERS,
+  EU_DOC_TYPES,
   cellarTextUrl,
   euCitation,
   euLexUrl,
@@ -68,6 +69,7 @@ import {
   refLookupKeys,
 } from "@/lib/eu-citations";
 import {
+  ACT_TYPES,
   catalogueYear,
   jointCommitteeActLinks,
   listJointCommitteeDecisions,
@@ -193,6 +195,56 @@ async function retireMissing(year: number, live: Set<string>, ctx: IngestContext
   return gone.length;
 }
 
+/** The instrument kinds ACT_TYPES asks for, as docType values. */
+const KEPT_DOC_TYPES = ACT_TYPES.map(
+  (letter) => EU_DOC_TYPES[letter as keyof typeof EU_DOC_TYPES]
+).filter(Boolean);
+
+/**
+ * Deletes stored EU acts of a kind this adapter no longer ingests.
+ *
+ * Written for one specific clean-up and left general. The first version swept
+ * decisions as well as regulations and directives, and filled the library with
+ * state-aid rulings addressed to a single airline and internal ECB rules —
+ * more of them than of the acts anyone came for. Narrowing the sweep stops new
+ * ones arriving; this removes what is already stored, and it runs at the head
+ * of every catalogue pass so it needs nothing set by hand. Once the table is
+ * clean it costs one indexed count per firing.
+ *
+ * Chapters, provisions and case links go with the act — everything cascades.
+ * What does not cascade is the search index, so Meilisearch is told separately
+ * when it is the active provider.
+ */
+async function purgeUnwantedTypes(ctx: IngestContext): Promise<void> {
+  if (KEPT_DOC_TYPES.length === 0) return; // misconfigured: delete nothing
+  const where = { jurisdiction: "eu", docType: { notIn: KEPT_DOC_TYPES } };
+
+  const doomed = await prisma.act.count({ where });
+  if (doomed === 0) return;
+  if (ctx.dryRun) {
+    ctx.log(`[dry-run] would delete ${doomed} EU act(s) of a kind no longer ingested`);
+    return;
+  }
+
+  ctx.log(
+    `Deleting ${doomed} EU act(s) of a kind no longer ingested; keeping ${KEPT_DOC_TYPES.join(", ")}.`
+  );
+  const CHUNK = 500;
+  let removed = 0;
+  for (;;) {
+    const batch = await prisma.act.findMany({ where, select: { id: true }, take: CHUNK });
+    if (batch.length === 0) break;
+    const ids = batch.map((act) => act.id);
+    await prisma.act.deleteMany({ where: { id: { in: ids } } });
+    if (process.env.SEARCH_PROVIDER === "meilisearch") {
+      const { deleteActsFromMeilisearch } = await import("@/lib/search/meilisearch");
+      await deleteActsFromMeilisearch(ids);
+    }
+    removed += ids.length;
+  }
+  ctx.log(`Deleted ${removed} act(s).`);
+}
+
 /**
  * The catalogue pass: what exists, year by year, **newest year first**.
  *
@@ -210,6 +262,7 @@ async function retireMissing(year: number, live: Set<string>, ctx: IngestContext
  * of force are picked up.
  */
 async function runCatalogue(ctx: IngestContext, stats: IngestStats): Promise<void> {
+  await purgeUnwantedTypes(ctx);
   const thisYear = new Date().getUTCFullYear();
   // Eight years is one to two minutes of queries, so a full sweep of the ~75
   // years is about ten firings — a day and a bit, rather than a decade.

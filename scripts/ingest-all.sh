@@ -31,6 +31,8 @@
 #   INGEST_ADAPTERS="logretta ulfljotur"      # just the new sources
 #   INGEST_ADAPTERS="eur-lex-catalogue"       # only the EU act catalogue
 #   INGEST_ADAPTERS="eur-lex"                 # only the EU acts' text
+#   INGEST_ADAPTERS="cjeu-listing"            # only find which CJEU judgments exist
+#   INGEST_ADAPTERS="cjeu"                    # only fetch CJEU judgment text
 #   (unset)                                   # every adapter, in order
 #
 # Command-line arguments win over the variable, so a local run can still
@@ -92,12 +94,23 @@
 #                                           acts first
 #   EURLEX_TEXT_SCOPE       default eea   — "eea" fetches only the acts that may be
 #                                           part of EEA law; "all" fetches the whole
-#                                           library (~33,000 acts, weeks of runs)
+#                                           library (~17,500 acts, weeks of runs)
 #   EURLEX_RETRY            default 50    — acts whose text failed that the retry
 #                                           pass re-attempts
 #   EURLEX_JCD_LINKS        default on    — "0" skips the EUR-Lex half of the EEA
 #                                           incorporation pass, leaving only what
 #                                           the stored decisions' own text says
+#   CJEU_YEARS_PER_RUN      default 3     — calendar years of CJEU case law listed
+#                                           per run, newest year first back to 1954
+#                                           and then round again. One SPARQL query
+#                                           per year and no document fetches
+#   CJEU_CASES              default 200   — CJEU judgments whose text is fetched per
+#                                           run, one Cellar request each. The two
+#                                           courts hold ~33,400 judgments between
+#                                           them, so a cold start is days of runs
+#   CJEU_TYPES              default CJ,TJ — which courts to sweep: "CJ" for the Court
+#                                           of Justice alone, dropping the General
+#                                           Court's ~12,200 judgments
 #   JCD_LISTING             default on    — "0" stops the EEA Joint Committee pass
 #                                           asking EUR-Lex which decisions exist,
 #                                           leaving it to work the ledger it has
@@ -116,7 +129,7 @@ set -u
 # hand, which is why Endurupptökudómur sat at 2 of 102 cases: the sweep that
 # would have found the other 100 was opt-in and nobody opted in. A source that
 # only closes its gaps when prompted does not close them.
-DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-joint-committee eftasurv eftasurv-retry lagasafn eur-lex-catalogue eur-lex eur-lex-retry eur-lex-eea citations"
+DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-joint-committee eftasurv eftasurv-retry lagasafn eur-lex-catalogue eur-lex eur-lex-retry eur-lex-eea cjeu-listing cjeu citations"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"
@@ -344,7 +357,7 @@ for adapter in $ADAPTERS; do
       ;;
     eur-lex)
       # The acts' text, one Cellar request each. EEA-relevant acts first and,
-      # by default, only those: the library is ~33,000 acts and an Icelandic
+      # by default, only those: the library is ~17,500 acts and an Icelandic
       # research question is almost always about one that reached Icelandic
       # law. Set EURLEX_TEXT_SCOPE=all from the dashboard to work through the
       # rest, which takes weeks of runs at the polite fetch rate.
@@ -360,6 +373,33 @@ for adapter in $ADAPTERS; do
       INGEST_MODE=text-retry \
       INGEST_MAX_CASES="${EURLEX_RETRY:-50}" \
         npm run ingest -- --adapter=eur-lex
+      ;;
+    cjeu-listing)
+      # Which judgments of the Court of Justice and the General Court exist:
+      # one SPARQL query per case year against the same endpoint the acts come
+      # from, writing a ledger row for every judgment not already held. No
+      # document fetches at all, so it runs every time and carries the sweep on
+      # from a cursor — backwards from this year to 1954, then round again.
+      #
+      # Newest year first for the same reason the act catalogue is: the case
+      # law anyone is actually looking for is recent, and a sweep that started
+      # at 1954 would spend its first weeks on judgments nobody searches for.
+      INGEST_MODE=listing \
+      CJEU_YEARS_PER_RUN="${CJEU_YEARS_PER_RUN:-3}" \
+        npm run ingest -- --adapter=cjeu
+      ;;
+    cjeu)
+      # The judgments' text, one Cellar request each, worked off the ledger the
+      # listing pass fills — first attempts and re-attempts in one queue, so
+      # there is no separate retry pass to schedule. A run with an empty ledger
+      # makes no requests at all.
+      #
+      # ~33,400 judgments between the two courts is days of polite fetching. It
+      # comes last of the EU passes deliberately: the acts are what an
+      # Icelandic research question starts from, and the case law interpreting
+      # them can arrive behind them.
+      INGEST_MAX_CASES="${CJEU_CASES:-200}" \
+        npm run ingest -- --adapter=cjeu
       ;;
     eur-lex-eea)
       # Which EU acts the EEA Joint Committee has taken into the Agreement —

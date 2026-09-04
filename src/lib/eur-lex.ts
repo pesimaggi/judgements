@@ -193,6 +193,21 @@ export function euSubjectTitle(title: string): string {
   return subject || withoutRelevance;
 }
 
+/**
+ * The readable text of a document Cellar served, for the sources stored as
+ * documents rather than parsed into articles.
+ *
+ * Deliberately not the act parser below: a judgment and a decision of the
+ * Joint Committee are prose, and what is wanted is the prose — the same shape
+ * the PDF path produces for the sources that have one, so that both compose
+ * into the same record.
+ */
+export function celexTextFromHtml(html: string): string {
+  const $ = load(html);
+  $("script, style, noscript").remove();
+  return $("body").text();
+}
+
 // ---------------------------------------------------------------------------
 // The parse
 // ---------------------------------------------------------------------------

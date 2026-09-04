@@ -39,6 +39,7 @@ export interface SourceDef {
 
 const ICELANDIC_COURTS = "Icelandic courts";
 const EEA_EFTA = "EEA / EFTA";
+const EU_COURTS = "Dómstólar ESB";
 const OVERSIGHT = "Eftirlit og kærunefndir";
 const JOURNALS = "Ritrýnd fræðirit";
 const ADR = "Úrskurðarnefndir og ráðuneyti";
@@ -253,6 +254,38 @@ export const ALL_SOURCES: SourceDef[] = [
     language: "en",
     group: EEA_EFTA,
     adapterKey: "eftasurv",
+    kind: "decision",
+    status: "live",
+  },
+  {
+    // The Court of Justice. EEA law is interpreted homogeneously with EU law:
+    // the EFTA Court follows this court, Icelandic courts follow both, and a
+    // directive incorporated into the EEA Agreement means here what this court
+    // says it means. The app carried the directives and the EFTA Court without
+    // the half both of them defer to.
+    //
+    // Judgments only — sector 6 also holds orders and Advocate General
+    // opinions, which are procedure and advice rather than the Court speaking.
+    key: "cjeu",
+    name: "Dómstóll Evrópusambandsins (Court of Justice)",
+    officialBaseUrl: "https://curia.europa.eu",
+    language: "en",
+    group: EU_COURTS,
+    adapterKey: "cjeu",
+    kind: "decision",
+    status: "live",
+  },
+  {
+    // The General Court, which hears the direct actions: competition, state
+    // aid, trade marks, sanctions, staff. Its own box rather than a share of
+    // the Court of Justice's, so that a search for a preliminary ruling on a
+    // directive is not waded through EU trade-mark appeals to reach.
+    key: "eu-general-court",
+    name: "Almenni dómstóll ESB (General Court)",
+    officialBaseUrl: "https://curia.europa.eu",
+    language: "en",
+    group: EU_COURTS,
+    adapterKey: "cjeu",
     kind: "decision",
     status: "live",
   },

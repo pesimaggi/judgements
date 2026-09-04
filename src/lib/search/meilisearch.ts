@@ -272,6 +272,26 @@ export async function ensureActIndexes(client: MeiliSearch) {
   });
 }
 
+/**
+ * Remove acts, and the provisions belonging to them, from the indexes.
+ *
+ * The counterpart to syncActToMeilisearch, and needed for the same reason
+ * deleteDocumentsFromMeilisearch is: deleting the rows in Postgres leaves
+ * every one of them findable here. Its one standing use is the EUR-Lex
+ * adapter's purge of act families it no longer ingests.
+ */
+export async function deleteActsFromMeilisearch(actIds: string[]) {
+  if (actIds.length === 0) return;
+  const provider = new MeilisearchProvider();
+  const client = provider.client;
+  await client.index(ACTS_INDEX).deleteDocuments(actIds);
+  // Provisions carry their act's id, so they can be removed by filter rather
+  // than by enumerating an act's several hundred provisions.
+  await client.index(PROVISIONS_INDEX).deleteDocuments({
+    filter: `actId IN [${actIds.map((id) => `"${id}"`).join(", ")}]`,
+  });
+}
+
 /** Push one act and its provisions into the indexes (called from ingestion). */
 export async function syncActToMeilisearch(act: {
   id: string;

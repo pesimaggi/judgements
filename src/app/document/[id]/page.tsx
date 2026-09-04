@@ -69,7 +69,16 @@ export default function DocumentPage() {
           <span className="text-xs uppercase">{doc.language}</span>
         </div>
         <h1 className="mt-2 font-serif text-2xl font-semibold leading-snug">{doc.caseName ?? doc.title}</h1>
-        {doc.caseName && doc.caseName !== doc.title && <p className="text-inkSoft">{doc.title}</p>}
+        {/*
+          The title is printed under the heading only when it says something
+          the heading does not. A CJEU judgment's title is its case number and
+          its parties ("C-24/26 — Criminal proceedings against …"), and the
+          heading is the parties alone with the case number already beside the
+          court above, so printing it would repeat the line under itself.
+        */}
+        {doc.caseName && doc.caseName !== doc.title && !doc.title.endsWith(doc.caseName) && (
+          <p className="text-inkSoft">{doc.title}</p>
+        )}
         {/*
           A journal article's `parties` is its byline — "Eftir Gunnar Atla
           Gunnarsson, lögmann" — stored as the journal writes it. Labelling
