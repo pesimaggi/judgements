@@ -26,19 +26,33 @@ const SPARQL_ENDPOINT =
  * The families of act ingested, as CELEX type letters, within sector 3 —
  * secondary legislation, and only that.
  *
- * The sector is not a detail. EUR-Lex also publishes the decisions of the EEA
- * Joint Committee, in sector 2 (Decision No 154/2018 is `22018D1022` there),
- * and this app already holds those as documents, ingested from efta.int by the
- * `eea-joint-committee` adapter. Widening the sweep to sector 2 would store a
- * second copy of every one of them — the same decision as a document and as an
- * act, in two places, findable twice. So the sweep stays sector 3, and
- * parseCelex refuses anything else besides, which is a second guard on the
- * same rule.
+ * REGULATIONS AND DIRECTIVES. "D" was in this list at first, and it was wrong.
+ * A sector-3 decision is overwhelmingly an administrative act addressed to one
+ * member state or one undertaking — state aid to an airline, an antigen bank,
+ * an ECB internal rule — and there are more of them in force than there are
+ * regulations and directives together: of the acts of 2000 and 2016 alone, 737
+ * decisions against 725 regulations and 52 directives. They are not the law
+ * anyone researches from Reykjavík, and they buried the acts that are.
+ *
+ * They also made the EEA tag read as nonsense, though not by inventing
+ * anything: EUR-Lex genuinely marks "Commission Decision (EU) 2016/1031 … on
+ * State aid SA.35956 … (Text with EEA relevance)", so the tag was faithfully
+ * repeating the Official Journal. A marker that is true and useless is still
+ * useless. Anything stored under the old list is deleted — see purgeUnwanted()
+ * in the adapter.
+ *
+ * The sector matters too. EUR-Lex publishes the decisions of the EEA Joint
+ * Committee in sector 2 (Decision No 154/2018 is `22018D1022` there), and this
+ * app already holds those as documents from efta.int; widening to sector 2
+ * would store every one of them twice. parseCelex refuses every other sector
+ * besides, which is a second guard on the same rule.
  */
-const TYPES = (process.env.EURLEX_TYPES ?? "R,L,D")
+export const ACT_TYPES = (process.env.EURLEX_TYPES ?? "R,L")
   .split(",")
   .map((t) => t.trim().toUpperCase())
   .filter(Boolean);
+
+const TYPES = ACT_TYPES;
 
 /**
  * A SPARQL result row, flattened to the values we asked for. The endpoint
@@ -344,4 +358,72 @@ SELECT ?jcd ?act WHERE {
   }
 
   return links;
+}
+
+// ---------------------------------------------------------------------------
+// Case law
+// ---------------------------------------------------------------------------
+
+/** One judgment as EUR-Lex lists it, before its text is read. */
+export interface JudgmentListing {
+  /** "62015CJ0203". */
+  celex: string;
+  /** The title EUR-Lex gives it, five fields separated by "#". */
+  title: string;
+  date: Date | null;
+  /** "ECLI:EU:C:2016:970", where one is recorded. */
+  ecli: string | null;
+}
+
+/**
+ * The judgments of one year, for the given CELEX instrument letters.
+ *
+ * Asked for a year at a time for the same reason the acts are: the endpoint
+ * refuses a deep OFFSET, and a year is a page nobody has to invent. About
+ * 21,000 judgments of the Court of Justice and 12,000 of the General Court
+ * exist in all, so a year is a few hundred rows.
+ *
+ * A judgment with no English expression is not returned — the Court's working
+ * language is French and the older cases were never translated, and a record
+ * with no text to search is not worth a row. Titles come back more than once
+ * where EUR-Lex holds several; the longest is kept, because the fields this
+ * app reads off it (the parties, the referring court, the Court's own index
+ * terms) are the ones a shortened title drops.
+ */
+export async function listJudgments(year: number, letters: string[]): Promise<JudgmentListing[]> {
+  const byCelex = new Map<string, JudgmentListing>();
+  const pattern = letters.map((l) => l.toUpperCase()).join("|");
+
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const rows = await sparql(`${PREFIXES}
+SELECT ?celex ?title ?date ?ecli WHERE {
+  ?w cdm:resource_legal_id_sector "6"^^xsd:string ;
+     cdm:work_has_resource-type <http://publications.europa.eu/resource/authority/resource-type/JUDG> ;
+     cdm:resource_legal_id_celex ?celex ;
+     cdm:work_date_document ?date .
+  FILTER(REGEX(STR(?celex), "^6${year}(${pattern})[0-9]{4}$"))
+  OPTIONAL { ?w cdm:case-law_ecli ?ecli }
+  ?e cdm:expression_belongs_to_work ?w ;
+     cdm:expression_uses_language <http://publications.europa.eu/resource/authority/language/ENG> ;
+     cdm:expression_title ?title .
+}
+ORDER BY ?celex LIMIT ${PAGE_SIZE} OFFSET ${offset}`);
+
+    for (const row of rows) {
+      const celex = (row.celex ?? "").toUpperCase();
+      const title = (row.title ?? "").replace(/\s+/g, " ").trim();
+      if (!celex || !title) continue;
+      const held = byCelex.get(celex);
+      if (held && held.title.length >= title.length) continue;
+      byCelex.set(celex, {
+        celex,
+        title,
+        date: toDate(row.date),
+        ecli: row.ecli ?? held?.ecli ?? null,
+      });
+    }
+    if (rows.length < PAGE_SIZE) break;
+  }
+
+  return Array.from(byCelex.values());
 }

@@ -33,6 +33,7 @@ import { logrettaAdapter } from "./adapters/logretta";
 import { ulfljoturAdapter } from "./adapters/ulfljotur";
 import { lagasafnAdapter } from "./adapters/lagasafn";
 import { eurLexAdapter } from "./adapters/eur-lex";
+import { cjeuAdapter } from "./adapters/cjeu";
 import { citationsAdapter } from "./citations";
 
 const ADAPTERS: Record<string, IngestionAdapter> = {
@@ -50,6 +51,7 @@ const ADAPTERS: Record<string, IngestionAdapter> = {
   ulfljotur: ulfljoturAdapter,
   lagasafn: lagasafnAdapter,
   "eur-lex": eurLexAdapter,
+  cjeu: cjeuAdapter,
   citations: citationsAdapter,
 };
 

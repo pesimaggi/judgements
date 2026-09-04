@@ -96,6 +96,13 @@ export interface OpenGap {
   officialUrl: string;
   court: string | null;
   caseNumber: string | null;
+  /**
+   * What the listing knew the case was called. Carried through because a
+   * listing often states things the document itself does not: EUR-Lex's title
+   * for a judgment holds its parties, its referring court and the Court's own
+   * index terms, none of which appear in the judgment's text.
+   */
+  title: string | null;
   /** The date recorded when the gap was written, if the listing gave one. */
   date: Date | null;
   reason: string;
@@ -267,7 +274,7 @@ export async function openIngestGaps(sources: string[]): Promise<OpenGap[]> {
     orderBy: [{ attempts: "asc" }, { lastTriedAt: "asc" }],
     select: {
       source: true, officialUrl: true, court: true, caseNumber: true,
-      date: true, reason: true, attempts: true,
+      title: true, date: true, reason: true, attempts: true,
     },
   });
 }

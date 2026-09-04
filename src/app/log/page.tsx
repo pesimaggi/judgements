@@ -120,7 +120,7 @@ export default function ActIndexPage() {
         <p className="mt-1 text-sm text-inkSoft">
           {isEu ? (
             <>
-              EU acts in force — regulations, directives and decisions — from{" "}
+              EU acts in force — regulations and directives — from{" "}
               <a
                 href="https://eur-lex.europa.eu"
                 target="_blank"

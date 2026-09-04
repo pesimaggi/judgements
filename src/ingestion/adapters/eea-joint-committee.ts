@@ -1,8 +1,7 @@
 import pdfParse from "pdf-parse";
-import { load } from "cheerio";
 import { prisma } from "@/lib/db";
 import { normalizeJudgmentText } from "@/lib/judgment-text";
-import { CELLAR_HEADERS, cellarTextUrl, euLexUrl } from "@/lib/eur-lex";
+import { CELLAR_HEADERS, celexTextFromHtml, cellarTextUrl, euLexUrl } from "@/lib/eur-lex";
 import { listJointCommitteeDecisions } from "../eurlex-sparql";
 import {
   politeFetchBytes,
@@ -119,9 +118,7 @@ export function celexFromUrl(url: string): string | null {
  * the same record and parseDecisionHeading reads either.
  */
 export function decisionTextFromHtml(html: string): string {
-  const $ = load(html);
-  $("script, style, noscript").remove();
-  return normalizeJudgmentText($("body").text());
+  return normalizeJudgmentText(celexTextFromHtml(html));
 }
 
 
