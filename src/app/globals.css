@@ -69,3 +69,244 @@ mark {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ---------------------------------------------------------------------------
+   The well (see components/WellScene.tsx).
+
+   Every animation below moves only `transform` and `opacity`, so the loop that
+   runs for the several seconds a question takes to answer costs nothing but
+   compositing. Sizes are driven off one variable, `--well-w`, and the arcs the
+   artefacts fly are scaled by `--relic-scale`, so the scene shrinks to make
+   room for an answer without anything flying out of the frame.
+
+   The blanket prefers-reduced-motion rule above switches all of it off; what
+   is left is a drawing of a well, which is the right thing to be left with.
+--------------------------------------------------------------------------- */
+
+.well-stage {
+  --well-w: 300px;
+  --relic-scale: 1;
+  position: relative;
+  height: 262px;
+  overflow: hidden;
+  transition: height 320ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.well-stage--compact {
+  --well-w: 150px;
+  --relic-scale: 0.55;
+  height: 150px;
+}
+
+.well-svg {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: var(--well-w);
+  height: auto;
+  transform: translateX(-50%);
+  transition: width 320ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* The mouth of the well, in stage coordinates. The rim sits at y=126 of the
+   drawing's 240x200 viewBox, so it is (200-126)/200 x 200/240 = 0.3083 of the
+   drawing's width up from the bottom. Everything that goes in or comes out is
+   positioned from here, which is why the drawing's proportions and this one
+   number have to be changed together. */
+.well-mouth {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--well-w) * 0.3083);
+  width: 0;
+  height: 0;
+}
+
+/* --- the question falling in ---------------------------------------------- */
+
+.well-note {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  display: block;
+  width: 190px;
+  margin-left: -95px;
+  padding: 8px 10px;
+  border: 1px solid theme("colors.line");
+  border-radius: 3px;
+  background: #fffdf7;
+  box-shadow: 0 6px 16px rgba(22, 35, 59, 0.18);
+  opacity: 0;
+  animation: well-note-drop var(--well-drop, 720ms) cubic-bezier(0.45, 0.05, 0.85, 0.6) forwards;
+}
+
+.well-note-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-family: var(--font-serif), Georgia, serif;
+  font-size: 12px;
+  line-height: 1.4;
+  color: theme("colors.ink");
+}
+
+@keyframes well-note-drop {
+  0% {
+    transform: translate(0, -150px) rotate(-4deg) scale(1);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  62% {
+    transform: translate(0, -34px) rotate(3deg) scale(0.84);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(0, 12px) rotate(10deg) scale(0.26);
+    opacity: 0;
+  }
+}
+
+/* --- the law coming back out ---------------------------------------------- */
+
+/* Outer element: the sideways drift, and the fade in and out. */
+.well-relic {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  opacity: 0;
+  animation: well-relic-drift var(--relic-dur) cubic-bezier(0.22, 0.58, 0.36, 1)
+    var(--relic-delay) infinite;
+}
+
+@keyframes well-relic-drift {
+  0% {
+    transform: translateX(-50%);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  56% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(calc(-50% + var(--relic-x) * var(--relic-scale)));
+    opacity: 0;
+  }
+}
+
+/* Middle element: the arc. Fast out of the shaft, slowing towards the top —
+   the easing is the gravity. */
+.well-relic-lift {
+  display: block;
+  animation: well-relic-lift var(--relic-dur) cubic-bezier(0.16, 0.62, 0.35, 1)
+    var(--relic-delay) infinite;
+}
+
+@keyframes well-relic-lift {
+  0% {
+    transform: translateY(8px) scale(0.4);
+  }
+  30% {
+    transform: translateY(calc(var(--relic-h) * var(--relic-scale) * -0.62)) scale(1);
+  }
+  100% {
+    transform: translateY(calc(var(--relic-h) * var(--relic-scale) * -1)) scale(0.92);
+  }
+}
+
+/* Inner element: the tumble, and the chip itself. */
+.well-relic-chip {
+  display: block;
+  padding: 2px 7px;
+  border: 1px solid theme("colors.line");
+  border-radius: 4px;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(22, 35, 59, 0.16);
+  font-family: var(--font-serif), Georgia, serif;
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  color: theme("colors.ink");
+  animation: well-relic-turn var(--relic-dur) ease-in-out var(--relic-delay) infinite;
+}
+
+@keyframes well-relic-turn {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(var(--relic-rot));
+  }
+}
+
+/* The water, disturbed. */
+.well-ripple {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: calc(var(--well-w) * 0.383);
+  height: calc(var(--well-w) * 0.083);
+  margin-left: calc(var(--well-w) * -0.191);
+  margin-bottom: calc(var(--well-w) * -0.042);
+  border: 1.5px solid #8fa6d8;
+  border-radius: 50%;
+  opacity: 0;
+  animation: well-ripple 2.2s ease-out infinite;
+}
+
+.well-ripple--late {
+  animation-delay: 1.1s;
+}
+
+@keyframes well-ripple {
+  0% {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  25% {
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+}
+
+/* --- what comes up ---------------------------------------------------------
+
+   The answer rises rather than appearing: it came out of the well, and a
+   couple of hundred milliseconds saying so is the difference between a chat
+   panel and this one.                                                       */
+
+.well-rise {
+  animation: well-rise 420ms cubic-bezier(0.16, 0.84, 0.44, 1) both;
+}
+
+@keyframes well-rise {
+  from {
+    transform: translateY(14px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.well-panel {
+  animation: well-panel-in 240ms cubic-bezier(0.16, 0.84, 0.44, 1) both;
+}
+
+@keyframes well-panel-in {
+  from {
+    transform: translateY(12px) scale(0.98);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}

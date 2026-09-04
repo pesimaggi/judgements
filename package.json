@@ -24,6 +24,7 @@
     "eval:search": "tsx src/search-eval/run.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.123.0",
     "@prisma/client": "^5.18.0",
     "cheerio": "^1.0.0",
     "meilisearch": "^0.41.0",
