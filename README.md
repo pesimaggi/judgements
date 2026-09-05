@@ -571,8 +571,8 @@ INGEST_MODE=eea-links  npm run ingest -- --adapter=eur-lex   # what the JCDs nam
 **The act table is the ledger.** There is no `IngestGap` row here, because that
 ledger is keyed by `(source, officialUrl)` and these are not documents. The
 equivalent lives on the act: `textStatus` is `pending` until the text is read,
-then `stored`, `fetch-failed` or `no-articles`, and every run prints the
-breakdown the way the document adapters print their gap counts:
+then `stored`, `fetch-failed`, `no-articles` or `too-large`, and every run
+prints the breakdown the way the document adapters print their gap counts:
 
 ```
 [eur-lex] EU acts by text status: pending=1171 stored=5
@@ -581,6 +581,25 @@ breakdown the way the document adapters print their gap counts:
 So the shortfall is visible and retriable, and an act whose consolidation has
 moved on is put back to `pending` by the catalogue pass rather than going
 quietly stale.
+
+`too-large` is the one terminal status, and it is there because a single act
+took the whole pass down. EUR-Lex serves Commission Implementing Regulation
+(EU) 2024/348 — the EBA benchmark portfolio standards, which are annexes of
+spreadsheets — as **193 MB of XHTML**, and its neighbour 2024/351 as 226 MB.
+Reading either into cheerio needs far more than Node's ~4 GB default heap, so
+the run died with `Ineffective mark-compacts near heap limit` and exit 134.
+Worse than the crash was what it left behind: the act was never marked, so it
+stayed `pending` and stayed first in a deterministically ordered queue, and
+every firing afterwards would have died on the same act having stored nothing.
+
+Now `INGEST_MAX_BYTES` (32 MB) caps what any adapter will read, the act is
+recorded `too-large`, and the queue moves on. Neither the ordinary retry pass
+nor the text pass picks it up again; to take another run at one deliberately,
+raise the cap for a single act:
+
+```
+INGEST_MAX_BYTES=536870912 EURLEX_ONLY=32024R0348 npm run ingest -- --adapter=eur-lex
+```
 
 #### What is deliberately not here
 
@@ -771,6 +790,21 @@ Bounded and resumable on the same pattern as the other archives: every run
 enumerates the database (135 API calls), diffs it against what is stored, and
 spends `INGEST_MAX_CASES` fetches on the oldest thing missing.
 `INGEST_MODE=retry` works the gap ledger and enumerates nothing.
+
+**Not everything ESA serves is a PDF.** The document endpoint hands back
+whatever was filed in the case, under its original name: spreadsheets
+(`Calculation of fines.XLS`), slide decks (`.PPT`) and e-mails scanned to
+`.JPG`. Handing one of those to pdf-parse raises `InvalidPDFException: Invalid
+PDF structure`, which reads exactly like a corrupt download — a transient
+failure — so all 33 of them were recorded as `fetch-failed`, re-fetched by the
+retry sweep *and* by the main pass on every three-hourly firing, for ever.
+
+They are now recognised by their content rather than their name — a PDF says
+`%PDF-` in its first kilobyte, whatever the URL claims — and recorded with the
+gap reason `unreadable`, which is terminal: still counted in the outstanding
+total, because the document really is missing, but never fetched again. An
+empty response is deliberately not covered; nothing about zero bytes says the
+document is unreadable, only that the response was, so it stays retryable.
 
 ### Umboðsmaður Alþingis
 
@@ -1529,6 +1563,20 @@ tuned as Railway service variables without a code change:
 | `CJEU_TYPES` | `CJ,TJ` | `CJ` alone drops the General Court |
 | `LOGRETTA_FETCH_PDFS` | unset | Fetch article PDFs — see the robots.txt note above |
 
+Two limits are shared by every adapter rather than set per source:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `INGEST_DELAY_MS` | `1500` | Minimum gap between requests, across all sources |
+| `INGEST_MAX_BYTES` | `33554432` | Largest response any adapter will read into memory |
+
+`INGEST_MAX_BYTES` is a crash guard, not a politeness setting. It is far above
+anything this corpus legitimately holds — the largest are Óbyggðanefnd's
+þjóðlendu úrskurðir at about 5 MB — and far below what the heap can take. A
+response past it is dropped mid-transfer and recorded as terminal, so one
+oversized document costs one skipped document instead of the whole run. See the
+EUR-Lex section for the act that made this necessary.
+
 Note that a variable written *inline* into a start command (`FOO=1 npm run …`)
 overrides a service variable of the same name and cannot be changed from the
 Railway dashboard. That is why the limits live in the script instead.
@@ -2003,7 +2051,9 @@ npm run ingest -- --adapter=citations
 | `CITATION_MAX_DOCS` | citations | Judgments scanned per run |
 | `CITATION_BATCH_SIZE` | citations | Judgments held in memory at once (default 50) |
 
-Each run records indexed/skipped/error counts in `IngestionRun`, visible at `/admin/ingestion`. Politeness settings (`INGEST_DELAY_MS`, `INGEST_USER_AGENT`) live in `.env`.
+Each run records indexed/skipped/error counts in `IngestionRun`, visible at `/admin/ingestion`. Politeness settings (`INGEST_DELAY_MS`, `INGEST_USER_AGENT`) live in `.env`, alongside the `INGEST_MAX_BYTES` crash guard described above.
+
+**PDF text extraction goes through `src/ingestion/pdf-text.ts`, and it is quiet on purpose.** pdf.js writes a line to stdout for every malformed byte it meets, and legal PDFs are full of them: one ESA run emitted `Warning: Ignoring invalid character "255" in hex string` thousands of times per document. Railway caps a replica at **500 log lines a second** and drops the rest — those runs lost 8,596 lines, taking the adapters' own error lines down with them, which is the opposite of what a log is for. pdf.js's documented switch (`PDFJS.verbosity = 0`) does not reach the copy doing the work: `pdf-parse` runs it with `disableWorker`, which loads the separate `pdf.worker.js` bundle in process, and that bundle keeps its own module-private verbosity level and exports only `WorkerMessageHandler`. So the filter sits where the writing happens — `console.log`, for the duration of a parse, dropping only pdf.js's own `Warning: ` prefix. Errors are untouched.
 
 **How it works:** island.is's public GraphQL API (`https://island.is/api/graphql`) has introspection disabled in production, so the schema couldn't be discovered by asking the API itself. Instead it was reconstructed from island.is/domar's own live search requests: the list comes from the `webVerdicts` query (confirmed to return the full archive — 40k+ judgments — when searched with an empty term, 10 per page). The case detail pages have no separate API call for the full text; each judgment is embedded either as a base64-encoded PDF (older, scanned cases) or a Contentful-style rich-text document (newer cases) inside the page's own `__NEXT_DATA__` payload, so the adapter fetches the detail page directly and extracts the text itself (`pdf-parse`, or a rich-text tree walk) rather than needing another query.
 

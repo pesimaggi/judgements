@@ -1,4 +1,4 @@
-import pdfParse from "pdf-parse";
+import { pdfText } from "../pdf-text";
 import { prisma } from "@/lib/db";
 import { normalizeJudgmentText } from "@/lib/judgment-text";
 import {
@@ -261,7 +261,7 @@ function composeRecord(article: Article, volume: Volume | undefined, pdfText: st
 
 async function fetchPdfText(url: string): Promise<string> {
   const { body } = await politeFetchBytes(url);
-  const { text } = await pdfParse(body);
+  const text = await pdfText(body);
   return normalizeJudgmentText(text);
 }
 

@@ -48,6 +48,14 @@
  * counts. So the shortfall is always visible and always retriable
  * (INGEST_MODE=text-retry), and an act whose consolidation has moved on is put
  * back to "pending" by the catalogue pass rather than being quietly stale.
+ *
+ * One of those statuses is terminal. "too-large" means EUR-Lex serves the act
+ * in a size this process will not read into memory — Regulation (EU) 2024/348
+ * is 193 MB of XHTML and its neighbour 2024/351 is 226 MB, both of them
+ * annexes of spreadsheets. Reading one killed a production run outright, and
+ * because the act stayed "pending" it stayed first in the queue: every firing
+ * afterwards would have died on it having stored nothing. See
+ * ResponseTooLargeError in ../adapter.
  */
 import { createHash } from "crypto";
 import { prisma } from "@/lib/db";
@@ -61,7 +69,7 @@ import {
   parseEuActHtml,
   type ParsedEuAct,
 } from "@/lib/eur-lex";
-import { politeFetchText } from "../adapter";
+import { ResponseTooLargeError, politeFetchText } from "../adapter";
 import {
   compareDecisionNumbers,
   decisionNumberFromTitle,
@@ -430,6 +438,10 @@ async function fetchActText(
       lastError = e;
     }
   }
+  // A document too big to read is not a document with no articles: it is a
+  // refusal, and the caller records it as one. The fallback above still had
+  // its turn, so this only fires when neither version could be taken.
+  if (lastError instanceof ResponseTooLargeError) throw lastError;
   if (lastError instanceof Error && /HTTP 4\d\d|empty response/.test(lastError.message)) {
     throw lastError;
   }
@@ -446,6 +458,9 @@ async function runText(ctx: IngestContext, stats: IngestStats, retry: boolean): 
   // Diagnostic: read one act by CELEX, whatever state it is in. Everything
   // else is bounded by what still needs reading.
   if (only) where.celex = only.toUpperCase();
+  // "too-large" is deliberately absent from both: the act is not pending work
+  // and a retry cannot help it. EURLEX_ONLY, with INGEST_MAX_BYTES raised, is
+  // the way to take another run at one on purpose.
   else where.textStatus = retry ? { in: ["fetch-failed", "no-articles"] } : "pending";
   // The EEA subset first, and by default only it: an Icelandic researcher's
   // question is almost always about an act that reached Icelandic law, and at
@@ -497,15 +512,27 @@ async function runText(ctx: IngestContext, stats: IngestStats, retry: boolean): 
       stats.indexed++;
       if (stats.indexed % 25 === 0) ctx.log(`  … ${stats.indexed} acts written (at ${celex})`);
     } catch (e) {
-      stats.errors++;
-      stats.errorSample = stats.errorSample ?? `${celex}: ${String(e)}`;
+      // An act EUR-Lex serves in a size we will not read is a gap, not a
+      // failure of the run: it is recorded terminally so the queue moves past
+      // it. Before this it stayed "pending" and stayed first in line, and
+      // since the fetch had already killed the process, every firing after
+      // died on the same act having stored nothing.
+      const tooLarge = e instanceof ResponseTooLargeError;
+      if (tooLarge) stats.skipped++;
+      else {
+        stats.errors++;
+        stats.errorSample = stats.errorSample ?? `${celex}: ${String(e)}`;
+      }
       if (!ctx.dryRun) {
         await prisma.act.update({
           where: { id: act.id },
-          data: { textStatus: "fetch-failed", textAttempts: { increment: 1 } },
+          data: {
+            textStatus: tooLarge ? "too-large" : "fetch-failed",
+            textAttempts: { increment: 1 },
+          },
         });
       }
-      ctx.log(`  error on ${celex}: ${String(e).slice(0, 200)}`);
+      ctx.log(`  ${tooLarge ? "too large" : "error"} on ${celex}: ${String(e).slice(0, 200)}`);
     }
   }
 }

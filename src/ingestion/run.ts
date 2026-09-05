@@ -15,6 +15,7 @@ import {
   isDocumentKnown,
   recordIngestGap,
   openIngestGaps,
+  terminalGapUrls,
   retireDocuments,
   type IngestionAdapter,
   type IngestContext,
@@ -105,6 +106,7 @@ async function main() {
     // every case it declined to fetch as a gap it had failed on.
     recordGap: dryRun ? async () => {} : recordIngestGap,
     openGaps: openIngestGaps,
+    terminalGaps: terminalGapUrls,
     // A dry run must not delete either: it has saved nothing, so every stored
     // document would look like one the source had withdrawn.
     retire: dryRun

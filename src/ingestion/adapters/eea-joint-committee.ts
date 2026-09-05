@@ -1,4 +1,4 @@
-import pdfParse from "pdf-parse";
+import { pdfText } from "../pdf-text";
 import { prisma } from "@/lib/db";
 import { normalizeJudgmentText } from "@/lib/judgment-text";
 import { CELLAR_HEADERS, celexTextFromHtml, cellarTextUrl, euLexUrl } from "@/lib/eur-lex";
@@ -496,7 +496,7 @@ export const eeaJointCommitteeAdapter: IngestionAdapter = {
           body = decisionTextFromHtml(await politeFetchText(cellarTextUrl(celex), CELLAR_HEADERS));
         } else {
           const { body: bytes } = await politeFetchBytes(seed.url);
-          body = normalizeJudgmentText((await pdfParse(bytes)).text);
+          body = normalizeJudgmentText(await pdfText(bytes));
         }
       } catch (e) {
         stats.errors++;
