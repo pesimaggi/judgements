@@ -249,8 +249,11 @@ export default function ActPage({ params }: { params: { slug: string } }) {
           ) : (
             <>
               The published text of this act could not be read into articles
-              {act.textStatus === "fetch-failed" ? " (EUR-Lex would not serve it)" : ""}. Use the
-              official link above.
+              {act.textStatus === "fetch-failed" ? " (EUR-Lex would not serve it)" : ""}
+              {act.textStatus === "too-large"
+                ? " — EUR-Lex publishes it at a size this library does not hold, which for an act" +
+                  " of mostly tabular annexes runs to hundreds of megabytes"
+                : ""}. Use the official link above.
             </>
           )}
         </p>

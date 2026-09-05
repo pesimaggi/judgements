@@ -1,5 +1,5 @@
 import { load, type CheerioAPI } from "cheerio";
-import pdfParse from "pdf-parse";
+import { pdfText } from "../pdf-text";
 import { prisma } from "@/lib/db";
 import { normalizeJudgmentText } from "@/lib/judgment-text";
 import { politeFetchBytes, type IngestionAdapter, type IngestContext, type IngestStats } from "../adapter";
@@ -257,7 +257,7 @@ function composeRecord(record: CaseRecord): string {
 
 async function fetchPdfText(url: string): Promise<string> {
   const { body } = await politeFetchBytes(url);
-  const { text } = await pdfParse(body);
+  const text = await pdfText(body);
   return normalizeJudgmentText(text);
 }
 

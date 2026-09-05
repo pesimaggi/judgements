@@ -65,6 +65,15 @@ export interface IngestContext {
    * only grows, and must never call this.
    */
   retire(source: string, officialUrls: string[]): Promise<number>;
+  /**
+   * URLs already known to be terminally unreadable, so a listing pass can
+   * leave them out of its work. `openGaps` filters them from the retry
+   * sweeps; this is the other half, for the pass that decides what is missing
+   * by diffing a listing against what is stored — an unreadable document is
+   * never stored, so without this it looks missing on every firing and is
+   * re-fetched for ever.
+   */
+  terminalGaps(sources: string[]): Promise<Set<string>>;
   log(msg: string): void;
 }
 
@@ -76,8 +85,31 @@ export interface IngestContext {
  * it, and it writes it for one reason — the acts register that used to say
  * which decisions exist was withdrawn, so the outstanding decisions were moved
  * into this ledger to keep the to-do list rather than lose it with the acts.
+ *
+ * "unreadable" is the one that is terminal. Everything else here describes
+ * something a later run might succeed at, and the retry sweeps re-attempt them
+ * for exactly that reason; this one says the bytes at that URL are not a
+ * document we can ever read — ESA publishes spreadsheets and scanned e-mails
+ * under a .XLS or .JPG name, and no number of re-fetches turns one into a PDF.
+ * See TERMINAL_REASONS.
  */
-export type GapReason = "no-text" | "fetch-failed" | "unmapped-court" | "pending" | "error";
+export type GapReason =
+  | "no-text"
+  | "fetch-failed"
+  | "unmapped-court"
+  | "pending"
+  | "error"
+  | "unreadable";
+
+/**
+ * Gap reasons a retry sweep must not pick up again.
+ *
+ * They stay in the ledger and keep being counted — the shortfall is real and
+ * should be visible — but re-fetching them is spending a bounded budget on a
+ * guaranteed failure. Before this, ESA's 33 non-PDF documents were re-fetched
+ * on every three-hourly firing, for ever.
+ */
+const TERMINAL_REASONS: GapReason[] = ["unreadable"];
 
 export interface GapRecord {
   adapter: string;
@@ -119,6 +151,87 @@ let lastFetch = 0;
 const RETRY_BASE_MS = Number(process.env.INGEST_RETRY_BASE_MS ?? 3000);
 const MAX_RETRIES = 3;
 const TOO_MANY_REQUESTS = 429;
+
+/**
+ * The largest response any adapter will read into memory.
+ *
+ * This exists because a single document killed a production run. EUR-Lex
+ * serves Commission Implementing Regulation (EU) 2024/348 — the EBA benchmark
+ * portfolio standards, which are annexes of spreadsheets — as 193 MB of
+ * XHTML, and its neighbour 2024/351 as 226 MB. Buffering either and handing it
+ * to cheerio needs far more than Node's ~4 GB default heap, so the process
+ * died with "Ineffective mark-compacts near heap limit" and the whole adapter
+ * exited 134, having stored nothing.
+ *
+ * A cap turns that from a crash into one skipped document. 32 MB is far above
+ * anything this corpus legitimately holds — the largest are Óbyggðanefnd's
+ * þjóðlendu úrskurðir at about 5 MB — and far below what the heap can take.
+ *
+ * Cellar answers chunked with no Content-Length, so the limit cannot be
+ * enforced from the headers alone: the body is read incrementally and the
+ * connection dropped the moment the cap is passed, which also means the 193 MB
+ * is never transferred. Raise INGEST_MAX_BYTES for a deliberate one-off.
+ */
+const MAX_BYTES = Number(process.env.INGEST_MAX_BYTES ?? 32 * 1024 * 1024);
+
+/**
+ * A response bigger than an adapter will hold in memory. Distinct from a
+ * fetch failure because it is not transient and re-attempting it is pointless:
+ * the caller records it as terminal rather than as work still to do.
+ */
+export class ResponseTooLargeError extends Error {
+  readonly url: string;
+  readonly limit: number;
+  /** Bytes read before giving up — a lower bound when the body was chunked. */
+  readonly bytesRead: number;
+
+  constructor(url: string, bytesRead: number, limit: number, exact: boolean) {
+    const mb = (n: number) => `${(n / 1024 / 1024).toFixed(0)} MB`;
+    super(
+      `response exceeds the ${mb(limit)} limit for ${url}` +
+        (exact ? ` (${mb(bytesRead)} declared)` : ` (stopped reading at ${mb(bytesRead)})`)
+    );
+    this.name = "ResponseTooLargeError";
+    this.url = url;
+    this.limit = limit;
+    this.bytesRead = bytesRead;
+  }
+}
+
+/**
+ * Reads a response body, giving up once it passes MAX_BYTES.
+ *
+ * Content-Length is checked first where the server sends one, so an oversized
+ * document costs no transfer at all. Where it does not — Cellar answers
+ * `transfer-encoding: chunked` — the body is read chunk by chunk and the
+ * connection cancelled at the cap.
+ *
+ * Exported for its test: the behaviour worth pinning down is what it does to a
+ * body of a given shape, which is awkward to reach through the rate limiter.
+ */
+export async function readCapped(res: Response, url: string): Promise<Buffer> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_BYTES) {
+    await res.body?.cancel();
+    throw new ResponseTooLargeError(url, declared, MAX_BYTES, true);
+  }
+  if (!res.body) return Buffer.from(await res.arrayBuffer());
+
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const reader = res.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BYTES) {
+      await reader.cancel();
+      throw new ResponseTooLargeError(url, total, MAX_BYTES, false);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks, total);
+}
 
 /** How long a 429's Retry-After asks us to wait, in ms. Capped, and undefined
  *  if the header is absent or is a date we cannot read. */
@@ -173,10 +286,9 @@ export async function politeFetchBytes(
     lastFetch = Date.now();
     const res = await fetch(url, { headers: { "User-Agent": USER_AGENT, ...headers } });
     if (res.ok) {
-      return {
-        body: Buffer.from(await res.arrayBuffer()),
-        contentType: res.headers.get("content-type"),
-      };
+      // Throws ResponseTooLargeError rather than retrying: a document does not
+      // get smaller on a second attempt.
+      return { body: await readCapped(res, url), contentType: res.headers.get("content-type") };
     }
     const retryable = res.status >= 500 || res.status === TOO_MANY_REQUESTS;
     if (!retryable || attempt >= MAX_RETRIES) {
@@ -267,16 +379,33 @@ export async function recordIngestGap(gap: GapRecord): Promise<void> {
 }
 
 /** Open gaps for these sources, least-attempted first so a case that keeps
- *  failing cannot monopolise a bounded retry budget. */
+ *  failing cannot monopolise a bounded retry budget. Terminal ones are left
+ *  out: they are still missing, but re-fetching them cannot change that. */
 export async function openIngestGaps(sources: string[]): Promise<OpenGap[]> {
   return prisma.ingestGap.findMany({
-    where: { source: { in: sources }, resolvedAt: null },
+    where: {
+      source: { in: sources },
+      resolvedAt: null,
+      reason: { notIn: TERMINAL_REASONS },
+    },
     orderBy: [{ attempts: "asc" }, { lastTriedAt: "asc" }],
     select: {
       source: true, officialUrl: true, court: true, caseNumber: true,
       title: true, date: true, reason: true, attempts: true,
     },
   });
+}
+
+/**
+ * The URLs of terminal gaps — recorded as missing for a reason no re-fetch can
+ * change. See TERMINAL_REASONS and IngestContext.terminalGaps.
+ */
+export async function terminalGapUrls(sources: string[]): Promise<Set<string>> {
+  const rows = await prisma.ingestGap.findMany({
+    where: { source: { in: sources }, resolvedAt: null, reason: { in: TERMINAL_REASONS } },
+    select: { officialUrl: true },
+  });
+  return new Set(rows.map((row) => row.officialUrl));
 }
 
 /** Marks any gap for this document closed. Cheap enough to do unconditionally:

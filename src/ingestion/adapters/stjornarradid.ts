@@ -1,6 +1,6 @@
 import { load, type CheerioAPI, type Cheerio } from "cheerio";
 import type { AnyNode } from "domhandler";
-import pdfParse from "pdf-parse";
+import { pdfText } from "../pdf-text";
 import { prisma } from "@/lib/db";
 import { normalizeJudgmentText } from "@/lib/judgment-text";
 import {
@@ -414,7 +414,7 @@ function attachmentUrl($: CheerioAPI, section: Cheerio<AnyNode>): string | undef
 /** A ruling published as an attachment, reflowed into paragraphs. */
 async function fetchPdfText(url: string): Promise<string> {
   const { body } = await politeFetchBytes(url);
-  const { text } = await pdfParse(body);
+  const text = await pdfText(body);
   // pdf-parse emits one line per visual line of the page; normalizeJudgmentText
   // reflows those into real paragraphs, the same way the courts adapter does.
   return normalizeJudgmentText(text);

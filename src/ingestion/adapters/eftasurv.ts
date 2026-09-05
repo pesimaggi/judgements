@@ -1,6 +1,6 @@
-import pdfParse from "pdf-parse";
 import { prisma } from "@/lib/db";
 import { normalizeJudgmentText } from "@/lib/judgment-text";
+import { looksLikePdf, pdfText } from "../pdf-text";
 import {
   politeFetchBytes,
   type IngestionAdapter,
@@ -301,7 +301,30 @@ export const eftaSurvAdapter: IngestionAdapter = {
       let body: string;
       try {
         const { body: bytes } = await politeFetchBytes(doc.url);
-        body = normalizeJudgmentText((await pdfParse(bytes)).text);
+        // ESA's document endpoint serves whatever was filed in the case, under
+        // its original name: spreadsheets, slide decks, scanned e-mails saved
+        // as .JPG. Those are not PDFs and never will be, so they are recorded
+        // as terminal rather than handed to pdf-parse to fail as though the
+        // download had been corrupt — which is what put 33 of them in the
+        // ledger to be re-fetched on every three-hourly firing.
+        //
+        // An empty body is deliberately not covered: nothing about zero bytes
+        // says the document is unreadable, only that this response was, so it
+        // stays a retryable failure.
+        if (bytes.length > 0 && !looksLikePdf(bytes)) {
+          const ext = /\.([A-Za-z0-9]{1,5})(?:\?|$)/.exec(doc.url)?.[1];
+          stats.skipped++;
+          ctx.log(`  ${label}: not a PDF${ext ? ` (.${ext})` : ""} — recorded as unreadable`);
+          await ctx.recordGap({
+            ...identity,
+            reason: "unreadable",
+            detail:
+              `not a PDF${ext ? ` — served as .${ext}` : ""}: ${bytes.length} bytes with no ` +
+              `%PDF- signature`,
+          });
+          return;
+        }
+        body = normalizeJudgmentText(await pdfText(bytes));
       } catch (e) {
         stats.errors++;
         stats.errorSample = stats.errorSample ?? String(e);
@@ -400,11 +423,17 @@ export const eftaSurvAdapter: IngestionAdapter = {
         })
       ).map((d) => d.officialUrl)
     );
-    const missing = documents.filter((d) => !known.has(d.url));
+    // A document that is not a PDF is never stored, so it is missing on every
+    // run by this reckoning; without this it would take a slice of the budget
+    // for ever. It stays in the ledger and stays counted — see terminalGaps.
+    const unreadable = await ctx.terminalGaps([ESA_SOURCE_KEY]);
+    const missing = documents.filter((d) => !known.has(d.url) && !unreadable.has(d.url));
     stats.skipped += documents.length - missing.length;
     ctx.log(
-      `Database carries ${documents.length} document(s); ${known.size} stored, ${missing.length} missing. ` +
-        `Up to ${maxFetches} fetches this run.`
+      `Database carries ${documents.length} document(s); ${known.size} stored, ` +
+        `${missing.length} missing` +
+        (unreadable.size ? `, ${unreadable.size} unreadable (not PDFs)` : "") +
+        `. Up to ${maxFetches} fetches this run.`
     );
 
     // Oldest first. The API serves newest first, and taking it in that order

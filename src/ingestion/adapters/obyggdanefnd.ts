@@ -1,5 +1,5 @@
 import { load } from "cheerio";
-import pdfParse from "pdf-parse";
+import { pdfText } from "../pdf-text";
 import { prisma } from "@/lib/db";
 import { normalizeJudgmentText } from "@/lib/judgment-text";
 import {
@@ -268,7 +268,7 @@ export const obyggdanefndAdapter: IngestionAdapter = {
       let body: string;
       try {
         const { body: bytes } = await politeFetchBytes(item.url);
-        body = normalizeJudgmentText((await pdfParse(bytes)).text);
+        body = normalizeJudgmentText(await pdfText(bytes));
       } catch (e) {
         stats.errors++;
         stats.errorSample = stats.errorSample ?? String(e);

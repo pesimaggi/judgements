@@ -1,6 +1,6 @@
 import { load, type Cheerio } from "cheerio";
 import type { AnyNode } from "domhandler";
-import pdfParse from "pdf-parse";
+import { pdfText } from "../pdf-text";
 import { prisma } from "@/lib/db";
 import { normalizeJudgmentText, unspaceLetterSpacing } from "@/lib/judgment-text";
 import {
@@ -450,7 +450,7 @@ async function fetchJudgmentText(
   const pdfUrl = pdfUrlFor(item.id);
   try {
     const { body } = await politeFetchBytes(pdfUrl);
-    const { text } = await pdfParse(body);
+    const text = await pdfText(body);
     const reflowed = normalizeJudgmentText(text);
     if (looksLikeIcelandic(reflowed)) return { text: reflowed, pdfUrl };
     ctx.log(
