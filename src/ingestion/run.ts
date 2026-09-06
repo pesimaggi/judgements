@@ -30,6 +30,7 @@ import { felagsdomurAdapter } from "./adapters/felagsdomur";
 import { uuaAdapter } from "./adapters/uua";
 import { obyggdanefndAdapter } from "./adapters/obyggdanefnd";
 import { neytendamalAdapter } from "./adapters/neytendamal";
+import { yfirskattanefndAdapter } from "./adapters/yfirskattanefnd";
 import { logrettaAdapter } from "./adapters/logretta";
 import { ulfljoturAdapter } from "./adapters/ulfljotur";
 import { lagasafnAdapter } from "./adapters/lagasafn";
@@ -48,6 +49,7 @@ const ADAPTERS: Record<string, IngestionAdapter> = {
   uua: uuaAdapter,
   obyggdanefnd: obyggdanefndAdapter,
   neytendamal: neytendamalAdapter,
+  yfirskattanefnd: yfirskattanefndAdapter,
   logretta: logrettaAdapter,
   ulfljotur: ulfljoturAdapter,
   lagasafn: lagasafnAdapter,

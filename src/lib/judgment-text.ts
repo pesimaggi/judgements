@@ -53,6 +53,11 @@ const HEADING_WORDS = [
   // and the heading the stjornarradid adapter files them under. Without it
   // the terms run straight into the "Útdráttur" that follows them.
   "Lykilorð", "Úrskurðarorð", "Úrskurðarnefnd", "Ákvörðun",
+  // "Skrá um lög" is Yfirskattanefnd's own label for the table of statutes it
+  // prints above a ruling, and the heading that source's adapter files them
+  // under. Multi-word, like "Case details" below, and needed for the same
+  // reason: without it the statutes run into the útdráttur under them.
+  "Skrá um lög",
   // English, for the EFTA Court records composed by its adapter — that source
   // publishes in English and has no Icelandic heading to key off. "History"
   // and "Document" head the two sections the EEA-Lex and ESA adapters add:

@@ -71,6 +71,15 @@
 #                                           purpose: each is a 1-5 MB PDF of
 #                                           several hundred pages
 #   NEYTENDAMAL_MAX_CASES   default 120   — the board has published ~228
+#   YFIRSKATTANEFND_MAX_CASES default 300 — tax rulings fetched per run. The
+#                                           archive is 4,175 back to 1973, so a
+#                                           cold start is about a fortnight of
+#                                           runs; the listing itself is 54
+#                                           requests, one per year published
+#   YFIRSKATTANEFND_RETRY   default 100   — rulings the retry sweep re-attempts
+#   YSKN_INDEX_YEARS        unset         — list only the newest N years instead
+#                                           of all of them; for a constrained
+#                                           one-off, not for scheduled runs
 #   STJORNARRADID_CASES     default 400   — cases the incremental pass may fetch per run
 #   STJORNARRADID_BACKFILL  default 900   — cases the rolling backfill may fetch per
 #                                           run, shared across all 40 boards in list
@@ -129,7 +138,7 @@ set -u
 # hand, which is why Endurupptökudómur sat at 2 of 102 cases: the sweep that
 # would have found the other 100 was opt-in and nobody opted in. A source that
 # only closes its gaps when prompted does not close them.
-DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-joint-committee eftasurv eftasurv-retry lagasafn eur-lex-catalogue eur-lex eur-lex-retry eur-lex-eea cjeu-listing cjeu citations"
+DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal yfirskattanefnd yfirskattanefnd-retry stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-joint-committee eftasurv eftasurv-retry lagasafn eur-lex-catalogue eur-lex eur-lex-retry eur-lex-eea cjeu-listing cjeu citations"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"
@@ -236,6 +245,25 @@ for adapter in $ADAPTERS; do
       # nothing at all, and re-fetching them every three hours is waste.
       INGEST_MAX_CASES="${NEYTENDAMAL_MAX_CASES:-120}" \
         npm run ingest -- --adapter=neytendamal
+      ;;
+    yfirskattanefnd)
+      # The tax appeal board, on its own site rather than through
+      # stjornarradid.is. 4,175 rulings back to 1973 — the largest Icelandic
+      # archive here after the courts — so it is bounded like the others and a
+      # cold start takes about a fortnight of runs. It needs no cursor: its
+      # index is one page per year, so every run lists the whole archive (54
+      # requests, ~3.5 MB), diffs it against what is stored and spends its
+      # budget on what is missing, newest year first and then from the oldest
+      # end. A quiet run is the 54 listing fetches and nothing else.
+      INGEST_MAX_CASES="${YFIRSKATTANEFND_MAX_CASES:-300}" \
+        npm run ingest -- --adapter=yfirskattanefnd
+      ;;
+    yfirskattanefnd-retry)
+      # The gap ledger and nothing else — one fetch per ruling we know exists
+      # but could not store, and nothing at all when there are none.
+      INGEST_MODE=retry \
+      INGEST_MAX_CASES="${YFIRSKATTANEFND_RETRY:-100}" \
+        npm run ingest -- --adapter=yfirskattanefnd
       ;;
     stjornarradid)
       # The scheduled pickup: each of the 40 boards' newest pages, stopping
