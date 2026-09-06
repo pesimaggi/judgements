@@ -11,6 +11,9 @@ import {
   normalizeJudgmentText,
   parseJudgmentText,
   extractSummary,
+  extractReasoning,
+  extractHolding,
+  truncateByParagraph,
 } from "@/lib/judgment-text";
 
 describe("unspaceLetterSpacing", () => {
@@ -176,5 +179,99 @@ describe("extractSummary", () => {
 
   test("empty input is null, not a throw", () => {
     assert.equal(extractSummary(""), null);
+  });
+});
+
+/**
+ * Named sections — the reasoning and the operative part.
+ *
+ * `extractSummary` above answers "did the court write an útdráttur". These
+ * answer the two questions the well has to ask of a judgment before it may say
+ * what the case held: where does the court reason, and what did it order. The
+ * failure mode being held down is a quiet one — a section that comes back
+ * empty, or that runs on into the next one, produces an answer that attributes
+ * a party's argument to the court.
+ */
+describe("extractReasoning and extractHolding", () => {
+  const JUDGMENT = [
+    "Útdráttur",
+    "A krafðist ógildingar. Fallist var á kröfuna.",
+    "Málsástæður",
+    "A byggði á því að skilyrði hefðu ekki verið uppfyllt. B mótmælti því.",
+    "Niðurstaða",
+    "Samkvæmt 8. gr. laga nr. 100/1952 er heimilt að veita undanþágu. Skilyrðin voru ekki uppfyllt.",
+    "Dómsorð",
+    "Ákvörðun B frá 1. júní 2019 er felld úr gildi.",
+  ].join("\n");
+
+  test("takes the court's reasoning, not the summary above it", () => {
+    const reasoning = extractReasoning(JUDGMENT);
+    assert.match(reasoning ?? "", /er heimilt að veita undanþágu/);
+    assert.doesNotMatch(reasoning ?? "", /A krafðist ógildingar/);
+  });
+
+  test("stops the reasoning at the heading after it", () => {
+    assert.doesNotMatch(extractReasoning(JUDGMENT) ?? "", /felld úr gildi/);
+  });
+
+  test("takes the operative part, whose first word is itself a heading word", () => {
+    // "Ákvörðun" heads an úrskurðarnefnd's decision and is in HEADING_WORDS.
+    // It is also how most dómsorð begin, so reading it as the closing heading
+    // would return an empty holding for nearly every judgment.
+    assert.match(extractHolding(JUDGMENT) ?? "", /Ákvörðun B frá 1\. júní 2019 er felld úr gildi/);
+  });
+
+  test("returns null when the document has no such section", () => {
+    assert.equal(extractReasoning("Bréf til stjórnvalds. Engar fyrirsagnir hér."), null);
+    assert.equal(extractHolding(""), null);
+  });
+
+  test("takes the last occurrence, not the summary's mention of it", () => {
+    const twice = [
+      "Útdráttur",
+      "Í niðurstöðu héraðsdóms var talið að skilyrðin væru uppfyllt.",
+      "Niðurstaða",
+      "Hæstiréttur telur að skilyrðin hafi ekki verið uppfyllt í málinu og fellst því ekki á kröfuna.",
+    ].join("\n");
+    assert.match(extractReasoning(twice) ?? "", /Hæstiréttur telur/);
+  });
+
+  test("finds a heading that ran into the paragraph after it", () => {
+    // The shape everything ingested before normalizeJudgmentText existed is
+    // stored in: one blob, with the line breaks gone.
+    const blob =
+      "Málsatvik A sótti um leyfi. Umsókninni var hafnað. Niðurstaða Fallist er á kröfu A um ógildingu ákvörðunarinnar að öllu leyti.";
+    assert.match(extractReasoning(blob) ?? "", /Fallist er á kröfu A/);
+  });
+});
+
+describe("truncateByParagraph", () => {
+  const paragraphs = ["Fyrsta málsgrein.", "Önnur málsgrein sem er nokkru lengri en sú fyrri.", "Þriðja."];
+
+  test("drops whole paragraphs rather than cutting one", () => {
+    const out = truncateByParagraph(paragraphs, 30);
+    assert.match(out, /^Fyrsta málsgrein\./);
+    assert.doesNotMatch(out, /Önnur málsgrein sem er nokkru$/);
+  });
+
+  test("says that something was dropped", () => {
+    assert.match(truncateByParagraph(paragraphs, 30), /\[…\]/);
+  });
+
+  test("returns everything, unmarked, when it fits", () => {
+    const out = truncateByParagraph(paragraphs, 5000);
+    assert.doesNotMatch(out, /\[…\]/);
+    assert.match(out, /Þriðja\./);
+  });
+
+  test("a first paragraph over the budget is cut at a sentence", () => {
+    const long = "Fyrsta setning hér. Önnur setning hér. Þriðja setning hér.";
+    const out = truncateByParagraph([long], 40);
+    assert.match(out, /Fyrsta setning hér\./);
+    assert.doesNotMatch(out, /Önnur setning hér\. Þriðja/);
+  });
+
+  test("ignores blank paragraphs instead of counting them", () => {
+    assert.equal(truncateByParagraph(["", "  ", "Texti."], 100), "Texti.");
   });
 });

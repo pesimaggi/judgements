@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 import { isAskEnabled, AskRefusal } from "@/lib/ask/llm";
-import { planQuery } from "@/lib/ask/plan";
-import { retrieve } from "@/lib/ask/retrieve";
-import { answer } from "@/lib/ask/answer";
+import { ask } from "@/lib/ask/pipeline";
+import { AskEmptyAnswer } from "@/lib/ask/answer";
+import { AskTimeout } from "@/lib/ask/timeout";
 import type { AskRequestBody, AskTurn } from "@/lib/ask/types";
 
 export const dynamic = "force-dynamic";
@@ -44,6 +45,21 @@ function rateLimited(key: string): boolean {
   return false;
 }
 
+/**
+ * The same question, from the same client, while the first one is still being
+ * answered.
+ *
+ * A double-click on "Sleppa ofan í", or an impatient reload, otherwise buys
+ * two full runs of a pipeline that makes two model calls — paid for twice, and
+ * the reader sees whichever finishes second. The key is a hash so nothing here
+ * holds a question in memory beyond the request that asked it.
+ */
+const inFlight = new Set<string>();
+
+function submissionKey(client: string, question: string): string {
+  return createHash("sha256").update(`${client}\n${question.trim().toLowerCase()}`).digest("hex");
+}
+
 function clientKey(req: Request): string {
   const forwarded = req.headers.get("x-forwarded-for");
   return forwarded?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown";
@@ -52,9 +68,10 @@ function clientKey(req: Request): string {
 /**
  * The well.
  *
- * Plan, retrieve, answer — three stages, described in lib/ask. The route
- * itself only validates, limits, and translates failures into something the
- * bucket can carry back up.
+ * Plan, retrieve, rank, answer, validate — the pipeline in lib/ask/pipeline.ts,
+ * which is also what the evaluation harness runs. The route itself only
+ * validates, limits, and translates failures into something the bucket can
+ * carry back up.
  */
 export async function POST(req: Request) {
   if (!isAskEnabled()) {
@@ -85,12 +102,22 @@ export async function POST(req: Request) {
     );
   }
 
-  if (rateLimited(clientKey(req))) {
+  const client = clientKey(req);
+  if (rateLimited(client)) {
     return NextResponse.json(
       { error: "That is a lot of questions at once. Give the well a few minutes." },
       { status: 429 }
     );
   }
+
+  const key = submissionKey(client, question);
+  if (inFlight.has(key)) {
+    return NextResponse.json(
+      { error: "That question is already on its way down. Give it a moment." },
+      { status: 409 }
+    );
+  }
+  inFlight.add(key);
 
   const history: AskTurn[] = (Array.isArray(body.history) ? body.history : [])
     .filter(
@@ -104,18 +131,37 @@ export async function POST(req: Request) {
     .map((t) => ({ role: t.role, content: t.content.slice(0, MAX_HISTORY_CHARS) }));
 
   try {
-    const plan = await planQuery(question, history);
-    const retrieval = await retrieve(plan);
-    const result = await answer(plan, retrieval, history);
-    return NextResponse.json(result);
+    const { response } = await ask(question, history, {
+      scope: body.scope === "eu" ? "eu" : "eea",
+    });
+    return NextResponse.json(response);
   } catch (e) {
     if (e instanceof AskRefusal) {
       return NextResponse.json({ error: e.message }, { status: 422 });
     }
+    if (e instanceof AskEmptyAnswer) {
+      return NextResponse.json(
+        {
+          error:
+            "The well came back empty — the model returned no answer at all. That is a fault at our end, not a judgement about your question. Try again.",
+        },
+        { status: 502 }
+      );
+    }
+    if (e instanceof AskTimeout) {
+      return NextResponse.json(
+        { error: "The well took too long to answer that. Try again, or ask something narrower." },
+        { status: 504 }
+      );
+    }
+    // The message is not echoed: it can quote the request, and this is a
+    // public endpoint.
     console.error("Ask failed:", e);
     return NextResponse.json(
       { error: "The well could not answer that. Try again in a moment." },
       { status: 500 }
     );
+  } finally {
+    inFlight.delete(key);
   }
 }

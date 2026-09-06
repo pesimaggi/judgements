@@ -1,8 +1,9 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { WellScene, type WellPhase } from "./WellScene";
 import { parseAnswer, type InlineSpan } from "@/lib/ask/render";
+import { FEEDBACK_KINDS, FEEDBACK_LABELS, type FeedbackKind } from "@/lib/ask/feedback";
 import type { AskSource, AskTurn } from "@/lib/ask/types";
 
 /**
@@ -15,8 +16,17 @@ import type { AskSource, AskTurn } from "@/lib/ask/types";
  * because every sentence of the answer is pinned to a provision or a decision
  * this database holds, and every one of those is a click away.
  *
- * The state machine is four phases and lives here rather than in the scene,
- * which only draws. See WellScene.tsx for what each phase looks like.
+ * IT OPENS AS A SPLIT SCREEN, and that is the layout the feature needed all
+ * along. The conversation is one half; the law the well found is the other,
+ * standing open beside it rather than folded into a list under each answer.
+ * The reason is what the panel is *for*: an answer here is only as good as the
+ * sources under it, and reading a judgment's own summary next to the sentence
+ * that cites it is the actual work. In a 27rem box in the corner there was
+ * room for the prose and no room for the evidence, so the evidence was a
+ * collapsed list nobody opened.
+ *
+ * Under 60rem there is no room for two panes, so it becomes two tabs over one
+ * — the same two panels, one at a time.
  */
 
 /** How long the slip of paper takes to fall. Matches well-note-drop. */
@@ -34,6 +44,9 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   sources?: AskSource[];
+  /** The id the answer came back with, which feedback is attached to. */
+  requestId?: string;
+  language?: "is" | "en";
   /** True when this turn is the well reporting that it could not answer. */
   failed?: boolean;
 }
@@ -50,10 +63,18 @@ export function WellChat({ enabled }: { enabled: boolean }) {
   const [phase, setPhase] = useState<WellPhase>("idle");
   const [messages, setMessages] = useState<Message[]>([]);
   const [falling, setFalling] = useState("");
+  /** Which pane is showing, when the screen is too narrow for both. */
+  const [pane, setPane] = useState<"chat" | "sources">("chat");
 
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const busy = phase === "dropping" || phase === "loading";
+
+  /** The sources panel follows the most recent answer that had any. */
+  const latest = useMemo(
+    () => [...messages].reverse().find((m) => m.role === "assistant" && (m.sources?.length ?? 0) > 0),
+    [messages]
+  );
 
   useEffect(() => {
     if (open) inputRef.current?.focus();
@@ -80,13 +101,13 @@ export function WellChat({ enabled }: { enabled: boolean }) {
     // finished lands a hundred pixels into the answer.
     const timer = setTimeout(() => {
       const answers = transcript.querySelectorAll<HTMLElement>("[data-answer]");
-      const latest = answers[answers.length - 1];
-      if (!latest) return toBottom();
+      const newest = answers[answers.length - 1];
+      if (!newest) return toBottom();
       // Measured against the scroll container rather than read off offsetTop,
       // which is relative to the positioned panel and so carries the header's
       // height with it.
       const delta =
-        latest.getBoundingClientRect().top - transcript.getBoundingClientRect().top;
+        newest.getBoundingClientRect().top - transcript.getBoundingClientRect().top;
       transcript.scrollTo({ top: transcript.scrollTop + delta - 12, behavior: "smooth" });
     }, SCENE_TRANSITION_MS + 40);
 
@@ -116,6 +137,7 @@ export function WellChat({ enabled }: { enabled: boolean }) {
       setInput("");
       setFalling(trimmed);
       setPhase("dropping");
+      setPane("chat");
 
       // Sent while the paper is still in the air: the animation is there to
       // cover the wait, not to add to it.
@@ -128,9 +150,18 @@ export function WellChat({ enabled }: { enabled: boolean }) {
         .then(async (res) => {
           const data = await res.json();
           if (!res.ok) throw new Error(data.error ?? "The well could not answer that.");
-          return data as { answer: string; sources: AskSource[] };
+          return data as {
+            answer: string;
+            sources: AskSource[];
+            requestId?: string;
+            language?: "is" | "en";
+          };
         })
-        .catch((e: Error) => ({ answer: e.message, sources: [] as AskSource[], failed: true }));
+        .catch((e: Error) => ({
+          answer: e.message,
+          sources: [] as AskSource[],
+          failed: true,
+        }));
 
       await wait(still ? 0 : DROP_MS);
       // The question joins the transcript when it lands, not when it is typed.
@@ -145,10 +176,13 @@ export function WellChat({ enabled }: { enabled: boolean }) {
           role: "assistant",
           content: result.answer,
           sources: result.sources,
+          requestId: "requestId" in result ? result.requestId : undefined,
+          language: "language" in result ? result.language : undefined,
           failed: "failed" in result && result.failed === true,
         },
       ]);
       setPhase("answered");
+      if (result.sources.length > 0) setPane("chat");
     },
     [busy, messages]
   );
@@ -169,125 +203,342 @@ export function WellChat({ enabled }: { enabled: boolean }) {
     );
   }
 
+  const sources = latest?.sources ?? [];
+
   return (
-    <div className="well-panel fixed bottom-5 right-5 z-40 flex max-h-[min(44rem,calc(100vh-2.5rem))] w-[min(27rem,calc(100vw-2.5rem))] flex-col overflow-hidden rounded-xl border border-line bg-white shadow-2xl shadow-ink/20">
-      <header className="flex items-center justify-between border-b border-line px-4 py-2.5">
-        <div>
-          <p className="font-serif text-sm font-semibold text-ink">Brunnurinn</p>
-          <p className="text-[11px] text-inkSoft">Svör byggð á lögum og úrlausnum úr safninu</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          className="rounded p-1.5 text-inkSoft transition hover:bg-paper hover:text-ink"
-          aria-label="Loka"
-        >
-          <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
-            <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
-          </svg>
-        </button>
-      </header>
-
-      <div ref={transcriptRef} className="flex-1 overflow-y-auto">
-        {/* Full size while the well is working — the drop and the artefacts
-            are the whole point of the wait — and shrunk once there is an
-            answer, which is then the thing worth the room. */}
-        <WellScene
-          phase={phase}
-          question={falling}
-          compact={phase === "answered" && messages.length > 0}
-        />
-
-        {messages.length === 0 && phase === "idle" && (
-          <div className="px-4 pb-4 text-center">
-            <p className="mx-auto max-w-[16rem] text-[13px] leading-relaxed text-inkSoft">
-              Spyrðu um íslenskan rétt. Brunnurinn leitar í lögum, EES- og ESB-gerðum, dómum,
-              úrskurðum og álitum — og vísar í hvert ákvæði sem svarið byggir á.
-            </p>
-            <div className="mt-3 flex flex-col gap-1.5">
-              {EXAMPLES.map((example) => (
-                <button
-                  key={example}
-                  type="button"
-                  onClick={() => void ask(example)}
-                  className="rounded-md border border-line px-3 py-1.5 text-left text-[12px] text-inkSoft transition hover:border-ink/30 hover:bg-paper hover:text-ink"
-                >
-                  {example}
-                </button>
-              ))}
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-0 sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Brunnurinn"
+    >
+      <div className="well-panel flex h-full w-full max-w-6xl flex-col overflow-hidden bg-white shadow-2xl shadow-ink/20 sm:h-[min(52rem,calc(100vh-2rem))] sm:rounded-xl sm:border sm:border-line">
+        <header className="flex shrink-0 items-center justify-between border-b border-line px-4 py-2.5">
+          <div className="flex items-center gap-2.5">
+            <WellMark />
+            <div>
+              <p className="font-serif text-sm font-semibold text-ink">Brunnurinn</p>
+              <p className="text-[11px] text-inkSoft">
+                Svör byggð á lögum og úrlausnum úr safninu
+              </p>
             </div>
           </div>
-        )}
 
-        {messages.length > 0 && (
-          <div className="space-y-4 px-4 pb-4">
-            {messages.map((message, i) =>
-              message.role === "user" ? (
-                <p
-                  key={i}
-                  className="ml-auto w-fit max-w-[85%] rounded-lg rounded-br-sm bg-ink px-3 py-2 text-[13px] leading-relaxed text-white"
-                >
-                  {message.content}
-                </p>
-              ) : (
-                <Answer key={i} message={message} />
-              )
-            )}
+          <div className="flex items-center gap-1">
+            {/* Below 60rem the two panes become two tabs over one. */}
+            <div className="mr-1 flex rounded-md border border-line p-0.5 lg:hidden">
+              <PaneTab active={pane === "chat"} onClick={() => setPane("chat")}>
+                Samtal
+              </PaneTab>
+              <PaneTab active={pane === "sources"} onClick={() => setPane("sources")}>
+                Heimildir{sources.length > 0 ? ` (${sources.length})` : ""}
+              </PaneTab>
+            </div>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="rounded p-1.5 text-inkSoft transition hover:bg-paper hover:text-ink"
+              aria-label="Loka"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+              >
+                <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
+              </svg>
+            </button>
           </div>
-        )}
+        </header>
 
-        {phase === "loading" && (
-          <p className="pb-4 text-center text-[12px] text-inkSoft">Sæki lögin úr brunninum …</p>
-        )}
-      </div>
+        <div className="flex min-h-0 flex-1">
+          {/* ---- the conversation ------------------------------------- */}
+          <section
+            className={`flex min-h-0 min-w-0 flex-1 flex-col lg:flex lg:basis-1/2 ${
+              pane === "chat" ? "flex" : "hidden"
+            }`}
+          >
+            <div ref={transcriptRef} className="min-h-0 flex-1 overflow-y-auto">
+              {/* Full size while the well is working — the drop and the
+                  artefacts are the whole point of the wait — and shrunk once
+                  there is an answer, which is then the thing worth the room. */}
+              <WellScene
+                phase={phase}
+                question={falling}
+                compact={phase === "answered" && messages.length > 0}
+              />
 
-      <form
-        className="border-t border-line p-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void ask(input);
-        }}
-      >
-        <div className="flex items-end gap-2">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              {messages.length === 0 && phase === "idle" && (
+                <div className="px-4 pb-4 text-center">
+                  <p className="mx-auto max-w-[22rem] text-[13px] leading-relaxed text-inkSoft">
+                    Spyrðu um íslenskan rétt. Brunnurinn leitar í lögum, EES- og ESB-gerðum,
+                    dómum, úrskurðum og álitum — og vísar í hvert ákvæði sem svarið byggir á.
+                    Heimildirnar standa opnar hægra megin.
+                  </p>
+                  <div className="mx-auto mt-3 flex max-w-[26rem] flex-col gap-1.5">
+                    {EXAMPLES.map((example) => (
+                      <button
+                        key={example}
+                        type="button"
+                        onClick={() => void ask(example)}
+                        className="rounded-md border border-line px-3 py-1.5 text-left text-[12px] text-inkSoft transition hover:border-ink/30 hover:bg-paper hover:text-ink"
+                      >
+                        {example}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {messages.length > 0 && (
+                <div className="space-y-4 px-4 pb-4">
+                  {messages.map((message, i) =>
+                    message.role === "user" ? (
+                      <p
+                        key={i}
+                        className="ml-auto w-fit max-w-[85%] rounded-lg rounded-br-sm bg-ink px-3 py-2 text-[13px] leading-relaxed text-white"
+                      >
+                        {message.content}
+                      </p>
+                    ) : (
+                      <Answer key={i} message={message} onShowSources={() => setPane("sources")} />
+                    )
+                  )}
+                </div>
+              )}
+
+              {phase === "loading" && (
+                <p className="pb-4 text-center text-[12px] text-inkSoft">
+                  Sæki lögin úr brunninum …
+                </p>
+              )}
+            </div>
+
+            <form
+              className="shrink-0 border-t border-line p-3"
+              onSubmit={(e) => {
                 e.preventDefault();
                 void ask(input);
-              }
-            }}
-            rows={2}
-            maxLength={600}
-            disabled={busy}
-            placeholder="Spyrðu brunninn …"
-            className="min-h-[3rem] flex-1 resize-none rounded-md border border-line bg-paper px-3 py-2 text-[13px] leading-relaxed text-ink placeholder:text-inkSoft/70 focus-visible:border-ink/30 disabled:opacity-60"
-          />
-          <button
-            type="submit"
-            disabled={busy || input.trim().length < 3}
-            className="rounded-md bg-accent px-3 py-2.5 text-[13px] font-medium text-white transition hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-40"
+              }}
+            >
+              <div className="flex items-end gap-2">
+                <textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void ask(input);
+                    }
+                  }}
+                  rows={2}
+                  maxLength={600}
+                  disabled={busy}
+                  placeholder="Spyrðu brunninn …"
+                  className="min-h-[3rem] flex-1 resize-none rounded-md border border-line bg-paper px-3 py-2 text-[13px] leading-relaxed text-ink placeholder:text-inkSoft/70 focus-visible:border-ink/30 disabled:opacity-60"
+                />
+                <button
+                  type="submit"
+                  disabled={busy || input.trim().length < 3}
+                  className="rounded-md bg-accent px-3 py-2.5 text-[13px] font-medium text-white transition hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {busy ? "…" : "Sleppa ofan í"}
+                </button>
+              </div>
+              <p className="mt-2 text-[10px] leading-snug text-inkSoft">
+                Óopinbert hjálpartæki. Svarið er samantekt úr safninu, ekki lögfræðiráðgjöf —
+                staðfestu alltaf textann hjá upphaflegri heimild.
+              </p>
+            </form>
+          </section>
+
+          {/* ---- what the well found ----------------------------------- */}
+          <aside
+            className={`min-h-0 min-w-0 flex-1 flex-col border-line bg-paper/40 lg:flex lg:basis-1/2 lg:border-l ${
+              pane === "sources" ? "flex" : "hidden"
+            }`}
           >
-            {busy ? "…" : "Sleppa ofan í"}
-          </button>
+            <SourcePanel sources={sources} busy={busy} />
+          </aside>
         </div>
-        <p className="mt-2 text-[10px] leading-snug text-inkSoft">
-          Óopinbert hjálpartæki. Svarið er samantekt úr safninu, ekki lögfræðiráðgjöf — staðfestu
-          alltaf textann hjá upphaflegri heimild.
-        </p>
-      </form>
+      </div>
     </div>
   );
 }
 
-/** One answer: the prose, then the sources it rests on. */
-function Answer({ message }: { message: Message }) {
-  const blocks = parseAnswer(message.content);
-  const sources = message.sources ?? [];
+function PaneTab({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`rounded px-2.5 py-1 text-[11px] font-medium transition ${
+        active ? "bg-ink text-white" : "text-inkSoft hover:text-ink"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * The other half of the screen: everything the well brought up, whether the
+ * answer cited it or not.
+ *
+ * Cited first, because those are the ones the argument rests on, and the rest
+ * under a heading of their own — being able to see what the search found and
+ * the answer did not use is worth something, and is also the fastest way to
+ * spot that the well found the right provision and then wrote around it.
+ */
+function SourcePanel({ sources, busy }: { sources: AskSource[]; busy: boolean }) {
   const cited = sources.filter((s) => s.cited);
   const rest = sources.filter((s) => !s.cited);
+
+  if (sources.length === 0) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-6 text-center">
+        <p className="max-w-[18rem] text-[12px] leading-relaxed text-inkSoft">
+          {busy
+            ? "Leita í lögum, dómum, úrskurðum og álitum …"
+            : "Hér birtast lögin og úrlausnirnar sem svarið byggir á — hver heimild með þeim texta sem hún er valin fyrir."}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      <SourceGroup
+        title={`Vitnað til (${cited.length})`}
+        note="Heimildirnar sem svarið byggir beinlínis á."
+        sources={cited}
+      />
+      {rest.length > 0 && (
+        <SourceGroup
+          title={`Kom líka upp (${rest.length})`}
+          note="Fannst í leitinni en er ekki vitnað til í svarinu."
+          sources={rest}
+          muted
+        />
+      )}
+    </div>
+  );
+}
+
+function SourceGroup({
+  title,
+  note,
+  sources,
+  muted,
+}: {
+  title: string;
+  note: string;
+  sources: AskSource[];
+  muted?: boolean;
+}) {
+  if (sources.length === 0) return null;
+  return (
+    <section className={muted ? "mt-5" : ""}>
+      <h3 className="font-sans text-[11px] font-semibold uppercase tracking-wide text-inkSoft">
+        {title}
+      </h3>
+      <p className="mt-0.5 text-[11px] text-inkSoft/80">{note}</p>
+      <ul className="mt-2 space-y-2">
+        {sources.map((source) => (
+          <li key={source.n}>
+            <SourceCard source={source} muted={muted} />
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** The Icelandic label for what a source is — the distinction that matters. */
+const KIND_LABEL: Record<AskSource["kind"], string> = {
+  act: "Lög",
+  provision: "Lagaákvæði",
+  decision: "Úrlausn",
+  opinion: "Álit",
+  commentary: "Fræðiskrif",
+};
+
+/**
+ * One source, with the passage it was selected for.
+ *
+ * The excerpt is the point of the panel. A reader cannot check a citation from
+ * a title, and asking them to open the judgment to find out why it is here is
+ * asking them not to check at all.
+ */
+function SourceCard({ source, muted }: { source: AskSource; muted?: boolean }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div
+      className={`rounded-lg border bg-white p-2.5 transition ${
+        muted ? "border-line/60" : "border-line"
+      }`}
+    >
+      <div className="flex gap-2">
+        <span className="mt-px shrink-0 font-sans text-[10px] font-semibold text-accent">
+          [{source.n}]
+        </span>
+        <div className="min-w-0 flex-1">
+          <SourceLink source={source} className="block hover:underline">
+            <span className="block text-[12px] font-medium leading-snug text-ink">
+              {source.title}
+            </span>
+          </SourceLink>
+          <span className="mt-0.5 block text-[11px] leading-snug text-inkSoft">
+            {source.subtitle}
+          </span>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <span className="rounded bg-paper px-1.5 py-px text-[10px] text-inkSoft">
+              {KIND_LABEL[source.kind]}
+            </span>
+            {source.kind === "commentary" && (
+              <span className="rounded bg-accentSoft px-1.5 py-px text-[10px] text-accent">
+                ekki gildandi réttur
+              </span>
+            )}
+            {source.excerpt && (
+              <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                className="text-[10px] text-inkSoft underline underline-offset-2 hover:text-ink"
+                aria-expanded={open}
+              >
+                {open ? "Fela textann" : "Sýna textann"}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {open && source.excerpt && (
+        <p className="mt-2 whitespace-pre-line border-l-2 border-line pl-2.5 text-[11px] leading-relaxed text-inkSoft">
+          {source.excerpt}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** One answer: the prose, then a way to say what was wrong with it. */
+function Answer({ message, onShowSources }: { message: Message; onShowSources: () => void }) {
+  const blocks = parseAnswer(message.content);
+  const sources = message.sources ?? [];
   const byNumber = new Map(sources.map((s) => [s.n, s]));
 
   return (
@@ -300,7 +551,10 @@ function Answer({ message }: { message: Message }) {
         {blocks.map((block, i) => {
           if (block.kind === "heading") {
             return (
-              <h4 key={i} className="pt-1 font-sans text-[11px] font-semibold uppercase tracking-wide text-inkSoft">
+              <h4
+                key={i}
+                className="pt-1 font-sans text-[11px] font-semibold uppercase tracking-wide text-inkSoft"
+              >
                 <Spans spans={block.spans} sources={byNumber} />
               </h4>
             );
@@ -324,44 +578,104 @@ function Answer({ message }: { message: Message }) {
         })}
       </div>
 
-      {cited.length > 0 && (
-        <div className="mt-3 space-y-1.5 border-t border-line pt-3">
-          <p className="font-sans text-[11px] font-semibold uppercase tracking-wide text-inkSoft">
-            Heimildir
-          </p>
-          {cited.map((source) => (
-            <SourceRow key={source.n} source={source} />
-          ))}
-        </div>
+      {sources.length > 0 && (
+        <button
+          type="button"
+          onClick={onShowSources}
+          className="mt-2.5 text-[11px] text-inkSoft underline underline-offset-2 hover:text-ink lg:hidden"
+        >
+          Sjá {sources.length} heimildir
+        </button>
       )}
 
-      {rest.length > 0 && (
-        <details className="mt-2">
-          <summary className="cursor-pointer text-[11px] text-inkSoft hover:text-ink">
-            {rest.length} til viðbótar komu upp úr brunninum
-          </summary>
-          <div className="mt-1.5 space-y-1.5">
-            {rest.map((source) => (
-              <SourceRow key={source.n} source={source} />
-            ))}
-          </div>
-        </details>
+      {message.requestId && !message.failed && (
+        <Feedback message={message} />
       )}
     </div>
   );
 }
 
-function SourceRow({ source }: { source: AskSource }) {
+/**
+ * Saying what was wrong with an answer.
+ *
+ * Seven buttons rather than a thumb, because the seven are the seven things
+ * that actually go wrong with a retrieval-grounded legal answer and each one
+ * points at a different stage: a wrong source is ranking, a missing one is
+ * retrieval, a citation that does not support the claim is the answer stage.
+ * A thumbs-down would tell us none of that.
+ *
+ * The question is not sent. What goes with the report is the shape of the
+ * answer — which button, how many sources, which provider — and the id of the
+ * request, which carries nothing about what was asked. See lib/ask/feedback.ts.
+ */
+function Feedback({ message }: { message: Message }) {
+  const [sent, setSent] = useState<FeedbackKind | null>(null);
+  const [open, setOpen] = useState(false);
+  const language = message.language ?? "is";
+
+  const send = async (kind: FeedbackKind) => {
+    setSent(kind);
+    setOpen(false);
+    try {
+      await fetch("/api/ask/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestId: message.requestId,
+          kind,
+          language,
+          sources: message.sources?.length ?? 0,
+          cited: message.sources?.filter((s) => s.cited).length ?? 0,
+        }),
+      });
+    } catch {
+      // A lost report is not worth an error in front of somebody who was
+      // doing us a favour by sending it.
+    }
+  };
+
+  if (sent) {
+    return (
+      <p className="mt-2.5 text-[11px] text-inkSoft">
+        Takk — skráð sem „{FEEDBACK_LABELS[sent][language]}“. Spurningin þín fylgdi ekki með.
+      </p>
+    );
+  }
+
   return (
-    <SourceLink source={source} className="flex gap-2 rounded-md p-1.5 transition hover:bg-paper">
-      <span className="mt-px shrink-0 font-sans text-[10px] font-semibold text-accent">
-        [{source.n}]
-      </span>
-      <span className="min-w-0">
-        <span className="block truncate text-[12px] font-medium text-ink">{source.title}</span>
-        <span className="block truncate text-[11px] text-inkSoft">{source.subtitle}</span>
-      </span>
-    </SourceLink>
+    <div className="mt-2.5 border-t border-line/70 pt-2">
+      {!open ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void send("helpful")}
+            className="rounded-md border border-line px-2 py-1 text-[11px] text-inkSoft transition hover:border-ink/30 hover:text-ink"
+          >
+            {FEEDBACK_LABELS.helpful[language]}
+          </button>
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="text-[11px] text-inkSoft underline underline-offset-2 hover:text-ink"
+          >
+            Eitthvað að svarinu?
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {FEEDBACK_KINDS.filter((k) => k !== "helpful").map((kind) => (
+            <button
+              key={kind}
+              type="button"
+              onClick={() => void send(kind)}
+              className="rounded-md border border-line px-2 py-1 text-[11px] text-inkSoft transition hover:border-accent/40 hover:text-accent"
+            >
+              {FEEDBACK_LABELS[kind][language]}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -393,23 +707,28 @@ function SourceLink({
   );
 }
 
-function Spans({
-  spans,
-  sources,
-}: {
-  spans: InlineSpan[];
-  sources: Map<number, AskSource>;
-}) {
+function Spans({ spans, sources }: { spans: InlineSpan[]; sources: Map<number, AskSource> }) {
   return (
     <>
       {spans.map((span, i) => {
-        if (span.kind === "bold") return <strong key={i} className="font-semibold">{span.text}</strong>;
+        if (span.kind === "bold")
+          return (
+            <strong key={i} className="font-semibold">
+              {span.text}
+            </strong>
+          );
         if (span.kind === "text") return <span key={i}>{span.text}</span>;
 
         const source = sources.get(span.n);
         // A citation the answer made up, pointing at no source we returned.
-        // Shown as written rather than silently dropped: it is evidence.
-        if (!source) return <span key={i} className="text-inkSoft">[{span.n}]</span>;
+        // Validation removes these before the answer is rendered; if one ever
+        // reaches here it is shown as written rather than silently dropped,
+        // because it is evidence that something upstream failed.
+        if (!source) return (
+          <span key={i} className="text-inkSoft">
+            [{span.n}]
+          </span>
+        );
         return (
           <SourceLink
             key={i}

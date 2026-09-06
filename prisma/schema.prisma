@@ -372,3 +372,53 @@ model IngestionRun {
 
   @@index([sourceKey, startedAt])
 }
+
+/// One piece of feedback on an answer from the well.
+///
+/// Designed around what it is *not* allowed to hold. Someone telling us that a
+/// citation did not support a claim is doing us a favour; it is not consent to
+/// keep the legal question they asked, which for this corpus is frequently the
+/// most sensitive thing a person could type. So:
+///
+///  - `requestId` is the random id from that request's metrics line. It carries
+///    nothing derived from the question, and it is what makes a report
+///    actionable: the metrics line has the provider, the effort, the counts and
+///    the timings.
+///  - `question` is null unless the reader ticked the box that says "include my
+///    question". Submitting feedback is not that tick.
+///  - `note` is free text the reader chose to write, capped, and equally
+///    optional.
+///
+/// What is kept unconditionally is the shape of the answer, not its content:
+/// which button was pressed, which numbered source it was about, how many
+/// sources there were, and the configuration that produced it.
+model AskFeedback {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// The `requestId` from the answer, correlating this with its metrics line.
+  requestId String @map("request_id")
+
+  /// "helpful" | "wrong-source" | "missing-source" | "citation-unsupported" |
+  /// "missed-exception" | "too-vague" | "incorrect-conclusion".
+  kind String
+
+  /// Which numbered source the report is about, where it is about one.
+  sourceN Int? @map("source_n")
+
+  /// Answer shape, for triage without the answer itself.
+  language String?
+  provider String?
+  model    String?
+  effort   String?
+  sources  Int?
+  cited    Int?
+
+  /// Only ever set when the reader explicitly chose to include them.
+  question String?
+  note     String?
+
+  @@index([kind, createdAt])
+  @@index([requestId])
+  @@map("ask_feedback")
+}

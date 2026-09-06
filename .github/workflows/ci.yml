@@ -25,6 +25,14 @@ jobs:
 
       - run: npm test
 
+      # The answer evaluation, in its offline mode: it replays the recorded
+      # runs in src/ask-eval/fixtures.json through the real pipeline against a
+      # fake model, so it needs neither an API key nor a database. It exits
+      # non-zero on a failed fixture, which is the point of having it here —
+      # a change to citation validation or to the prompt's rules is measured
+      # on every pull request rather than the next time somebody looks.
+      - run: npm run eval:ask
+
       # `npm run lint` is deliberately not here yet: ESLint has never been
       # configured in this repo, so `next lint` prompts for a config and would
       # hang the job. Configure it, then add the step.

@@ -16,7 +16,14 @@ import type { Retrieval } from "@/lib/ask/retrieve";
 
 const PLAN: QueryPlan = {
   terms: ["ríkisborgararéttur"],
+  concepts: ["ríkisborgararéttur"],
+  phrases: [],
   actQueries: ["lög um íslenskan ríkisborgararétt"],
+  provisionQueries: [],
+  decisionQueries: [],
+  sourceCategories: ["legislation"],
+  date: null,
+  historical: false,
   language: "is",
   legal: true,
   standalone: "Hvernig sæki ég um íslenskan ríkisborgararétt?",
@@ -31,10 +38,20 @@ const SOURCES: AskSource[] = [
 const RETRIEVAL: Retrieval = {
   sources: SOURCES,
   context: "[1] ACT — lög nr. 100/1952",
-  counts: { acts: 1, provisions: 1, decisions: 1 },
+  counts: { acts: 1, provisions: 1, decisions: 1, candidates: 3 },
+  evidence: new Map([[1, "Title: Lög um íslenskan ríkisborgararétt"]]),
+  limitations: [],
+  shape: { distinctActs: 1, jurisdictions: ["is"], decisions: 1 },
 };
 
-const EMPTY: Retrieval = { sources: [], context: "", counts: { acts: 0, provisions: 0, decisions: 0 } };
+const EMPTY: Retrieval = {
+  sources: [],
+  context: "",
+  counts: { acts: 0, provisions: 0, decisions: 0, candidates: 0 },
+  evidence: new Map(),
+  limitations: [],
+  shape: { distinctActs: 0, jurisdictions: [], decisions: 0 },
+};
 
 /** Records whether it was called, and with what. */
 function spyModel(reply = "Svar [2].") {
@@ -105,6 +122,7 @@ describe("answer", () => {
     const result = await answer({ ...PLAN, legal: false }, RETRIEVAL, [], model);
 
     assert.equal(calls.length, 0);
+    assert.equal(result.abstained, true);
     assert.deepEqual(result.sources, []);
     assert.match(result.answer, /brunnur/i);
   });

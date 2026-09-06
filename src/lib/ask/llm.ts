@@ -25,8 +25,11 @@
  *                        above once and flip ASK_PROVIDER; use this one for a
  *                        quick one-off.
  *
- *   ASK_EFFORT           "low" | "medium" | "high" | "xhigh" | "max", default
- *                        "medium". How hard the model works on the answer.
+ *   ASK_EFFORT           "low" | "medium" | "high" | "xhigh" | "max". How hard
+ *                        the model works on the answer, and the fallback for
+ *                        every per-stage effort variable in lib/ask/config.ts,
+ *                        which is where the rest of the well's configuration
+ *                        now lives.
  *                        Both APIs take this same vocabulary. A legal answer
  *                        is worth thinking about, but somebody is watching a
  *                        bucket go down a well while it does, so the default
@@ -59,11 +62,25 @@ const DEFAULT_MODELS: Record<AskProvider, string> = {
  */
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
+/**
+ * What a call cost, where the provider says. Reported through a callback
+ * rather than a return value so that adding it changed no signature and broke
+ * no caller — a fake model in a test simply never calls it.
+ */
+export interface AskUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  /** Tokens read from the provider's prompt cache, where it reports them. */
+  cachedInputTokens?: number;
+}
+
 export interface CompleteRequest {
   system: string;
   messages: AskTurn[];
   maxTokens: number;
   effort: AskEffort;
+  /** Called once, with what the provider reported, when it reports anything. */
+  onUsage?: (usage: AskUsage) => void;
 }
 
 export interface ExtractRequest<T> {
@@ -71,6 +88,7 @@ export interface ExtractRequest<T> {
   messages: AskTurn[];
   maxTokens: number;
   effort: AskEffort;
+  onUsage?: (usage: AskUsage) => void;
   /**
    * The shape to extract. Sent as a strict tool to Anthropic and as a strict
    * `json_schema` response format to OpenAI — both validate the arguments
@@ -109,6 +127,16 @@ export interface AskEnv {
   ASK_MODEL_OPENAI?: string;
   ASK_MODEL_ANTHROPIC?: string;
   ASK_EFFORT?: string;
+  // Per-stage configuration; see lib/ask/config.ts, which is where these are
+  // read and where their defaults and precedence live.
+  ASK_PLAN_EFFORT?: string;
+  ASK_EFFORT_SIMPLE?: string;
+  ASK_EFFORT_COMPLEX?: string;
+  ASK_VERIFY_EFFORT?: string;
+  ASK_VERIFY_CITATIONS?: string;
+  ASK_RERANK_WITH_MODEL?: string;
+  ASK_MAX_CANDIDATES?: string;
+  ASK_MAX_SOURCES?: string;
 }
 
 /**
@@ -197,6 +225,8 @@ class AnthropicAskModel implements AskModel {
     // Checked before the content is read: on a refusal `content` carries no
     // answer, and treating it as an empty string would put a blank card in
     // the well rather than an explanation.
+    reportAnthropicUsage(req.onUsage, response.usage);
+
     if (response.stop_reason === "refusal") {
       throw new AskRefusal(response.stop_details?.explanation ?? undefined);
     }
@@ -230,6 +260,8 @@ class AnthropicAskModel implements AskModel {
       ],
       tool_choice: { type: "tool", name: req.tool.name },
     });
+
+    reportAnthropicUsage(req.onUsage, response.usage);
 
     if (response.stop_reason === "refusal") return null;
 
@@ -266,6 +298,8 @@ class OpenAIAskModel implements AskModel {
       messages: this.messages(req),
     });
 
+    reportOpenAIUsage(req.onUsage, response.usage);
+
     const choice = response.choices[0];
     if (choice?.finish_reason === "content_filter") throw new AskRefusal();
     return choice?.message?.content?.trim() ?? "";
@@ -291,6 +325,8 @@ class OpenAIAskModel implements AskModel {
       },
     });
 
+    reportOpenAIUsage(req.onUsage, response.usage);
+
     const choice = response.choices[0];
     if (choice?.finish_reason === "content_filter") return null;
     const text = choice?.message?.content;
@@ -305,12 +341,64 @@ class OpenAIAskModel implements AskModel {
   }
 }
 
+/**
+ * Usage, in the two providers' own words.
+ *
+ * Neither is asked for; both report it on every response, and it is the only
+ * way to know what a question cost. Wrapped in try/catch because a usage
+ * field that moved is not a reason to fail a question that was answered.
+ */
+function reportAnthropicUsage(
+  onUsage: ((usage: AskUsage) => void) | undefined,
+  usage: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number | null } | undefined
+): void {
+  if (!onUsage || !usage) return;
+  try {
+    onUsage({
+      inputTokens: usage.input_tokens,
+      outputTokens: usage.output_tokens,
+      cachedInputTokens: usage.cache_read_input_tokens ?? undefined,
+    });
+  } catch {
+    /* metrics must never fail a request */
+  }
+}
+
+function reportOpenAIUsage(
+  onUsage: ((usage: AskUsage) => void) | undefined,
+  usage: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } | null } | undefined
+): void {
+  if (!onUsage || !usage) return;
+  try {
+    onUsage({
+      inputTokens: usage.prompt_tokens,
+      outputTokens: usage.completion_tokens,
+      cachedInputTokens: usage.prompt_tokens_details?.cached_tokens ?? undefined,
+    });
+  } catch {
+    /* metrics must never fail a request */
+  }
+}
+
 /** The model declined the request outright. Reported, not swallowed. */
 export class AskRefusal extends Error {
   constructor(explanation?: string) {
     super(explanation ?? "The model declined to answer this question.");
     this.name = "AskRefusal";
   }
+}
+
+/**
+ * Which provider and model are actually in play, for the metrics line and for
+ * the evaluation report. Returns nulls rather than throwing when the well is
+ * switched off — this is called to describe a request, including a failed one.
+ */
+export function askProviderInfo(env: AskEnv = process.env): {
+  provider: AskProvider | null;
+  model: string | null;
+} {
+  const provider = resolveProvider(env);
+  return { provider, model: provider ? askModelId(provider, env) : null };
 }
 
 export function getAskModel(): AskModel {
