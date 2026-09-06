@@ -238,7 +238,7 @@ export function normalizeJudgmentText(raw: string): string {
  * Splits text into sentences, respecting Icelandic legal abbreviations so
  * "sbr. 2. mgr. 70. gr." stays in one piece.
  */
-function splitSentences(text: string): string[] {
+export function splitSentences(text: string): string[] {
   // The optional trailing quote covers Icelandic's closing “ as well as the
   // usual suspects — "…standi til annars.“ Dómsorð:" has to split.
   const boundary = /([.!?…])(["”“»'’]?)\s+/g;
@@ -472,4 +472,165 @@ export function extractSummary(raw: string): string | null {
 
   const summary = body.join("\n\n").trim();
   return summary.length >= 40 ? summary : null;
+}
+
+// ---------------------------------------------------------------------------
+// Named sections
+//
+// `extractSummary` above answers one question — "did the court write an
+// útdráttur?" — by parsing the head of the document. The well needs a second,
+// harder one: where does *this* judgment reason, and where does it decide?
+// Those sections ("Niðurstaða", "Dómsorð") sit at the end of a document that
+// can be several hundred pages of scanned PDF, so parsing the whole thing to
+// find them is not affordable on a request that already spends two model
+// calls. What follows works on offsets in the raw text instead, and only
+// parses the slice it decided on.
+// ---------------------------------------------------------------------------
+
+/**
+ * A heading found in the raw text, wherever it sits: on a line of its own, or
+ * swallowed by the paragraph after it in a document stored as one blob.
+ *
+ * The leading boundary is the same one `peelHeading` relies on — a line start,
+ * or the end of the sentence before — and the trailing guard is that the next
+ * thing is whitespace, so "Niðurstaðan var sú" is not read as the heading
+ * "Niðurstaða".
+ */
+const RAW_HEADING_RE = new RegExp(
+  `(?:^|[.:!?…”“"»)]\\s+|\\n)` +
+    `((?:(?:[IVXL]{1,6}|\\d{1,3})[.)]\\s+)?(?:${HEADING_WORDS.join("|")})` +
+    `(?![${UPPER}${LOWER}])${HEADING_SUFFIX}[.:]?)(?=\\s|$)`,
+  "gi"
+);
+
+export interface HeadingOffset {
+  /** Offset of the heading itself in the text it was found in. */
+  at: number;
+  /** Offset of the first character after the heading. */
+  bodyAt: number;
+  /** The heading as written. */
+  text: string;
+}
+
+/** Every heading in the raw text, in document order. */
+export function headingOffsets(raw: string): HeadingOffset[] {
+  const found: HeadingOffset[] = [];
+  RAW_HEADING_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = RAW_HEADING_RE.exec(raw)) !== null) {
+    const at = m.index + m[0].length - m[1].length;
+    found.push({ at, bodyAt: at + m[1].length, text: m[1].trim() });
+    // Overlapping boundaries: "Niðurstaða. Dómsorð:" would otherwise lose the
+    // second heading, whose own boundary was consumed by the first match.
+    RAW_HEADING_RE.lastIndex = found[found.length - 1].bodyAt;
+  }
+  return found;
+}
+
+export interface SectionOptions {
+  /**
+   * Which occurrence to take when a heading appears more than once. "last" is
+   * right for the reasoning and the operative part: a summary at the head of
+   * the document often names them before the judgment itself gets there.
+   */
+  prefer?: "first" | "last";
+  /** Hard ceiling on the returned text. Cut at a paragraph, never mid-word. */
+  maxChars?: number;
+}
+
+/**
+ * The section under one of the named headings, from the heading to the next
+ * heading of any kind. Null when the document has no such section — which is
+ * the common case outside the courts, and not a failure.
+ */
+export function extractNamedSection(
+  raw: string,
+  names: RegExp,
+  { prefer = "last", maxChars = 4000 }: SectionOptions = {}
+): string | null {
+  if (!raw?.trim()) return null;
+
+  const text = cleanChars(raw);
+  const headings = headingOffsets(text);
+  const matching = headings.filter((h) => names.test(h.text));
+  if (matching.length === 0) return null;
+
+  const start = prefer === "first" ? matching[0] : matching[matching.length - 1];
+  // The section ends at the next heading — but not at one sitting on the very
+  // first word of its own body. "Dómsorð" is regularly followed by "Ákvörðun
+  // B … er felld úr gildi", and "Ákvörðun" is itself a heading word (an
+  // úrskurðarnefnd files its decision under it). Treating that as the closing
+  // heading would return an empty operative part for every judgment written
+  // that way, which is most of them.
+  const next = headings.find((h) => h.at > start.bodyAt + 2);
+  const end = Math.min(next?.at ?? text.length, start.bodyAt + maxChars * 3);
+
+  const body = text.slice(start.bodyAt, end);
+  if (!body.trim()) return null;
+
+  // Only the slice is parsed, which is what makes this affordable on a
+  // 300-page ruling: the blob-splitting in parseJudgmentText is quadratic in
+  // nothing, but it is not free either.
+  const blocks = parseJudgmentText(body);
+  const paragraphs = blocks
+    .filter((b) => b.kind !== "heading")
+    .map((b) => ("marker" in b ? `${b.marker} ${b.text}` : b.text));
+
+  const section = truncateByParagraph(paragraphs, maxChars);
+  return section.length >= 20 ? section : null;
+}
+
+/**
+ * Joins paragraphs up to a budget, dropping whole paragraphs rather than
+ * cutting one in half. A legal text cut mid-sentence reads as if the sentence
+ * ended there, which for a provision full of exceptions is a wrong answer
+ * rather than a short one — so the cut is always at a boundary, and the fact
+ * that something was dropped is stated.
+ */
+export function truncateByParagraph(paragraphs: string[], maxChars: number): string {
+  const kept: string[] = [];
+  let length = 0;
+
+  for (const paragraph of paragraphs) {
+    const p = paragraph.trim();
+    if (!p) continue;
+    if (length + p.length > maxChars) {
+      // The first paragraph alone can exceed the budget. Falling back to whole
+      // sentences keeps the same promise one level down.
+      if (kept.length === 0) {
+        const sentences: string[] = [];
+        let used = 0;
+        for (const sentence of splitSentences(p)) {
+          if (used + sentence.length > maxChars) break;
+          sentences.push(sentence);
+          used += sentence.length + 1;
+        }
+        // A single sentence longer than the whole budget is the only case
+        // where there is nothing structural left to cut on.
+        kept.push(sentences.length ? sentences.join(" ") : `${p.slice(0, maxChars).trimEnd()} …`);
+      }
+      kept.push("[…]");
+      break;
+    }
+    kept.push(p);
+    length += p.length + 2;
+  }
+
+  return kept.join("\n\n").trim();
+}
+
+/** "Niðurstaða", and the words courts and boards use for the same section. */
+export const REASONING_HEADING_RE = /^(?:(?:[IVXL]{1,6}|\d{1,3})[.)]\s+)?(?:Niðurstaða|Niðurstöður|Forsendur|Forsendur og niðurstaða|Álit|Niðurstaða nefndarinnar)/i;
+
+/** "Dómsorð", "Úrskurðarorð" — the operative part, what was actually ordered. */
+export const HOLDING_HEADING_RE = /^(?:(?:[IVXL]{1,6}|\d{1,3})[.)]\s+)?(?:Dómsorð|Úrskurðarorð|Ályktarorð)/i;
+
+/** The court's reasoning, where the document marks it off. */
+export function extractReasoning(raw: string, maxChars = 3000): string | null {
+  return extractNamedSection(raw, REASONING_HEADING_RE, { prefer: "last", maxChars });
+}
+
+/** The operative conclusion, where the document marks it off. */
+export function extractHolding(raw: string, maxChars = 1200): string | null {
+  return extractNamedSection(raw, HOLDING_HEADING_RE, { prefer: "last", maxChars });
 }

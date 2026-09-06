@@ -1,0 +1,326 @@
+{
+  "version": 1,
+  "_readme": [
+    "Fixtures for evaluating the well's answers. Run with `npm run eval:ask`.",
+    "",
+    "Every question here is written for this file. None of them is a question",
+    "anybody asked the deployed well, and none of them contains anybody's facts,",
+    "name or circumstances. They are questions about the law.",
+    "",
+    "The act and case numbers below are real instruments, because the point of a",
+    "fixture is that the identifiers are checkable. The `recorded` block is a",
+    "captured run — the plan, the sources and the answer — so the offline mode",
+    "replays everything after retrieval with no model call and no database.",
+    "Re-record with `npm run eval:ask -- --live --record`."
+  ],
+  "fixtures": [
+    {
+      "id": "citizenship-conditions",
+      "category": "grounded-answer",
+      "note": "The ordinary case: provisions retrieved, every proposition cited.",
+      "question": "Hvaða skilyrði þarf að uppfylla til að fá íslenskan ríkisborgararétt?",
+      "language": "is",
+      "expectSources": ["100/1952", "8. gr."],
+      "requiredPoints": ["búsetu"],
+      "expectAbstention": false,
+      "recorded": {
+        "plan": {
+          "concepts": ["ríkisborgararéttur", "veiting ríkisborgararéttar", "búsetuskilyrði"],
+          "phrases": [],
+          "actQueries": ["lög um íslenskan ríkisborgararétt"],
+          "provisionQueries": [],
+          "decisionQueries": [],
+          "sourceCategories": ["legislation", "decisions"],
+          "date": null,
+          "historical": false,
+          "language": "is",
+          "legal": true,
+          "standalone": "Hvaða skilyrði þarf að uppfylla til að fá íslenskan ríkisborgararétt?"
+        },
+        "sources": [
+          {
+            "n": 1,
+            "kind": "act",
+            "title": "lög nr. 100/1952",
+            "subtitle": "Lög um íslenskan ríkisborgararétt",
+            "path": "/log/100-1952",
+            "jurisdiction": "is",
+            "evidence": "Title: Lög um íslenskan ríkisborgararétt"
+          },
+          {
+            "n": 2,
+            "kind": "provision",
+            "title": "8. gr. laga nr. 100/1952",
+            "subtitle": "Lög um íslenskan ríkisborgararétt",
+            "path": "/log/100-1952#G8",
+            "jurisdiction": "is",
+            "evidence": "Provision text: Útlendingastofnun er heimilt að veita útlendingi íslenskan ríkisborgararétt að fullnægðum skilyrðum um búsetu hér á landi og að hann hafi ekki sætt refsingum."
+          },
+          {
+            "n": 3,
+            "kind": "decision",
+            "title": "Dómur um veitingu ríkisborgararéttar",
+            "subtitle": "Hæstiréttur Íslands 12/2019 — 2019-03-14",
+            "path": "/document/fixture-hrd-12-2019",
+            "authority": "Hæstiréttur Íslands",
+            "date": "2019-03-14",
+            "evidence": "REASONING (Niðurstaða): Skilyrði um samfellda búsetu verður að vera uppfyllt þegar umsókn er afgreidd."
+          }
+        ],
+        "answer": "Skilyrðin fyrir veitingu íslensks ríkisborgararéttar koma fram í lögum nr. 100/1952 [1]. Meginskilyrðin varða búsetu hér á landi og hreint sakavottorð [2].\n\n## Ákvæðin sem gilda\n\nÚtlendingastofnun er heimilt að veita ríkisborgararétt að fullnægðum skilyrðum um búsetu og að umsækjandi hafi ekki sætt refsingum [2].\n\n## Hvað úrlausnir sýna\n\nSkilyrði um samfellda búsetu verður að vera uppfyllt þegar umsókn er afgreidd [3]."
+      }
+    },
+    {
+      "id": "invented-citation-is-removed",
+      "category": "citation-validation",
+      "note": "A recorded answer citing [9] when three sources came back. The marker must be gone, never renumbered.",
+      "question": "Hvenær má beita gæsluvarðhaldi?",
+      "language": "is",
+      "expectSources": ["88/2008"],
+      "prohibitedConclusions": ["[9]"],
+      "expectAbstention": false,
+      "recorded": {
+        "plan": {
+          "concepts": ["gæsluvarðhald", "skilyrði gæsluvarðhalds"],
+          "phrases": [],
+          "actQueries": ["lög um meðferð sakamála"],
+          "provisionQueries": [],
+          "decisionQueries": [],
+          "sourceCategories": ["legislation", "decisions"],
+          "date": null,
+          "historical": false,
+          "language": "is",
+          "legal": true,
+          "standalone": "Hvenær má beita gæsluvarðhaldi?"
+        },
+        "sources": [
+          {
+            "n": 1,
+            "kind": "provision",
+            "title": "95. gr. laga nr. 88/2008",
+            "subtitle": "Lög um meðferð sakamála",
+            "path": "/log/88-2008#G95",
+            "jurisdiction": "is",
+            "evidence": "Provision text: Sakborning má úrskurða í gæsluvarðhald ef rökstuddur grunur leikur á að hann hafi gerst sekur um refsiverða háttsemi."
+          },
+          {
+            "n": 2,
+            "kind": "decision",
+            "title": "Úrskurður um gæsluvarðhald",
+            "subtitle": "Landsréttur 210/2021 — 2021-04-02",
+            "path": "/document/fixture-lrd-210-2021",
+            "authority": "Landsréttur",
+            "date": "2021-04-02",
+            "evidence": "HOLDING (Dómsorð): Úrskurður héraðsdóms er staðfestur."
+          }
+        ],
+        "answer": "Gæsluvarðhaldi verður aðeins beitt að uppfylltum skilyrðum laga nr. 88/2008 [1]. Rökstuddur grunur um refsiverða háttsemi er frumskilyrði [1].\n\n## Ákvæðin sem gilda\n\nSakborning má úrskurða í gæsluvarðhald ef rökstuddur grunur leikur á að hann hafi gerst sekur um refsiverða háttsemi [1]. Sambærileg skilyrði gilda um farbann samkvæmt 100. gr. sömu laga [9]."
+      }
+    },
+    {
+      "id": "uncited-paragraph-is-qualified",
+      "category": "citation-validation",
+      "note": "A paragraph stating a rule with no citation at all must be marked unverified in the text the reader sees.",
+      "question": "Hvaða reglur gilda um uppsagnarfrest ráðningarsamnings?",
+      "language": "is",
+      "requiredPoints": ["óstaðfest"],
+      "expectAbstention": false,
+      "recorded": {
+        "plan": {
+          "concepts": ["uppsagnarfrestur", "ráðningarsamningur"],
+          "phrases": [],
+          "actQueries": [],
+          "provisionQueries": [],
+          "decisionQueries": [],
+          "sourceCategories": ["legislation"],
+          "date": null,
+          "historical": false,
+          "language": "is",
+          "legal": true,
+          "standalone": "Hvaða reglur gilda um uppsagnarfrest ráðningarsamnings?"
+        },
+        "sources": [
+          {
+            "n": 1,
+            "kind": "provision",
+            "title": "1. gr. laga nr. 19/1979",
+            "subtitle": "Lög um rétt verkafólks til uppsagnarfrests",
+            "path": "/log/19-1979#G1",
+            "jurisdiction": "is",
+            "evidence": "Provision text: Verkafólk skal eiga rétt á uppsagnarfresti samkvæmt því sem í lögum þessum segir."
+          }
+        ],
+        "answer": "Uppsagnarfrestur ræðst af lögum nr. 19/1979 og af kjarasamningum [1].\n\n## Ákvæðin sem gilda\n\nVerkafólk skal eiga rétt á uppsagnarfresti samkvæmt lögunum [1].\n\nAtvinnurekanda ber ávallt að greiða laun út uppsagnarfrest, jafnvel þótt starfsmaður sé leystur undan vinnuskyldu."
+      }
+    },
+    {
+      "id": "nothing-retrieved-abstains",
+      "category": "abstention",
+      "note": "No sources came back. The well must say so and must not reach the model.",
+      "question": "Hvaða reglur gilda um skráningu geimfara á Íslandi?",
+      "language": "is",
+      "expectAbstention": true,
+      "recorded": {
+        "plan": {
+          "concepts": ["geimfar", "skráning geimfara"],
+          "phrases": [],
+          "actQueries": [],
+          "provisionQueries": [],
+          "decisionQueries": [],
+          "sourceCategories": ["legislation"],
+          "date": null,
+          "historical": false,
+          "language": "is",
+          "legal": true,
+          "standalone": "Hvaða reglur gilda um skráningu geimfara á Íslandi?"
+        },
+        "sources": [],
+        "answer": ""
+      }
+    },
+    {
+      "id": "not-a-legal-question-abstains",
+      "category": "abstention",
+      "note": "The planner says it is not a legal question; the model is never called.",
+      "question": "Hvað er klukkan í Reykjavík?",
+      "language": "is",
+      "expectAbstention": true,
+      "recorded": {
+        "plan": {
+          "concepts": ["klukkan"],
+          "phrases": [],
+          "actQueries": [],
+          "provisionQueries": [],
+          "decisionQueries": [],
+          "sourceCategories": [],
+          "date": null,
+          "historical": false,
+          "language": "is",
+          "legal": false,
+          "standalone": "Hvað er klukkan í Reykjavík?"
+        },
+        "sources": [],
+        "answer": ""
+      }
+    },
+    {
+      "id": "historical-law-limitation-stated",
+      "category": "historical",
+      "note": "The corpus holds only current consolidated text. A question about the law as it stood must say so.",
+      "question": "Hvernig hljóðaði ákvæði um vexti í lögum nr. 38/2001 eins og það var fyrir lagabreytinguna?",
+      "language": "is",
+      "expectHistoricalLimitation": true,
+      "expectAbstention": false,
+      "recorded": {
+        "plan": {
+          "concepts": ["dráttarvextir", "vextir"],
+          "phrases": [],
+          "actQueries": ["lög um vexti og verðtryggingu"],
+          "provisionQueries": [],
+          "decisionQueries": [],
+          "sourceCategories": ["legislation"],
+          "date": null,
+          "historical": true,
+          "language": "is",
+          "legal": true,
+          "standalone": "Hvernig hljóðaði ákvæði um vexti í lögum nr. 38/2001 eins og það var fyrir lagabreytinguna?"
+        },
+        "sources": [
+          {
+            "n": 1,
+            "kind": "provision",
+            "title": "6. gr. laga nr. 38/2001",
+            "subtitle": "Lög um vexti og verðtryggingu",
+            "path": "/log/38-2001#G6",
+            "jurisdiction": "is",
+            "evidence": "Provision text: Dráttarvextir skulu vera á hverjum tíma jafnháir grunni dráttarvaxta að viðbættu álagi."
+          }
+        ],
+        "answer": "Brunnurinn geymir aðeins gildandi texta laga nr. 38/2001 eins og hann stendur í dag, ekki eldri útgáfur ákvæðisins [1]. Því er ekki unnt að staðfesta orðalagið eins og það hljóðaði fyrir breytinguna.\n\n## Ákvæðið eins og það stendur nú\n\nDráttarvextir skulu vera jafnháir grunni dráttarvaxta að viðbættu álagi [1]."
+      }
+    },
+    {
+      "id": "commentary-is-not-law",
+      "category": "source-labelling",
+      "note": "A journal article is somebody's argument. The answer must attribute it, never state it as the law.",
+      "question": "Hvað hefur verið skrifað um meðalhófsreglu stjórnsýsluréttar?",
+      "language": "is",
+      "expectSources": ["12. gr."],
+      "prohibitedConclusions": ["samkvæmt Tímariti Lögréttu er skylt"],
+      "expectAbstention": false,
+      "recorded": {
+        "plan": {
+          "concepts": ["meðalhófsregla", "stjórnsýsluréttur"],
+          "phrases": [],
+          "actQueries": ["stjórnsýslulög"],
+          "provisionQueries": [],
+          "decisionQueries": [],
+          "sourceCategories": ["legislation", "commentary"],
+          "date": null,
+          "historical": false,
+          "language": "is",
+          "legal": true,
+          "standalone": "Hvað hefur verið skrifað um meðalhófsreglu stjórnsýsluréttar?"
+        },
+        "sources": [
+          {
+            "n": 1,
+            "kind": "provision",
+            "title": "12. gr. laga nr. 37/1993",
+            "subtitle": "Stjórnsýslulög",
+            "path": "/log/37-1993#G12",
+            "jurisdiction": "is",
+            "evidence": "Provision text: Stjórnvald skal því aðeins taka íþyngjandi ákvörðun þegar lögmætu markmiði, sem að er stefnt, verður ekki náð með öðru og vægara móti."
+          },
+          {
+            "n": 2,
+            "kind": "commentary",
+            "title": "Um meðalhóf í stjórnsýslurétti",
+            "subtitle": "Tímarit Lögréttu — 2021-01-01",
+            "path": "https://www.timaritlogrettu.is/grein",
+            "authority": "Tímarit Lögréttu",
+            "date": "2021-01-01",
+            "evidence": "MATCHED PASSAGE: Höfundur telur að beita eigi meðalhófsreglunni með strangari hætti en dómaframkvæmd hefur gert."
+          }
+        ],
+        "answer": "Meðalhófsreglan er lögfest í 12. gr. stjórnsýslulaga [1]. Stjórnvald skal því aðeins taka íþyngjandi ákvörðun þegar markmiðinu verður ekki náð með vægara móti [1].\n\n## Umfjöllun fræðimanna\n\nÍ Tímariti Lögréttu er því haldið fram af höfundi greinarinnar að beita eigi reglunni strangar en dómaframkvæmd hefur gert [2]. Það er sjónarmið höfundar, ekki gildandi réttur."
+      }
+    },
+    {
+      "id": "english-question-english-answer",
+      "category": "language",
+      "note": "The answer is written in the language the question was asked in, over an Icelandic corpus.",
+      "question": "When may an employer dismiss an employee without notice?",
+      "language": "en",
+      "expectAbstention": false,
+      "recorded": {
+        "plan": {
+          "concepts": ["riftun ráðningarsamnings", "fyrirvaralaus uppsögn"],
+          "phrases": [],
+          "actQueries": [],
+          "provisionQueries": [],
+          "decisionQueries": [],
+          "sourceCategories": ["legislation", "decisions"],
+          "date": null,
+          "historical": false,
+          "language": "en",
+          "legal": true,
+          "standalone": "When may an employer dismiss an employee without notice under Icelandic law?"
+        },
+        "sources": [
+          {
+            "n": 1,
+            "kind": "decision",
+            "title": "Riftun ráðningarsamnings",
+            "subtitle": "Félagsdómur 3/2018 — 2018-06-11",
+            "path": "/document/fixture-fd-3-2018",
+            "authority": "Félagsdómur",
+            "date": "2018-06-11",
+            "evidence": "REASONING (Niðurstaða): Riftun ráðningarsamnings verður aðeins reist á verulegri vanefnd starfsmanns."
+          }
+        ],
+        "answer": "Summary dismissal is treated as rescission of the employment contract, and the sources here address it only through case law [1].\n\n## What the decisions show\n\nRescission of an employment contract may be based only on a material breach by the employee [1]."
+      }
+    }
+  ]
+}

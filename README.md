@@ -24,7 +24,7 @@ The three Icelandic courts published at [island.is/domar](https://island.is/doma
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
 - **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force Icelandic act; `eur-lex` ingests the EU regulations and directives in force from the Publications Office; `cjeu` ingests the judgments of the Court of Justice and the General Court from the same endpoint; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `eea-joint-committee` ingests the EEA Joint Committee's decisions (their own text, one record each); `eftasurv` ingests the EFTA Surveillance Authority's ~6,725 public documents; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court, both halves of it; `uua` ingests Úrskurðarnefnd umhverfis- og auðlindamála (~3,000 planning and environmental rulings, on its own site); `obyggdanefnd` ingests the þjóðlendu commission's 84 úrskurðir; `neytendamal` ingests Áfrýjunarnefnd neytendamála; `yfirskattanefnd` ingests the tax appeal board's 4,175 úrskurðir back to 1973, ríkisskattanefnd's included; `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
 - **Scholarly commentary** — Tímarit Lögréttu and Vefrit Úlfljóts, searched alongside the case law rather than in a separate silo, so a query about an unsettled point returns both the judgments and the articles arguing about them. Articles are indexed in full but read at the journal that published them: their cards and pages link out rather than reproducing the text here.
-- **The well** — an assistant in the bottom-right corner that answers a question in prose instead of returning a result list. Drop a question in ("Hvernig sæki ég um íslenskan ríkisborgararétt?") and it searches the acts, the provisions and every decision source, then writes an answer in the language you asked in with a numbered citation on every proposition — each one a link to the article or the judgment it rests on. It answers only from what the search returned: with nothing retrieved it says so rather than answering from the model's own memory of the law. Off unless an LLM API key is configured; OpenAI and Anthropic are both supported and swap with one variable. See *Asking the well* below.
+- **The well** — an assistant that answers a question in prose instead of returning a result list. Drop a question in ("Hvernig sæki ég um íslenskan ríkisborgararétt?") and it runs a handful of focused searches over the acts, the provisions and every decision source, ranks what comes back by authority as well as by relevance, and writes an answer in the language you asked in with a numbered citation on every proposition — each one a link to the article or the judgment it rests on. It opens as a split screen: the conversation on one side, the law it found on the other, each source carrying the passage it was selected for. It answers only from what the search returned; a citation to a source that does not exist is removed rather than renumbered, and a statement of law with nothing behind it is marked as unverified in the answer you read. Off unless an LLM API key is configured; OpenAI and Anthropic are both supported and swap with one variable. See *Asking the well* below.
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
 
 ## Quick start
@@ -52,7 +52,9 @@ ANTHROPIC_API_KEY=sk-ant-...
 The assistant in the bottom-right corner is off until one of these is set —
 the launcher is not rendered at all rather than offered and then failing. With
 one key configured there is nothing else to set: the provider is whichever key
-is present. See *Asking the well* below.
+is present, and every other variable has a default. `.env.example` lists all of
+them with their defaults and precedence; see *Asking the well* below for what
+they do.
 
 ### Optional: Meilisearch instead of Postgres FTS
 
@@ -1732,11 +1734,12 @@ somebody who does not know the law yet actually wants to know. Answering that
 second question well requires knowing what to search for — and knowing that is
 most of what a lawyer knows.
 
-### The three stages, and why the middle one is the feature
+### The stages, and why the middle one is the feature
 
 ```
-question ──▶ plan ──▶ retrieve ──▶ answer ──▶ prose + numbered sources
-             (LLM)    (this app's search)     (LLM, sources only)
+question ─▶ plan ─▶ retrieve ─▶ rank ─▶ answer ─▶ validate ─▶ (verify) ─▶ prose
+            (LLM)   (this app's search)          (LLM)       (code)      (LLM, off
+                                                                          by default)
 ```
 
 **Plan** (`src/lib/ask/plan.ts`). The question and the corpus are rarely in the
@@ -1744,21 +1747,47 @@ same language, and never in the same register. "How do I apply for Icelandic
 citizenship" shares not one indexed token with lög nr. 100/1952, and a
 full-text search for it returns nothing. So the model is asked first for the
 words the *corpus* would use — `ríkisborgararéttur`, `veiting
-ríkisborgararéttar` — plus the acts the question is probably governed by, and
-a restatement of the question that stands on its own so a follow-up like "and
-what does it cost?" is answerable. If this call fails the planner falls back to
-stopword-stripped keywords rather than giving up; a bad search still finds the
-act when the question names one.
+ríkisborgararéttar` — plus a restatement of the question that stands on its own
+so a follow-up like "and what does it cost?" is answerable.
 
-**Retrieve** (`src/lib/ask/retrieve.ts`). The plan's terms go through the
-*same search this app already runs* — `searchActs`, `searchProvisions`,
+The plan is now a plan for **several searches**, not one. It separates what is
+searched differently, because folding them together is what loses them:
+
+| Field | What it is | How it is searched |
+|---|---|---|
+| `concepts` | 2-5 alternative names for the subject | each one its own query |
+| `phrases` | a term of art, or something the user quoted | phrase-matched, weighted highest after a case number |
+| `actQueries` | the acts the question is probably governed by | the act lookup, then provision search *inside* each act |
+| `provisionQueries` | a specific article the question names | its own query |
+| `decisionQueries` | a case number or case name, copied exactly | its own query, so the provider's exact case-number path is used |
+| `sourceCategories` | which families of material the question calls for | commentary is capped when the question did not ask for it |
+| `date` | a date the *user* supplied, or null | never invented |
+| `historical` | the question turns on the law as it stood | carried into the answer as a limitation — see below |
+
+If the planning call fails or times out, the planner falls back to
+stopword-stripped keywords, and reads the case numbers, quoted phrases and
+historical wording straight off the question. A bad search still finds the act
+when the question names one, and one failed model call is not a reason to
+refuse a question.
+
+**Retrieve** (`src/lib/ask/retrieve.ts`). Every query in the plan goes through
+the *same search this app already runs* — `searchActs`, `searchProvisions`,
 `search` — so the well sees exactly the corpus the search box sees, and
-switching `SEARCH_PROVIDER` switches it too. Three kinds of source come back:
-the act, when the question names one; the provisions, **in full text**, which
-is what an answer is built out of; and the decisions, with the court's own
-`Útdráttur` where it wrote one, which is the demonstration that the provision
-means in practice what it appears to mean. Two rules are enforced here rather
-than in a prompt:
+switching `SEARCH_PROVIDER` switches it too. Each query runs **separately** and
+the rankings are merged with weighted reciprocal-rank fusion
+(`src/lib/ask/fusion.ts`):
+
+```
+score(d) = Σ_q  weight(q) / (60 + rank_q(d))
+```
+
+Scores from different queries are not comparable — a `ts_rank` from a one-word
+query and one from a phrase query are different units — but *positions* are, by
+construction. The fusion is deterministic: the same question over the same
+corpus retrieves the same sources in the same order, which is what makes the
+evaluation harness below mean anything.
+
+Two rules are enforced here rather than in a prompt:
 
 - An act is only quoted to the model as governing when the query *genuinely
   names* it — the same `lib/act-match.ts` rule that decides whether an act may
@@ -1767,6 +1796,50 @@ than in a prompt:
   authority.
 - `[SAMPLE]` seed judgments are dropped. An answer resting on a sample judgment
   is a fabricated answer however clearly the card labels it.
+
+**Rank** (`src/lib/ask/rank.ts`). Retrieval gathers about thirty candidates and
+the answer sees about ten, so that something other than `ts_rank` chooses among
+them. Textual relevance is the wrong sole criterion for law: a district court
+judgment that uses the query's words eleven times is not better evidence than a
+Supreme Court judgment that uses them twice, and a law review article that
+discusses the question at length is not evidence of what the law *is*. The
+features, in weight order: fused relevance, whether it is in or about an act
+the question named, whether a quoted phrase is really in the text, what kind of
+source it is, which court or body decided it, how recent it is, whether its
+jurisdiction answers the question, and whether it was found by one loose
+synonym a long way down anybody's list.
+
+Deterministic and explainable — every feature's contribution is reported, so a
+surprising order can be accounted for. A model-assisted rerank exists behind
+`ASK_RERANK_WITH_MODEL`; it can only **reorder**, never add a source or remove
+one, and any failure falls straight back to the deterministic order.
+
+**Evidence** (`src/lib/ask/evidence.ts`). A decision used to reach the model as
+a 600-character search headline. That is enough to know a judgment is about the
+right subject and nowhere near enough to say what it held, so an answer built
+on snippets either said nothing about the case or said something nobody could
+check. Each decision now arrives as four labelled parts:
+
+| Label in the prompt | What it is | Why it is separate |
+|---|---|---|
+| `COURT'S OWN SUMMARY` | the court's `Útdráttur` | the court's summary of its own case beats anything we could compose |
+| `MATCHED PASSAGE` | the passage the search matched, with configurable context | it may be the court *reciting a party's argument* — the prompt says so |
+| `REASONING (Niðurstaða)` | why it came out that way | this, or the holding, is the only thing a case may be cited as *holding* |
+| `HOLDING (Dómsorð)` | what was actually ordered | |
+
+The sections come from `lib/judgment-text.ts`, which already knew how to find
+them for the document page. Never the whole judgment: Óbyggðanefnd's rulings
+run to several hundred pages, so only the head and tail of a long document are
+read back, and each part has its own character budget.
+
+**Truncation is structural, never by character count.** This is the part with
+the sharpest edge in the whole feature. A provision is a rule plus its
+exceptions, and the exceptions are at the end: cutting `…nema þegar` mid-clause
+turns a qualified rule into an absolute one, and the model has no way to know
+it was cut. So whole málsgreinar are dropped — using Lagasafn's own paragraph
+rows where we have them — the fact is stated in the text the model sees, and
+the prompt tells it not to claim an article has no exception when it has been
+shown only part of one.
 
 **Answer** (`src/lib/ask/answer.ts`). The model gets the retrieved law and
 nothing else, and is told to cite a numbered source for every proposition, to
@@ -1782,6 +1855,71 @@ dead end: `[2]` is a link to 8. gr. in the act reader, `[4]` a link to the
 judgment. A journal article links out to the journal instead — its text is
 indexed here and never republished, in the well as everywhere else.
 
+**Validate** (`src/lib/ask/citations.ts`). The prompt asks for a citation on
+every proposition. Asking is most of what works; what it cannot do is *check*,
+and two failures get past it looking exactly like correct answers:
+
+- **a citation to a source that does not exist** — `[11]` when ten came back.
+  It is deleted. It is **never renumbered**: turning `[11]` into `[1]` would
+  produce a sentence that looks supported and is not, which is worse than the
+  broken marker it replaced and undetectable by the reader.
+- **a proposition of law with nothing behind it.** A paragraph that states a
+  rule and cites nothing is marked in the answer the reader sees — "(óstaðfest:
+  engin heimild úr safninu styður þessa setningu)". So is a sentence that lost
+  its only citation to the check above. A sentence with no marker of its own
+  inside a paragraph that *does* cite is reported in the metrics and left
+  alone: a citation at the end of a paragraph is ordinary legal writing.
+
+This runs on every answer, whatever else is configured.
+
+**Verify** (`src/lib/ask/verify.ts`, off by default). With
+`ASK_VERIFY_CITATIONS=1`, each cited claim is sent back to the model on its
+own, with **only the evidence that claim cites** and nothing else, and
+classified `supported` / `partial` / `unsupported` / `contradicted`. The narrow
+framing is the whole reason it can catch anything: a verifier given the
+question and the full context re-derives the answer and agrees with it. An
+unsupported or contradicted claim is qualified in place rather than deleted, so
+the argument does not silently acquire a hole. Every failure path — refusal,
+timeout, malformed verdicts — leaves the deterministically validated answer
+exactly as it was.
+
+### Adaptive effort
+
+How hard the model thinks on the answer is the biggest single lever on both
+cost and latency, and one fixed setting gets it wrong in both directions.
+`src/lib/ask/complexity.ts` classifies each question **deterministically** —
+no model call to decide how hard to think — on signals that are visible in the
+question and in what retrieval actually returned:
+
+multiple distinct legal issues · several potentially governing acts ·
+retrieved sources that point in different directions · a question that needs
+historical law · a cross-jurisdictional or EEA/EU question · a comparison
+between decisions · a question long enough to be carrying more than one thing.
+
+Two signals make a question complex, or historical law on its own — that one
+changes what the answer has to *say*. One signal does not: nearly every
+question about an Icelandic implementation of a directive trips
+"cross-jurisdiction", and most of them are still one short answer about one
+article.
+
+**Nothing selects `high`, `xhigh` or `max` on its own.** The classifier picks
+between `ASK_EFFORT_SIMPLE` and `ASK_EFFORT_COMPLEX`, and those default to
+`low` and `medium`. Setting either of them higher is a decision a person makes
+on a dashboard.
+
+### The corpus holds current law, and says so
+
+The act library is Lagasafn's **current consolidated text**. There are no
+repealed acts and no earlier versions of a live one. A question that turns on
+the law as it stood is therefore not answerable from the legislation here — only
+from a decision that happens to quote the older wording.
+
+The well does not pretend otherwise and does not quietly answer as if the
+limitation did not exist. When the plan marks a question historical, retrieval
+puts the limitation into the answer's context under `LIMITATIONS OF THIS
+SEARCH`, and the answer states it. The limitation is also returned to the
+browser separately, and the evaluation fixtures assert that it appears.
+
 ### The animation is doing a job
 
 Opening the well shows a stone well; the question falls in on a slip of paper;
@@ -1793,12 +1931,48 @@ not thinking. Under `prefers-reduced-motion` all of it is switched off and the
 scene is a drawing of a well; the request is sent while the paper is still in
 the air, so the animation covers the wait rather than adding to it.
 
+### It opens as a split screen
+
+The well opens over the page as two panes: the conversation on one side, and
+everything the search found on the other. That is the layout the feature needed
+from the start. An answer here is only as good as the sources under it, and the
+actual work is reading a judgment's own summary next to the sentence that cites
+it — in a 27rem box in the corner there was room for the prose and none for the
+evidence, so the evidence was a collapsed list nobody opened.
+
+The source panel leads with what the answer cited, then what the search found
+and the answer did not use — which is the fastest way to see that the well
+found the right provision and then wrote around it. Each source carries the
+passage it was selected for, expandable in place, and a label saying what kind
+of thing it is: **Lagaákvæði**, **Úrlausn**, **Álit**, **Fræðiskrif** (marked
+"ekki gildandi réttur"). Below 60rem there is no room for two panes and they
+become two tabs over one.
+
+### Feedback
+
+Under each answer are seven buttons rather than a thumb: *helpful*, *wrong
+source*, *important source missing*, *citation does not support the claim*,
+*missed an exception*, *too vague*, *incorrect conclusion*. Each names a
+different stage — a wrong source is ranking, a missing one is retrieval, a
+citation that does not support the claim is the answer stage — and a
+thumbs-down would tell us none of that.
+
+**The question is not sent.** What is stored is the shape of the answer (which
+button, how many sources, how many cited, which provider and effort) and the
+request's own id, which is random and carries nothing derived from the
+question. The `AskFeedback` table has a `question` column and it stays null
+unless the reader explicitly asks for their question to be included; the parser
+drops it otherwise, whatever the client sent.
+
 ### Configuration
 
 The well runs on **OpenAI or Anthropic**, chosen at runtime. Everything above
-`src/lib/ask/llm.ts` — the planning, the retrieval, the answer's rules — is
-written against a two-method interface and does not know which one answered,
-so switching is one variable and no code.
+`src/lib/ask/llm.ts` — the planning, the retrieval, the ranking, the answer's
+rules, the verifier — is written against a two-method interface and does not
+know which one answered, so switching is one variable and no code. Every
+variable below is also in `.env.example`.
+
+#### Provider and model
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -1808,7 +1982,71 @@ so switching is one variable and no code.
 | `ASK_MODEL_OPENAI` | `gpt-5.6-terra` | Model on the OpenAI side. `gpt-5.6-sol` or `gpt-6-astra` for a better answer, `gpt-5.6-luna` for a much cheaper one. |
 | `ASK_MODEL_ANTHROPIC` | `claude-opus-5` | Model on the Anthropic side. |
 | `ASK_MODEL` | — | Overrides whichever of those two is active. Set the per-provider pair once and flip `ASK_PROVIDER`; use this for a quick one-off. |
-| `ASK_EFFORT` | `medium` | `low` … `max`. How hard the model works on the answer — both APIs happen to take the same five words. A legal answer is worth thinking about, but somebody is watching a bucket go down a well while it does, so the default sits below either API's own `high`. Raise it if you would rather wait. |
+
+#### Effort, per stage
+
+**Precedence: the per-stage variable, then `ASK_EFFORT`, then the default.**
+`ASK_EFFORT` on its own still governs the answer exactly as it did before these
+existed, so a deployment that set only `ASK_EFFORT=high` keeps getting `high`.
+All of them take the five words both APIs share: `low` … `max`.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `ASK_EFFORT` | — | The old single knob. Still the fallback for both complexity branches. |
+| `ASK_PLAN_EFFORT` | `low` | Planning. Six short strings; it does not need more, and the reader is waiting on it before anything else happens. Deliberately does *not* inherit `ASK_EFFORT`. |
+| `ASK_EFFORT_SIMPLE` | `ASK_EFFORT`, else `low` | A question with one legal issue in it. |
+| `ASK_EFFORT_COMPLEX` | `ASK_EFFORT`, else `medium` | Several issues, conflicting sources, historical law, EEA/EU. |
+| `ASK_VERIFY_EFFORT` | `low` | The citation verifier, when it is on. |
+
+#### The optional stages — which ones cost extra model calls
+
+Two of the five stages are extra paid calls, and **both are off by default**.
+The table is the whole cost model:
+
+| Stage | Calls the model? | Default |
+|---|---|---|
+| Plan | yes | always on (falls back to keywords on failure) |
+| Retrieve + rank | no | always on, deterministic |
+| Answer | yes | always on |
+| Validate citations | **no** | always on |
+| Rerank | yes, one extra | **off** — `ASK_RERANK_WITH_MODEL=1` |
+| Verify citations | yes, one extra | **off** — `ASK_VERIFY_CITATIONS=1` |
+
+To disable them, unset the variable or set it to `0` — the deterministic
+ranking and the deterministic citation validation are the defaults, not
+fallbacks bolted on. Switch one on, measure it with `npm run eval:ask`, and
+switch it off again if it did not earn its latency.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `ASK_VERIFY_CITATIONS` | `0` | Model-assisted claim verification. One extra call. |
+| `ASK_RERANK_WITH_MODEL` | `0` | Model-assisted reranking. One extra call. It can only reorder. |
+
+#### Retrieval size, text budgets and ceilings
+
+| Variable | Default | What it does |
+|---|---|---|
+| `ASK_MAX_CANDIDATES` | `30` | Gathered before ranking chooses. Clamped to 5-120. |
+| `ASK_MAX_SOURCES` | `10` | Shown to the model and to the reader. Clamped to 3-30. |
+| `ASK_EVIDENCE_CHARS` | `1200` | Context around a matched passage in a judgment. |
+| `ASK_PROVISION_CHARS` | `2400` | Of an article's text, cut at a paragraph boundary. |
+| `ASK_ANSWER_MAX_TOKENS` | `8000` | Was 16,000 for a 450-word answer. Still ~5,000 tokens of headroom for reasoning at `medium`. |
+| `ASK_PLAN_MAX_TOKENS` | `3000` | Was 8,000, for six short strings. |
+| `ASK_VERIFY_MAX_TOKENS` | `4000` | |
+
+#### Timeouts
+
+Planning, reranking and verification **degrade** on a timeout: the question is
+still answered without them. Retrieval and the answer **fail** it, and
+`/api/ask` returns 504 rather than leaving somebody watching a bucket.
+
+| Variable | Default (ms) |
+|---|---|
+| `ASK_TIMEOUT_PLAN_MS` | `20000` |
+| `ASK_TIMEOUT_RETRIEVE_MS` | `20000` |
+| `ASK_TIMEOUT_ANSWER_MS` | `90000` |
+| `ASK_TIMEOUT_VERIFY_MS` | `30000` |
+| `ASK_TIMEOUT_RERANK_MS` | `20000` |
 
 **With no key at all the well is off**, and off means absent: the launcher is
 never rendered rather than offered and then failing, and `/api/ask` answers
@@ -1841,10 +2079,49 @@ category rather than returning an empty answer to the well. The OpenAI side
 reports a filtered completion through `finish_reason` instead, and the well
 says so rather than showing a blank card.
 
-`POST /api/ask` takes `{ question, history }` and returns `{ answer, sources,
-language }`. It is rate-limited to 12 questions per 10 minutes per address, in
-memory — enough to stop an unmetered public endpoint spending money, and no
-substitute for a real limit in front of the app.
+### The endpoint
+
+`POST /api/ask` takes `{ question, history, scope? }` and returns `{ answer,
+sources, language, abstained, limitations, issues, requestId }`. It is
+rate-limited to 12 questions per 10 minutes per address, in memory — enough to
+stop an unmetered public endpoint spending money, and no substitute for a real
+limit in front of the app. The **same question from the same address while the
+first is still running** answers 409 rather than paying for the pipeline twice;
+a double-click on "Sleppa ofan í" otherwise buys two full runs and shows
+whichever finishes second.
+
+Failures are told apart rather than collapsed into one 500: 422 for a refusal,
+502 for an answer that came back empty, 504 for a stage that ran out of time,
+503 when no provider is configured.
+
+`POST /api/ask/feedback` takes `{ requestId, kind, sourceN?, note?,
+shareQuestion?, question? }` and answers 204. See *Feedback* above for what it
+stores and what it refuses to.
+
+### What gets logged
+
+One line of JSON per request, on stdout:
+
+```json
+{"event":"ask","requestId":"…","provider":"anthropic","model":"claude-opus-5",
+ "effort":"low","planEffort":"low","complex":false,"complexitySignals":[],
+ "timings":{"plan":900,"retrieve":420,"answer":4100,"total":5430},
+ "retrieval":{"candidates":28,"sources":10,"acts":1,"provisions":5,"decisions":4,"cited":6},
+ "tokens":{"input":9100,"output":640,"cachedInput":7800},
+ "validation":{"nonexistentCitations":0,"uncitedClaims":1,"unsupportedClaims":0,
+               "contradictedClaims":0,"verified":0},
+ "stages":{"planned":true,"reranked":false,"verified":false},
+ "language":"is","abstained":false,"historical":false,"ok":true}
+```
+
+**The question, the conversation history and the answer text are never
+logged**, by default and by construction — only counts of them leave
+`src/lib/ask/metrics.ts`. A flagged claim is a sentence of the answer, which is
+a sentence about the question, so those are counted and not quoted. An error is
+recorded by its class name, never its message: a message can quote the request,
+and this is a public endpoint. `requestId` is random per request and derived
+from nothing, which is what lets a feedback submission be matched to a metrics
+line without the question being stored to make the match.
 
 ### What it will not do
 
@@ -1885,12 +2162,18 @@ If you change `document_search_vector()`, stored vectors are not updated retroac
 ```bash
 npm test           # the whole suite, no database and no network
 npm run typecheck  # tsc --noEmit
+npm run eval:ask   # the answer evaluation, also with no model and no database
 ```
 
 Node's own test runner through `tsx`, so there is no test framework to
 install and no config to keep in step with `tsconfig.json`. Tests sit next to
 what they test as `*.test.ts`. CI (`.github/workflows/ci.yml`) runs the
 typecheck and the suite on every pull request.
+
+**No test makes a model call or touches the network.** Every stage that talks
+to a model is written against the two-method `AskModel` interface, so a test
+hands it a fake — including the ones that check what happens when the model
+refuses, throws, hangs or returns something unparseable.
 
 What is covered, and why those:
 
@@ -1908,6 +2191,18 @@ What is covered, and why those:
 | `lib/ask/plan.ts` | that a plan is sanitised before it reaches the search, and that a planning failure degrades to keywords instead of failing the question |
 | `lib/ask/answer.ts` | that a question with no retrieved law, and a question that is not a legal one, never reach the model at all |
 | `lib/ask/render.ts` | that `[3]` becomes the link to source 3 and not four characters of prose |
+| `lib/ask/evidence.ts` | that a window opens at a sentence boundary and not mid-clause, that a provision is cut between málsgreinar and never inside one, and that source text cannot pass itself off as an instruction |
+| `lib/ask/fusion.ts` | that the same lists produce the same order every time — the evaluation harness compares orderings |
+| `lib/ask/rank.ts` | that the Supreme Court outranks a district court on equal relevance, and that commentary never outranks the law it discusses |
+| `lib/ask/citations.ts` | that a citation to a source that does not exist is *removed and never renumbered*, and that a proposition with nothing behind it is marked in the answer the reader sees |
+| `lib/ask/complexity.ts` | that an ordinary question stays simple, that historical law alone makes one complex, and that the Icelandic patterns actually match Icelandic |
+| `lib/ask/config.ts` | that `ASK_EFFORT` still governs the answer on its own — configuration flipped on a dashboard by somebody who cannot read this file |
+| `lib/ask/verify.ts`, `lib/ask/rerank.ts` | that every failure path of an optional model stage — refusal, throw, timeout, malformed reply, invented keys — leaves the answer and the ranking exactly as they were |
+| `lib/ask/pipeline.ts` | which stages may fail and which may not: a planning failure still answers, a retrieval failure does not; an empty completion is an error and not a blank card; both providers' calling conventions produce the same answer |
+| `lib/ask/timeout.ts`, `lib/ask/feedback.ts` | that a hung stage is given up on rather than waited out, and that a feedback submission does not carry the question with it |
+| `lib/ask/metrics.ts` | the negative one: that no metrics line carries the question, the conversation, the answer, or an error's message |
+| `lib/word-boundary.ts` | the reason several of the above exist: JavaScript's `\b` is ASCII-only, so `/\bþágildandi\b/` matches nothing at all and does so silently |
+| `ask-eval/metrics.ts` | the answer metrics themselves — a scoring function with a bug reports an improvement that is not there |
 
 Every failure mode in that list is silent. A citation that stops matching
 produces no link; a board whose filter value is mangled returns an empty
@@ -1974,6 +2269,98 @@ needed its typo tolerance.
 See [docs/search-evaluation.md](docs/search-evaluation.md) for the schema, the
 metrics, and the labelling rules.
 
+## Measuring the well's answers
+
+```bash
+npm run eval:ask                          # offline: no model call, no database
+npm run eval:ask -- --json > ask.json
+npm run eval:ask -- --category citation-validation
+npm run eval:ask -- --live                # the real pipeline; makes paid calls
+npm run eval:ask -- --live --record       # re-record the fixtures
+```
+
+Separate from `npm run eval:search`, and measuring something else. The search
+evaluation asks whether the right documents come back for a query. This asks
+whether, given documents, the answer stays inside them. The two fail
+independently — perfect retrieval with an answer citing source 11 out of ten is
+a failure of this kind, and it is the kind that reaches a reader looking
+exactly like a correct answer.
+
+**The default mode calls no model and reads no database.** Each fixture carries
+a recorded run — the plan the planner produced, the sources retrieval returned,
+and the answer the model wrote — and the harness replays everything after
+retrieval through the *real* pipeline (`src/lib/ask/pipeline.ts`, the same code
+`/api/ask` runs) driven by a fake model that hands back the recorded answer. So
+a change to the validation, to the prompt's rules, or to the complexity
+classifier is measured on every commit, on any machine, with no API key and no
+corpus. It also exercises the optional stages' fallback paths, because the fake
+model declines everything except the plan.
+
+`--live` runs the real thing against the real corpus and a real model. It
+measures the one thing offline cannot — whether retrieval still finds the right
+provision — and it is opted into explicitly because it spends money.
+
+### The fixture format
+
+`src/ask-eval/fixtures.json`, version-controlled. Each fixture is a question
+and what must be true of the answer to it:
+
+| Field | What it asserts |
+|---|---|
+| `question`, `language` | the question, and the language the answer must come back in |
+| `expectSources` | identifiers that must be among the retrieved sources — an act number, a provision label, a case number |
+| `forbiddenSources` | sources that must not be *cited* |
+| `requiredPoints` | text the answer has to contain — the points it has to make |
+| `prohibitedConclusions` | text it must not contain |
+| `expectAbstention` | true when the right answer is to decline |
+| `expectHistoricalLimitation` | true when the answer must say the corpus holds only current law |
+| `recorded` | the captured plan, sources and answer that make offline scoring possible |
+
+**No real client question and no personal legal information goes in a
+fixture.** Every question in that file was written for it. A question about
+dismissal without notice is written as a question about the law, never as "my
+employer did X". The file is committed to a public repository.
+
+### What is reported
+
+| Measure | What it catches |
+|---|---|
+| retrieval recall | the right provision never reached the model |
+| citation validity | a `[n]` pointing at a source that does not exist — should be impossible after validation, which is exactly why it is measured |
+| claim support | propositions of law with no citation in their paragraph |
+| invented authority identifiers | an article or act number in the answer that is in **none** of the sources. The single most important number in the report: it reads exactly like a real citation |
+| correct abstention | the well answered when it should have declined, or declined when it could have answered |
+| correct language | an Icelandic question answered in English, or the reverse |
+| latency, retrieval counts | median milliseconds, candidates gathered, sources shown, sources cited |
+| provider / model / effort | which configuration produced these numbers, so two runs can be compared |
+| token usage | summed per run, where the provider reports it |
+
+A sentence the pipeline itself disclaimed does not count against the invented
+identifier score: marking a claim unverified is the fix, and scoring it as an
+invented citation would be scoring the fix as the failure it fixed.
+
+The command exits non-zero when any fixture fails, so it works as a gate.
+
+### What this cannot measure yet
+
+Everything above is checkable without a lawyer. What is not:
+
+- **whether a cited source actually supports the claim.** "Claim support"
+  measures that a citation is *there*; only a legal expert can say whether
+  8. gr. says what the sentence says it says. The model verifier behind
+  `ASK_VERIFY_CITATIONS` is a proxy for this, and its own accuracy is
+  unmeasured for the same reason.
+- **whether the answer is right.** No fixture asserts a legal conclusion, and
+  none should until somebody qualified writes the expected answers.
+- **whether a missed source mattered.** Retrieval recall measures the sources a
+  fixture named; naming the right ones for a hard question is itself expert
+  work.
+
+Those three need expert-labelled evaluation data, and the fixture format has
+the fields ready for it (`requiredPoints`, `prohibitedConclusions`,
+`forbiddenSources`). Until then the harness measures the mechanical properties,
+which is where the silent failures are.
+
 ## How judgments are made readable
 
 island.is serves older cases as scanned PDFs and newer ones as a rich-text tree, and neither survives extraction as readable prose: PDF text arrives broken at the page's line width, rich text as one line per block with no spacing. `src/lib/judgment-text.ts` handles both — it reflows wrapped lines into paragraphs, rejoins words hyphenated across a line break, drops stranded page numbers, and recognises headings (`Dómsorð`, `Niðurstaða`, roman-numeral sections) and numbered clauses so the document page can typeset them. Judgments ingested before this existed are stored as one run-together blob; those are re-split at render time from sentence and section boundaries, so no re-ingestion is needed.
@@ -1987,7 +2374,8 @@ src/
     document/[id]/page.tsx       full document view; catalogue entry for articles
     admin/ingestion/page.tsx     ingestion status
     api/search/route.ts          POST — refuses empty source list
-    api/ask/route.ts             POST — the well: plan, retrieve, answer
+    api/ask/route.ts             POST — the well: the pipeline, limited and timed
+    api/ask/feedback/route.ts    POST — what was wrong with an answer
     api/sources/route.ts         the registered sources
     api/documents/[id]/route.ts  document + related cases; withholds article text
     api/ingestion/route.ts       status feed
@@ -2000,7 +2388,7 @@ src/
     api/lookup/route.ts          GET — act/provision type-ahead, parses "57. gr. a. laga um …"
     api/tags/route.ts            GET — subject-tag type-ahead over a cached vocabulary
   components/
-    WellChat.tsx                 the well: panel, transcript, cited sources
+    WellChat.tsx                 the well: split screen — conversation | sources
     WellScene.tsx                the well drawing and its four phases
   lib/
     sources.ts                   source registry: courts, EEA/EFTA, Umboðsmaður, journals
@@ -2016,12 +2404,24 @@ src/
     act-match.ts                 whether a query genuinely names an act
     legal-citations.ts           recognises act/regulation citations in judgment text
     search/                      provider abstraction: postgres (default) + meilisearch
+    word-boundary.ts             Unicode word boundaries — JS's \b is ASCII-only
     ask/                         the well — see "Asking the well"
       llm.ts                     the one place this app talks to a model;
                                  OpenAI and Anthropic behind one interface
-      plan.ts                    question → search terms in the corpus's language
+      config.ts                  every variable, and ASK_EFFORT's precedence
+      pipeline.ts                the stages in order, with timings and fallbacks
+      plan.ts                    question → several searches in the corpus's language
+      fusion.ts                  weighted reciprocal-rank fusion, deterministic
       retrieve.ts                acts + provisions + decisions, numbered
+      rank.ts                    authority-aware reranking of the candidate set
+      rerank.ts                  optional model rerank (ASK_RERANK_WITH_MODEL)
+      evidence.ts                windows, sections, structural truncation
+      complexity.ts              how hard this question is, without a model call
       answer.ts                  the grounding rules, and the two short-circuits
+      citations.ts               invalid citations removed, unsupported claims marked
+      verify.ts                  optional claim verification (ASK_VERIFY_CITATIONS)
+      metrics.ts                 one JSON line per request; never the question
+      feedback.ts                the seven kinds, and what is not stored
       render.ts                  the answer's headings, bullets and citations
     citation.ts, highlight.ts
   ingestion/
@@ -2190,6 +2590,70 @@ This repo runs as **two Railway services** from the same GitHub repo: the always
 3. The repo's `railway.json` already sets the **Pre-Deploy Command** to `npm run db:deploy`, so this runs automatically on every deploy — entirely from the Railway website, no CLI required. It runs `prisma db push` (creates/updates tables from `schema.prisma`) and the search setup script (`pg_trgm`/`unaccent` extensions, the full-text search function, the `search_vector` column and its trigger, and the GIN/trigram indexes) against the linked `DATABASE_URL`, with no `psql` binary required. The first deploy after the `search_vector` column was introduced backfills it for every existing row, so expect that one pre-deploy run to take noticeably longer than usual. (If you'd rather manage this from the dashboard instead, remove `deploy.preDeployCommand` from `railway.json` and set the same command under **Settings** → **Deploy** → **Pre-Deploy Command**.)
 4. Deploy. `npm install` will also run `prisma generate` automatically (via `postinstall`) before `next build`, so the Prisma Client exists at build time.
 5. To switch on the well, add `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) under **Variables**. Without one the app deploys and runs exactly as before, with no launcher. To be able to compare the two providers, add both keys plus `ASK_MODEL_OPENAI` / `ASK_MODEL_ANTHROPIC`, and flip `ASK_PROVIDER` between `openai` and `anthropic` — Railway redeploys the service on any variable change, so the swap takes effect a minute or so later. See *Asking the well*.
+
+#### Recommended Railway variables for the well
+
+Everything the well reads has a default, so **the only variable you have to set
+is a key**. What follows is what to set beyond that, and in what order.
+
+*Start here — this is the recommended production configuration:*
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY
+# ASK_PROVIDER only when both keys are set
+```
+
+Nothing else. The defaults are `ASK_PLAN_EFFORT=low`, `ASK_EFFORT_SIMPLE=low`,
+`ASK_EFFORT_COMPLEX=medium`, both optional model stages off,
+`ASK_MAX_CANDIDATES=30`, `ASK_MAX_SOURCES=10` — two model calls per question,
+and the classifier spends the second one's budget where it is needed.
+
+*If the deployment already sets `ASK_EFFORT`*, leave it. It still governs the
+answer exactly as before. Replace it with the pair when you want the two
+branches to differ:
+
+```bash
+ASK_EFFORT_SIMPLE=low
+ASK_EFFORT_COMPLEX=medium
+```
+
+*If answers are citing sources that do not carry the claim* — the thing to look
+for in feedback — switch on verification for a while and watch
+`validation.unsupportedClaims` in the logs:
+
+```bash
+ASK_VERIFY_CITATIONS=1
+ASK_VERIFY_EFFORT=low
+```
+
+That is a third model call on every question. Measure it with `npm run
+eval:ask -- --live` before and after, and switch it off again if it is finding
+nothing.
+
+*If the right source is being retrieved but ranked below the noise*, raise the
+candidate set before reaching for the model reranker — it is free:
+
+```bash
+ASK_MAX_CANDIDATES=50
+ASK_MAX_SOURCES=12
+```
+
+`ASK_RERANK_WITH_MODEL=1` is the step after that, and a fourth call.
+
+*If answers are being cut off*, raise the answer ceiling rather than the
+effort:
+
+```bash
+ASK_ANSWER_MAX_TOKENS=12000
+```
+
+**Do not set `ASK_EFFORT_COMPLEX` to `high` or above without measuring.**
+Nothing in the code will reach for those levels on its own, and on this corpus
+the latency cost lands entirely on the reader watching the bucket.
+
+**Feedback needs no configuration**, but it does write to the database: the
+`AskFeedback` table is created by the existing `npm run db:deploy` pre-deploy
+step, along with everything else in `schema.prisma`.
 
 ### Ingestion service (scheduled)
 

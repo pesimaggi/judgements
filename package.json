@@ -21,7 +21,8 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "test:watch": "node --import tsx --test --watch \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
-    "eval:search": "tsx src/search-eval/run.ts"
+    "eval:search": "tsx src/search-eval/run.ts",
+    "eval:ask": "tsx src/ask-eval/run.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.123.0",
