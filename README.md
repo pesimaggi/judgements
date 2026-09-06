@@ -22,7 +22,7 @@ The three Icelandic courts published at [island.is/domar](https://island.is/doma
 - **Administrative case law** — the úrskurðarnefndir, kærunefndir and ministry appeal desks at stjornarradid.is, each board its own tickable source rather than one undifferentiated pile. For immigration, benefits, tenancy, procurement and freedom of information this is where the case law actually is, and a search of the courts alone would miss it. See *Úrskurðarnefndir og ráðuneyti* below.
 - **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`. `Act` holds both jurisdictions: `jurisdiction` and `docType` say which corpus and which instrument, and an EU act adds its CELEX, its citation, its EEA marker and the Joint Committee decisions naming it.
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
-- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force Icelandic act; `eur-lex` ingests the EU regulations and directives in force from the Publications Office; `cjeu` ingests the judgments of the Court of Justice and the General Court from the same endpoint; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `eea-joint-committee` ingests the EEA Joint Committee's decisions (their own text, one record each); `eftasurv` ingests the EFTA Surveillance Authority's ~6,725 public documents; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court, both halves of it; `uua` ingests Úrskurðarnefnd umhverfis- og auðlindamála (~3,000 planning and environmental rulings, on its own site); `obyggdanefnd` ingests the þjóðlendu commission's 84 úrskurðir; `neytendamal` ingests Áfrýjunarnefnd neytendamála; `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
+- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force Icelandic act; `eur-lex` ingests the EU regulations and directives in force from the Publications Office; `cjeu` ingests the judgments of the Court of Justice and the General Court from the same endpoint; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `eea-joint-committee` ingests the EEA Joint Committee's decisions (their own text, one record each); `eftasurv` ingests the EFTA Surveillance Authority's ~6,725 public documents; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court, both halves of it; `uua` ingests Úrskurðarnefnd umhverfis- og auðlindamála (~3,000 planning and environmental rulings, on its own site); `obyggdanefnd` ingests the þjóðlendu commission's 84 úrskurðir; `neytendamal` ingests Áfrýjunarnefnd neytendamála; `yfirskattanefnd` ingests the tax appeal board's 4,175 úrskurðir back to 1973, ríkisskattanefnd's included; `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
 - **Scholarly commentary** — Tímarit Lögréttu and Vefrit Úlfljóts, searched alongside the case law rather than in a separate silo, so a query about an unsettled point returns both the judgments and the articles arguing about them. Articles are indexed in full but read at the journal that published them: their cards and pages link out rather than reproducing the text here.
 - **The well** — an assistant in the bottom-right corner that answers a question in prose instead of returning a result list. Drop a question in ("Hvernig sæki ég um íslenskan ríkisborgararétt?") and it searches the acts, the provisions and every decision source, then writes an answer in the language you asked in with a numbered citation on every proposition — each one a link to the article or the judgment it rests on. It answers only from what the search returned: with nothing retrieved it says so rather than answering from the model's own memory of the law. Off unless an LLM API key is configured; OpenAI and Anthropic are both supported and swap with one variable. See *Asking the well* below.
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
@@ -132,6 +132,7 @@ unchanged; this is copy, not schema.
 | 40 úrskurðarnefndir, kærunefndir and ministry appeal desks (stjornarradid.is) | live | Icelandic |
 | Úrskurðarnefnd umhverfis- og auðlindamála (uua.is) | live | Icelandic |
 | Óbyggðanefnd (obyggdanefnd.is) | live | Icelandic |
+| Yfirskattanefnd, with ríkisskattanefnd before it (yskn.is) | live | Icelandic |
 | Áfrýjunarnefnd neytendamála (neytendastofa.is) | live | Icelandic |
 | Tímarit Lögréttu | live | Icelandic |
 | Úlfljótur (vefrit) | live | Icelandic |
@@ -1175,6 +1176,99 @@ missing are PDFs that extract no text at all, and sit in the gap ledger.
 npm run ingest -- --adapter=neytendamal     # 120 rulings a run by default
 ```
 
+#### Yfirskattanefnd
+
+The tax appeal board: the independent nefnd that rules on appeals against
+Skatturinn's decisions — ríkisskattstjóri, tollgæslustjóri,
+skattrannsóknarstjóri — and against the other authorities the statutes send to
+it. Income tax, VAT, customs classification, withholding, reiknað endurgjald,
+álag. For most tax questions its úrskurðir are the last word before the courts,
+and they are cited as authority in every one of them. **4,175 rulings back to
+1973**, and it was the largest Icelandic body this library was missing.
+
+**Two boards, one archive.** Yfirskattanefnd was set up by lög nr. 30/1992 and
+took over on 1 July 1992 from **ríkisskattanefnd**, whose rulings it publishes
+as the older half of the same register: 1,657 of them, 1973 to mid-1992,
+headed "Úrskurður ríkisskattanefndar" and numbered `rskn. nr. 728/1973`. They
+are a different body, so each record names the board that actually decided it —
+but they are one source and one checkbox, because the line of authority runs
+continuously through both and nobody researching a tax question wants to tick
+two boxes to follow it. The same treatment Úrskurðarnefnd umhverfis- og
+auðlindamála's predecessor gets.
+
+Verified against the live site (September 2026):
+
+- **robots.txt** disallows the Umbraco plumbing and nothing else — `/umbraco/`,
+  `/bin/`, `/config/`, `/data/`, `/install/`, `/masterpages/`, `/python/`,
+  `/usercontrols/`, `/xslt/`, `/aspnet_client/`, `/umbraco_client/`. Neither
+  the index nor the rulings are under any of them.
+
+- **The index is one page per year**, `/urskurdir/?year=YYYY`, and each listing
+  page also carries the list of every year the board publishes. So one fetch
+  discovers the range and lists a year; the whole archive is 54 requests and
+  about 3.5 MB — the same order as the single-page index uua.is publishes, and
+  it buys the same two properties. A run always knows exactly what exists, and
+  it needs no cursor to be resumable.
+
+- **One fetch per ruling**, `/urskurdir/skoda-urskurd/?nr=<id>`, fully
+  server-rendered: the heading, the index terms, the ruling number, the gjaldár,
+  the board's own table of the statutes it applied, the summary and the ruling.
+  No PDF, no attachment, no JavaScript.
+
+**`/urskurdir/` is an *úrval*, and there is no larger corpus behind the search.**
+The page says so — "Úrval úrskurða" — and the gaps are visible: 2026's listing
+runs from 4/2026 to 107/2026 with 103/2026 and 94–100/2026 among the numbers it
+does not carry. This README used to say the full set was behind `Leit í
+úrskurðum`. It is not. That form searches the same records the year listings
+carry: asking it for a ruling number the listings omit returns nothing at all,
+and a search broad enough to match nearly everything returns 4,174 against the
+4,175 the year listings hold between them. So walking the years gets the whole
+published archive, and there is nothing else to go after.
+
+**Four fifths of the archive has a year and no date.** From 2016 the published
+text opens with the board's own formula — "Ár 2026, miðvikudaginn 8. júlí, er
+tekið fyrir mál nr. 1/2026" — which gives both the day it was decided and the
+case number behind the ruling number. Before that the board publishes the
+ruling without that opening, and the date is nowhere in the record: not in the
+body, not at the end, not in the listing. Those rulings are stored with the
+year from their ruling number, which is assigned by year of decision, and no
+date. Inventing a day from the gjaldár would not do: the gjaldár is a different
+year, often several years earlier — ruling 107/2026 is about gjaldár 2020.
+
+**The ruling number is not the case number.** "Úrskurður nr. 107/2026" is how
+the ruling is cited; "mál nr. 1/2026" is the board's own file, and the two are
+different numbers in the same shape. The ruling number is what goes in
+`case_number`; the case number is written into the record's header, where it is
+findable but cannot be mistaken for the citation.
+
+**The bold paragraph under the header means a different thing in each era.** In
+the yfirskattanefnd era it is the útdráttur — prose summarising the case — with
+the index terms in a list above it. In the ríkisskattanefnd era there is no
+list, and the bold paragraph *is* the index terms: "Dánarbú — Eignarskattsstofn
+— Lögaðili — Tímaviðmiðun eignarskattsstofns". Reading one as the other would
+either show a keyword list where the card shows a summary or scatter prose
+through the tag filter, so the two are told apart by the list above and, where
+there is none, by shape — terms are dash-joined noun phrases that end without
+punctuation. Length says nothing: ríkisskattanefnd indexes some rulings under
+thirty terms, which runs to several hundred characters and is still a keyword
+list.
+
+Records are titled by the board's own index terms, because these rulings are
+anonymised — the parties are A, B and X ehf. — so there is no case name to use,
+and the terms are literally what the older era prints as a ruling's heading
+line. The title takes as many terms as read as a heading; every one of them is
+a subject tag.
+
+New rulings do not wait behind the backfill: a run takes the current and
+previous years first, newest first, then everything older from the oldest end.
+So the board's new úrskurðir land on the first run that sees them, while the
+backfill still advances from 1973 each time.
+
+```
+npm run ingest -- --adapter=yfirskattanefnd                    # 300 rulings a run
+INGEST_MODE=retry npm run ingest -- --adapter=yfirskattanefnd  # gap ledger only
+```
+
 #### Still missing
 
 These publish for themselves too and are not yet ingested, roughly in the order
@@ -1182,7 +1276,6 @@ they are worth doing:
 
 | Body | Where | Note |
 |---|---|---|
-| Yfirskattanefnd | [yskn.is](https://yskn.is/) | Tax appeals, by year back to 1973. The largest archive still missing. `/urskurdir/` is an *úrval*; the full set is behind `Leit í úrskurðum`. |
 | Áfrýjunarnefnd samkeppnismála | [samkeppni.is](https://www.samkeppni.is/urlausnir/urskurdir/) | Searchable table, JavaScript-driven. |
 | Áfrýjunarnefnd hugverkaréttinda | [hugverk.is](https://www.hugverk.is/utgafa/urskurdir-og-akvardanir) | JavaScript-driven listing. |
 | Úrskurðarnefnd í vátryggingamálum; Úrskurðarnefnd um viðskipti við fjármálafyrirtæki | [fme.is](https://www.fme.is/eftirlitsstarfssemi/urskurdarnefndir/) | Both pages return ~6 kB of shell; needs a look before costing. |
@@ -1809,6 +1902,7 @@ What is covered, and why those:
 | `lib/lagasafn.ts` | the act parser, against two real acts frozen from althingi.is |
 | `lib/query-parser.ts` | case-number detection and the boolean → `websearch_to_tsquery` translation |
 | `lib/sources.ts`, `lib/adr-boards.ts` | registry invariants: unique keys, every board a source, Félagsdómur not among the boards, exotic `Committee=` values surviving URL encoding |
+| `lib/yfirskattanefnd.ts` | that the two eras of the tax archive are told apart — the bold paragraph that is a summary in one and a keyword list in the other, the ruling number that is not the case number, and the opening formula only the newer rulings carry |
 | `search-eval/metrics.ts` | the ranking metrics themselves |
 | `lib/ask/llm.ts` | which provider answers and on which model — configuration flipped on a dashboard, whose failure modes (a silent fallback to the other provider, a launcher with no key behind it) are quiet ones |
 | `lib/ask/plan.ts` | that a plan is sanitised before it reaches the search, and that a planning failure degrades to keywords instead of failing the question |
@@ -1832,7 +1926,7 @@ pinning `provisions.length === 53` fails on the next amendment and trains
 everyone to ignore it. What must not change is the shape the parser recovers,
 and that breaks only when the markup does.
 
-**The fourteen ingestion adapters have no fixtures yet, and that is the gap
+**The sixteen ingestion adapters have no fixtures yet, and that is the gap
 worth closing next.** Each wants one frozen listing page and one frozen
 document page; `src/lib/lagasafn.test.ts` is the pattern. Both of the
 formatting bugs this repo has fixed by hand — Félagsdómur's letter-spaced
@@ -1960,6 +2054,8 @@ src/
                                  the document, so it is the officialUrl
       neytendamal.ts             Áfrýjunarnefnd neytendamála, from the index
                                  table on Neytendastofa's own site
+      yfirskattanefnd.ts         Yfirskattanefnd and ríkisskattanefnd before it,
+                                 from yskn.is's one listing page per year
       logretta.ts                Tímarit Lögréttu, via the site's own Prismic API
       ulfljotur.ts               Vefrit Úlfljóts, via the WordPress.com REST API
     citations.ts                 judgments → provisions; incremental by text hash
@@ -2045,6 +2141,10 @@ npm run ingest -- --adapter=citations
 | `INGEST_MAX_CASES` | neytendamal | Rulings fetched per run (default 120; the board has ~228) |
 | `INGEST_MODE=retry` | neytendamal | Work the gap ledger and nothing else |
 | `NEYTENDAMAL_BASE` | neytendamal | Override the site base URL |
+| `INGEST_MAX_CASES` | yfirskattanefnd | Rulings fetched per run (default 300; the archive is 4,175) |
+| `INGEST_MODE=retry` | yfirskattanefnd | Work the gap ledger and nothing else |
+| `YSKN_INDEX_YEARS` | yfirskattanefnd | List only the newest N years instead of all 54; for a constrained one-off, not for scheduled runs |
+| `YFIRSKATTANEFND_BASE` | yfirskattanefnd | Override the site base URL |
 | `LAGASAFN_MAX_ACTS` | lagasafn | Acts fetched per run; the rest resume next run |
 | `LAGASAFN_ONLY` | lagasafn | Ingest a single act, e.g. `91/1991` — bypasses the cursor |
 | `LAGASAFN_FORCE=1` | lagasafn | Re-parse and rewrite even when nothing has changed. Needed after any change to the parser: a normal run short-circuits on the codex version before the parser ever runs, so a fix would not reach acts already stored |

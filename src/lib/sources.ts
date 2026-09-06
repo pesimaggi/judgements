@@ -82,10 +82,9 @@ const ADR_SOURCES: SourceDef[] = ADR_BOARDS.map((board) => ({
  * do not share: a `Committee=` value on the ministries' site. So each has its
  * own adapter and its own entry here.
  *
- * There are more of these than are listed: Yfirskattanefnd, Óbyggðanefnd,
- * Áfrýjunarnefnd neytendamála, Áfrýjunarnefnd samkeppnismála, the two FME
- * nefndir and several smaller ones all publish for themselves and are not yet
- * ingested. See "Boards that publish elsewhere" in the README.
+ * There are more of these than are listed: Áfrýjunarnefnd samkeppnismála, the
+ * two FME nefndir and several smaller ones all publish for themselves and are
+ * not yet ingested. See "Boards that publish elsewhere" in the README.
  */
 const EXTERNAL_ADR_SOURCES: SourceDef[] = [
   {
@@ -112,6 +111,23 @@ const EXTERNAL_ADR_SOURCES: SourceDef[] = [
     language: "is",
     group: ADR,
     adapterKey: "obyggdanefnd",
+    kind: "decision",
+    status: "live",
+  },
+  {
+    // Tax appeals: the last word before the courts on income tax, VAT, customs
+    // classification, withholding and penalties. 4,175 rulings back to 1973 —
+    // the largest Icelandic body that was still missing — and the archive is
+    // two bodies' work: yfirskattanefnd from 1 July 1992, and before it
+    // ríkisskattanefnd, whose rulings it publishes as its own older half. One
+    // source and one checkbox, because the line of authority runs continuously
+    // through both; each record names the board that decided it.
+    key: "yfirskattanefnd",
+    name: "Yfirskattanefnd",
+    officialBaseUrl: "https://www.yskn.is/urskurdir/",
+    language: "is",
+    group: ADR,
+    adapterKey: "yfirskattanefnd",
     kind: "decision",
     status: "live",
   },
