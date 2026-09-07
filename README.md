@@ -25,7 +25,7 @@ The three Icelandic courts published at [island.is/domar](https://island.is/doma
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
 - **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force Icelandic act; `eur-lex` ingests the EU regulations and directives in force from the Publications Office; `cjeu` ingests the judgments of the Court of Justice and the General Court from the same endpoint; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `eea-joint-committee` ingests the EEA Joint Committee's decisions (their own text, one record each); `eftasurv` ingests the EFTA Surveillance Authority's ~6,725 public documents; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court, both halves of it; `uua` ingests Úrskurðarnefnd umhverfis- og auðlindamála (~3,000 planning and environmental rulings, on its own site); `obyggdanefnd` ingests the þjóðlendu commission's 84 úrskurðir; `neytendamal` ingests Áfrýjunarnefnd neytendamála; `yfirskattanefnd` ingests the tax appeal board's 4,175 úrskurðir back to 1973, ríkisskattanefnd's included; `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
 - **Scholarly commentary** — Tímarit Lögréttu and Vefrit Úlfljóts, searched alongside the case law rather than in a separate silo, so a query about an unsettled point returns both the judgments and the articles arguing about them. Articles are indexed in full but read at the journal that published them: their cards and pages link out rather than reproducing the text here.
-- **The well** — an assistant that answers a question in prose instead of returning a result list. Drop a question in ("Hvernig sæki ég um íslenskan ríkisborgararétt?") and it runs a handful of focused searches over the acts, the provisions and every decision source, ranks what comes back by authority as well as by relevance, and writes an answer in the language you asked in with a numbered citation on every proposition — each one a link to the article or the judgment it rests on. It opens as a split screen: the conversation on one side, the law it found on the other, each source carrying the passage it was selected for. It answers only from what the search returned; a citation to a source that does not exist is removed rather than renumbered, and a statement of law with nothing behind it is marked as unverified in the answer you read. Off unless an LLM API key is configured; OpenAI and Anthropic are both supported and swap with one variable. See *Asking the well* below.
+- **The well** — an assistant that answers a question in prose instead of returning a result list. Drop a question in ("Hvernig sæki ég um íslenskan ríkisborgararétt?") and it runs a handful of focused searches over the acts, the provisions and every decision source, ranks what comes back by authority as well as by relevance, and writes an answer in the language you asked in with a numbered citation on every proposition — each one a link to the article or the judgment it rests on. It opens as a split screen: the conversation on one side, the law it found on the other, each source carrying the passage it was selected for. The stages stream as they finish — the search terms first, then the law, then the prose a line at a time — and every line is citation-checked *before* it is sent, so an invented citation is never briefly on screen. It answers only from what the search returned; a citation to a source that does not exist is removed rather than renumbered, and a statement of law with nothing behind it is marked as unverified in the answer you read. Off unless an LLM API key is configured; OpenAI and Anthropic are both supported and swap with one variable. See *Asking the well* below.
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
 
 ## Quick start
@@ -1923,6 +1923,52 @@ puts the limitation into the answer's context under `LIMITATIONS OF THIS
 SEARCH`, and the answer states it. The limitation is also returned to the
 browser separately, and the evaluation fixtures assert that it appears.
 
+### It is streamed, and what is streamed is already checked
+
+A hard question takes the better part of a minute. Until recently the reader
+watched the animation for all of it and then received everything at once, which
+spends a latency budget without buying anything with it. Now the stages report
+as they finish:
+
+| Event | When | What the reader sees |
+|---|---|---|
+| `plan` | a second or two in | the corpus terms the search will run on |
+| `sources` | when ranking has chosen them | the law, standing open in the other pane |
+| `line` | as the answer is written | the prose, a line at a time |
+| `answer` | at the end | the finished response, superseding the above |
+
+**The streamed text is validated before it is sent.** That is the part worth
+being careful about. The well's central promise is that a citation to a source
+that does not exist never reaches the reader — and streaming raw tokens would
+put an invented `[11]` on screen for a second before deleting it, which for a
+legal tool is worse than useless. A reader who saw it once has seen it.
+
+It is possible to keep the promise because `validateCitations` is *line-local*:
+deleting a citation to a nonexistent source needs only the set of valid source
+numbers, and retrieval has finished before the answer stage starts; qualifying a
+proposition with nothing behind it is decided per line. So the text is buffered
+until a line is complete, that line is checked on its own, and the checked line
+is what is sent. `src/lib/ask/stream.test.ts` asserts that this produces exactly
+the same text as validating the whole answer at the end, at chunk sizes from one
+character upwards, because that equivalence is the whole basis of doing it this
+way.
+
+Two consequences worth knowing:
+
+- Sources arrive **numbered and all at once**, not one by one. The number on a
+  source is its rank, and nothing can be numbered until ranking has seen every
+  candidate — emitting them as they were found would mean renumbering them
+  afterwards, which is the one thing citations must never do.
+- The final `answer` event supersedes the streamed lines. Normally it is
+  identical to them; it exists because the optional verifier runs after the
+  answer is complete and can qualify a line already on screen, and because an
+  abstention never streams at all.
+
+Streaming is purely additive inside the pipeline: `ask()` takes an optional
+`onEvent`, and without one it makes a single unstreamed model call and behaves
+exactly as it did before. That is what lets the evaluation harness keep
+measuring the same thing.
+
 ### The animation is doing a job
 
 Opening the well shows a stone well; the question falls in on a slip of paper;
@@ -1933,6 +1979,13 @@ watch — and what comes *out* says what the well is doing. It is fetching law,
 not thinking. Under `prefers-reduced-motion` all of it is switched off and the
 scene is a drawing of a well; the request is sent while the paper is still in
 the air, so the animation covers the wait rather than adding to it.
+
+It now has less to cover. The planner's terms appear under the scene within a
+second or two and the sources fill the other pane behind it, so the animation
+carries the first moment rather than the whole minute — and the floor on how
+long the loading state is shown matters *more* than it did, not less, because a
+first line can now arrive in a couple of hundred milliseconds and artefacts that
+appear and vanish read as a glitch.
 
 ### It opens as a split screen
 
@@ -2084,8 +2137,16 @@ says so rather than showing a blank card.
 
 ### The endpoint
 
-`POST /api/ask` takes `{ question, history, scope? }` and returns `{ answer,
-sources, language, abstained, limitations, issues, requestId }`. It is
+`POST /api/ask` takes `{ question, history, scope?, stream? }` and returns
+`{ answer, sources, language, abstained, limitations, issues, requestId }`.
+
+With `stream: true` in the body — or `Accept: text/event-stream` — the same
+endpoint answers as Server-Sent Events instead: one `data:` frame per event,
+in the shapes above under *It is streamed*. JSON remains the default, so an
+existing caller is unaffected. Note that once the stream has opened there is no
+status code left to send, so a failure arrives as an `error` event *inside* the
+stream rather than as a 4xx or 5xx; validation, rate limiting and an
+unconfigured provider all answer before it opens and so still use statuses. It is
 rate-limited to 12 questions per 10 minutes per address, in memory — enough to
 stop an unmetered public endpoint spending money, and no substitute for a real
 limit in front of the app. The **same question from the same address while the

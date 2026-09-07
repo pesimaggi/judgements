@@ -19,6 +19,13 @@ export interface AskRequestBody {
   history?: AskTurn[];
   /** How much of the EU library the act lookups may see. See lib/acts.ts. */
   scope?: "eea" | "eu";
+  /**
+   * Ask for the answer as Server-Sent Events rather than one JSON object.
+   *
+   * `Accept: text/event-stream` does the same thing. JSON remains the default
+   * so that an existing caller is unaffected.
+   */
+  stream?: boolean;
 }
 
 /**
@@ -200,3 +207,62 @@ export interface AskResponse {
    */
   requestId?: string;
 }
+
+/**
+ * What the browser is told while an answer is being built, in order.
+ *
+ * The well can take a minute on a hard question, and until this existed the
+ * reader watched an animation for all of it and then received everything at
+ * once. These are the stages that are worth showing as they happen — the
+ * search terms the planner chose, the law retrieval found, then the prose.
+ *
+ * `line`, not `token`: the answer is validated a line at a time before it is
+ * sent (see lib/ask/stream.ts), so what reaches the reader has already had
+ * invalid citations removed. Streaming raw tokens would put an invented
+ * citation on screen for a second before deleting it, and this feature exists
+ * to make that impossible rather than brief.
+ */
+export type AskEvent =
+  | {
+      /** The plan, as soon as it exists. The first thing that can be shown. */
+      type: "plan";
+      language: "is" | "en";
+      standalone: string;
+      /** The corpus terms the search will actually run on. */
+      terms: string[];
+      historical: boolean;
+    }
+  | {
+      /**
+       * The numbered sources, once ranking has chosen them.
+       *
+       * One event carrying all of them rather than one per source: the number
+       * on a source is its rank, and nothing can be numbered until ranking has
+       * seen every candidate. Emitting them as they were found would mean
+       * renumbering them afterwards, which is the one thing citations must
+       * never do.
+       */
+      type: "sources";
+      sources: AskSource[];
+    }
+  | {
+      /** One validated line of the answer. Appended in order. */
+      type: "line";
+      text: string;
+    }
+  | {
+      /**
+       * The finished response, superseding everything streamed before it.
+       *
+       * The lines were validated as they went, so this is normally identical
+       * to their concatenation. It is sent anyway because the optional
+       * verifier in lib/ask/verify.ts runs after the answer is complete and
+       * can add a qualifier to a line the reader has already seen — and
+       * because the client should render one authoritative object rather than
+       * whatever it happened to accumulate.
+       */
+      type: "answer";
+      response: AskResponse;
+    }
+  | { type: "error"; message: string };
+

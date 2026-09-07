@@ -2,8 +2,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { WellScene, type WellPhase } from "./WellScene";
-import { parseAnswer, type InlineSpan } from "@/lib/ask/render";
+import { markCitedIn, parseAnswer, type InlineSpan } from "@/lib/ask/render";
 import { FEEDBACK_KINDS, FEEDBACK_LABELS, type FeedbackKind } from "@/lib/ask/feedback";
+import { readAskEvents } from "@/lib/ask/sse";
 import type { AskSource, AskTurn } from "@/lib/ask/types";
 
 /**
@@ -65,6 +66,15 @@ export function WellChat({ enabled }: { enabled: boolean }) {
   const [falling, setFalling] = useState("");
   /** Which pane is showing, when the screen is too narrow for both. */
   const [pane, setPane] = useState<"chat" | "sources">("chat");
+  /**
+   * The corpus terms the planner chose, shown while the well is working.
+   *
+   * The first thing that can be shown at all, and the most reassuring: it says
+   * the question was understood, and in what words the law is about to be
+   * searched for. It arrives a second or two in, against an answer that can
+   * take a minute.
+   */
+  const [terms, setTerms] = useState<string[]>([]);
 
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
@@ -138,30 +148,18 @@ export function WellChat({ enabled }: { enabled: boolean }) {
       setFalling(trimmed);
       setPhase("dropping");
       setPane("chat");
+      setTerms([]);
 
       // Sent while the paper is still in the air: the animation is there to
-      // cover the wait, not to add to it.
+      // cover the wait, not to add to it. Events that arrive during the fall
+      // wait in the socket until the read loop below starts, so the drop is
+      // never cut short by a fast first stage.
       const history: AskTurn[] = messages.map((m) => ({ role: m.role, content: m.content }));
       const request = fetch("/api/ask", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: trimmed, history }),
-      })
-        .then(async (res) => {
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error ?? "The well could not answer that.");
-          return data as {
-            answer: string;
-            sources: AskSource[];
-            requestId?: string;
-            language?: "is" | "en";
-          };
-        })
-        .catch((e: Error) => ({
-          answer: e.message,
-          sources: [] as AskSource[],
-          failed: true,
-        }));
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body: JSON.stringify({ question: trimmed, history, stream: true }),
+      });
 
       await wait(still ? 0 : DROP_MS);
       // The question joins the transcript when it lands, not when it is typed.
@@ -169,20 +167,100 @@ export function WellChat({ enabled }: { enabled: boolean }) {
       setFalling("");
       setPhase("loading");
 
-      const [result] = await Promise.all([request, wait(still ? 0 : MIN_LOAD_MS)]);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: result.answer,
-          sources: result.sources,
-          requestId: "requestId" in result ? result.requestId : undefined,
-          language: "language" in result ? result.language : undefined,
-          failed: "failed" in result && result.failed === true,
-        },
-      ]);
-      setPhase("answered");
-      if (result.sources.length > 0) setPane("chat");
+      const startedAt = Date.now();
+      let revealed = false;
+      /**
+       * The answer's language, known from the plan.
+       *
+       * Carried on the turn as soon as it is created so the feedback panel is
+       * labelled in the right language even if the request fails before the
+       * final `answer` event supplies it again.
+       */
+      let language: "is" | "en" = "is";
+      /**
+       * Moves off the loading scene, but never sooner than MIN_LOAD_MS.
+       *
+       * Streaming made the floor matter more, not less: the first line can now
+       * arrive in a couple of hundred milliseconds, and without this the well's
+       * artefacts would appear and vanish, which reads as a glitch rather than
+       * as the well working.
+       */
+      const reveal = () => {
+        if (revealed) return;
+        revealed = true;
+        const left = (still ? 0 : MIN_LOAD_MS) - (Date.now() - startedAt);
+        if (left > 0) window.setTimeout(() => setPhase("answered"), left);
+        else setPhase("answered");
+      };
+
+      /** Rewrites the assistant turn being streamed into, creating it if needed. */
+      const update = (change: (m: Message) => Message) =>
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "assistant") {
+            return [...prev.slice(0, -1), change(last)];
+          }
+          return [...prev, change({ role: "assistant", content: "" })];
+        });
+
+      try {
+        const response = await request;
+        if (!response.ok) {
+          // Validation, rate limiting and a well with no key configured all
+          // answer before the stream opens, as ordinary JSON with a status.
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.error ?? "Brunnurinn gat ekki svarað þessu.");
+        }
+
+        await readAskEvents(response, (event) => {
+          switch (event.type) {
+            case "plan":
+              setTerms(event.terms);
+              language = event.language;
+              break;
+            case "sources":
+              // Creates the assistant turn, which is what fills the sources
+              // pane — the law stands open beside the answer before a word of
+              // the answer has been written.
+              update((m) => ({ ...m, sources: event.sources, language }));
+              break;
+            case "line": {
+              reveal();
+              update((m) => {
+                const content = m.content ? `${m.content}\n${event.text}` : event.text;
+                // Re-marked on every line so a source moves into "cited" as
+                // the sentence citing it is written, rather than jumping there
+                // when the final event arrives.
+                return { ...m, content, sources: markCitedIn(content, m.sources ?? []) };
+              });
+              break;
+            }
+            case "answer":
+              // Supersedes what was streamed. Normally identical; the optional
+              // verifier can qualify a line already on screen, and an
+              // abstention never streamed at all.
+              update((m) => ({
+                ...m,
+                content: event.response.answer,
+                sources: event.response.sources,
+                requestId: event.response.requestId,
+                language: event.response.language,
+              }));
+              break;
+            case "error":
+              update((m) => ({ ...m, content: event.message, failed: true }));
+              break;
+          }
+        });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Brunnurinn gat ekki svarað þessu.";
+        // Replaces a half-written answer rather than appending to it: a
+        // truncated argument with an error under it is worse than the error.
+        update((m) => ({ ...m, content: message, sources: m.sources ?? [], failed: true }));
+      } finally {
+        reveal();
+        setPhase("answered");
+      }
     },
     [busy, messages]
   );
@@ -269,6 +347,42 @@ export function WellChat({ enabled }: { enabled: boolean }) {
                 question={falling}
                 compact={phase === "answered" && messages.length > 0}
               />
+
+              {/* What the well is doing, while it does it.
+                  The planner's terms are the first thing that exists — a
+                  second or two in, against an answer that can take a minute —
+                  and they are worth showing because they say the question was
+                  understood and name the words the law is being searched for.
+                  Under them, the count of sources the search brought back;
+                  those are already standing open in the other pane by the time
+                  this appears. */}
+              {phase === "loading" && terms.length > 0 && (
+                <div className="px-4 pb-3">
+                  <div className="mx-auto max-w-[30rem] rounded-md border border-line bg-paper/60 px-3 py-2">
+                    <p className="text-[11px] uppercase tracking-wide text-inkSoft">
+                      Leitað í safninu
+                    </p>
+                    <p className="mt-1 flex flex-wrap gap-1.5">
+                      {terms.slice(0, 6).map((term) => (
+                        <span
+                          key={term}
+                          className="rounded bg-white px-1.5 py-0.5 text-[12px] text-ink shadow-sm"
+                        >
+                          {term}
+                        </span>
+                      ))}
+                    </p>
+                    {sources.length > 0 && (
+                      <p className="mt-1.5 text-[11px] text-inkSoft">
+                        {sources.length === 1
+                          ? "1 heimild fundin"
+                          : `${sources.length} heimildir fundnar`}{" "}
+                        — sjá hægra megin
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {messages.length === 0 && phase === "idle" && (
                 <div className="px-4 pb-4 text-center">
