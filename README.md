@@ -21,6 +21,7 @@ The three Icelandic courts published at [island.is/domar](https://island.is/doma
 - **Specific search** — alongside the keyword search, two live lookups that narrow the results, each accepting several selections that combine as AND: an act/provision box that takes the citation as it is written ("lög um aðbúnað og hollustuhætti" finds the cases about the act; "57. gr. a. laga um aðbúnað og hollustuhætti" narrows to the cases citing that article), and a subject-tag box. Acts match on title, citation number, or the short names judgments actually use — "vaxtalög" finds lög nr. 38/2001.
 - **Administrative case law** — the úrskurðarnefndir, kærunefndir and ministry appeal desks at stjornarradid.is, each board its own tickable source rather than one undifferentiated pile. For immigration, benefits, tenancy, procurement and freedom of information this is where the case law actually is, and a search of the courts alone would miss it. See *Úrskurðarnefndir og ráðuneyti* below.
 - **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`. `Act` holds both jurisdictions: `jurisdiction` and `docType` say which corpus and which instrument, and an EU act adds its CELEX, its citation, its EEA marker and the Joint Committee decisions naming it.
+- **Icelandic lemmatisation** — the search index is built twice: once on the words as written, and once on their lemmas, mapped through [BÍN](https://bin.arnastofnun.is/). Icelandic inflects a noun into as many as sixteen forms, and the `simple` text-search configuration does no stemming, so `ríkisborgararéttur` used to find none of `ríkisborgararéttar`, `ríkisborgararétti` or `ríkisborgararéttinum`. Both vectors are searched; the exact one is unchanged, so nothing that matched before stopped matching. See *docs/icelandic-lemmatisation.md*.
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
 - **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force Icelandic act; `eur-lex` ingests the EU regulations and directives in force from the Publications Office; `cjeu` ingests the judgments of the Court of Justice and the General Court from the same endpoint; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `eea-joint-committee` ingests the EEA Joint Committee's decisions (their own text, one record each); `eftasurv` ingests the EFTA Surveillance Authority's ~6,725 public documents; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court, both halves of it; `uua` ingests Úrskurðarnefnd umhverfis- og auðlindamála (~3,000 planning and environmental rulings, on its own site); `obyggdanefnd` ingests the þjóðlendu commission's 84 úrskurðir; `neytendamal` ingests Áfrýjunarnefnd neytendamála; `yfirskattanefnd` ingests the tax appeal board's 4,175 úrskurðir back to 1973, ríkisskattanefnd's included; `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
 - **Scholarly commentary** — Tímarit Lögréttu and Vefrit Úlfljóts, searched alongside the case law rather than in a separate silo, so a query about an unsettled point returns both the judgments and the articles arguing about them. Articles are indexed in full but read at the journal that published them: their cards and pages link out rather than reproducing the text here.
@@ -35,6 +36,8 @@ docker compose up -d db        # PostgreSQL 16 on :5432
 npm install
 npm run db:push                # create tables
 npm run db:setup-search        # FTS + pg_trgm indexes (requires psql on PATH)
+npm run db:setup-lemmas        # BÍN lemma table, vectors and indexes
+npm run db:load-bin            # downloads BÍN (~34 MB) and loads the dictionary
 npm run db:seed                # courts + sample judgments
 npm run dev                    # http://localhost:3000
 ```
@@ -2682,3 +2685,17 @@ Note: this repo uses `prisma db push` rather than `prisma migrate`, so there's n
 This tool searches and links to public judgments. It always displays the official island.is URL, does not present itself as an official publisher, and displays on every page: *"This is an unofficial research tool. Always verify text against the official source."*
 
 The journals are treated differently, because an article is not a public record — it is the work of its named author and the journal that published it. Both are kept with the record: the byline as the journal wrote it, and a link to the article on the journal's own site. The text is indexed so the article can be **found** here, and is not served for **reading** here — every route into an article opens the journal's page instead, and the document API withholds the text for a scholarly source. Where a journal's own host asks crawlers away from the article files, this repo stays out of them by default and says so above rather than burying the choice in a flag's default.
+
+## Data attribution
+
+Icelandic inflectional analysis in the search index is built from
+**Beygingarlýsing íslensks nútímamáls (BÍN)**:
+
+> Beygingarlýsing íslensks nútímamáls. Stofnun Árna Magnússonar í íslenskum
+> fræðum. Höfundur og ritstjóri Kristín Bjarnadóttir.
+
+Used under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). The
+data is downloaded at load time and is not redistributed by this repository;
+`prisma/data/` is gitignored. Compound resolution optionally uses
+[BinPackage](https://github.com/mideind/BinPackage) (MIT, © Miðeind ehf.), which
+embeds the same BÍN data. See *docs/icelandic-lemmatisation.md*.

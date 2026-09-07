@@ -42,6 +42,34 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         </header>
         {children}
+        {/* BÍN's attribution is a condition of its licence (CC BY-SA 4.0), not
+            a courtesy: the search index is lemmatised with it, so the credit
+            belongs where every page carries it. See
+            prisma/sql/setup-lemmas.sql. */}
+        <footer className="mt-12 border-t border-line bg-paper">
+          <p className="mx-auto max-w-7xl px-4 py-3 text-[11px] leading-relaxed text-inkSoft">
+            Íslensk beygingargreining í leitinni byggir á{" "}
+            <a
+              href="https://bin.arnastofnun.is/"
+              className="underline hover:text-ink"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Beygingarlýsingu íslensks nútímamáls
+            </a>
+            . Stofnun Árna Magnússonar í íslenskum fræðum. Höfundur og ritstjóri Kristín
+            Bjarnadóttir. Notað með{" "}
+            <a
+              href="https://creativecommons.org/licenses/by-sa/4.0/"
+              className="underline hover:text-ink"
+              target="_blank"
+              rel="noreferrer"
+            >
+              CC BY-SA 4.0
+            </a>{" "}
+            leyfi.
+          </p>
+        </footer>
         {/* Read on the server: with no API key the launcher is never rendered
             at all, rather than offered and then failing when it is clicked. */}
         <WellChat enabled={isAskEnabled()} />

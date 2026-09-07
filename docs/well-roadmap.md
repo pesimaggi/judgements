@@ -181,6 +181,15 @@ measurable quality.
 
 The cheapest large win in the entire plan. Two routes:
 
+> **Corrected after implementing this — see `docs/icelandic-lemmatisation.md`.**
+> Route A below does not work on this deployment. Both of Postgres's built-in
+> mechanisms (`ispell`/hunspell and the `synonym` template) read their data from
+> files under the server's `$SHAREDIR/tsearch_data`, and managed Postgres gives
+> you no filesystem to put them on. Route B, as a table, is what shipped — and
+> BÍN's licence is **CC BY-SA 4.0**, not CC BY as stated below. The ShareAlike
+> term matters if the derived table is ever redistributed, and attribution is
+> mandatory.
+
 **Route A — Postgres ispell/hunspell dictionary.** An `is_IS` hunspell
 dictionary exists (the Icelandic spell-checking project). Drop the `.dic` and
 `.aff` into `$SHAREDIR/tsearch_data`, then:
@@ -202,16 +211,16 @@ phrase match exact, and you want both.
 Cost: a migration in `prisma/sql/setup-search.sql`, a reindex, and a condition
 in two query builders. Perhaps three days.
 
-**Route B — BÍN.** *Beygingarlýsing íslensks nútímamáls* is free under
-CC-BY-4.0 and ships ~6.5M inflected forms mapped to lemmas. Load it into a
+**Route B — BÍN (this is what shipped).** *Beygingarlýsing íslensks nútímamáls*
+is free under CC BY-SA 4.0 and ships ~6.5M inflected forms mapped to lemmas. Load it into a
 `bin_forms(form, lemma)` table, write an immutable `lemmatize(text)` SQL
 function, and materialize from that. Slower to build than route A, and
 substantially better: it handles proper compounds and legal vocabulary that a
 spell-check dictionary does not.
 
-**Recommendation: ship route A this month, then evaluate route B against it on
-the phase-0 gold set.** If A gets you most of the way, B may not be worth it.
-Measure, do not assume.
+**Shipped: route B.** Route A turned out not to be available on managed
+Postgres at all, which settled the choice. 3,698,046 surface forms, loaded in
+63 seconds.
 
 Whichever route: also expand the *query* side. The planner should emit the
 lemma, and `termToQuery` should search the lemma vector with it.

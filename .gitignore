@@ -5,3 +5,6 @@ node_modules/
 *.log
 .DS_Store
 *.tsbuildinfo
+
+# BÍN is downloaded at deploy time, never committed: 377 MB, and CC BY-SA.
+prisma/data/
