@@ -30,6 +30,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getSearchProvider } from "@/lib/search";
+import { prisma } from "@/lib/db";
+import { stripMarks } from "@/lib/ask/evidence";
+import { wholeWord } from "@/lib/word-boundary";
 import type { SearchHit } from "@/lib/types";
 import {
   ndcgAt,
@@ -50,6 +53,30 @@ interface Assertions {
   topHitIsExact?: boolean;
   everyHitContains?: string;
   noHitContains?: string;
+  /**
+   * At least one exact hit must NOT contain this word.
+   *
+   * The inflection assertion, and the only one here that can prove
+   * lemmatisation is working without a labelled corpus. A hit that is an exact
+   * match — not a trigram near-match — and does not contain the queried word
+   * at all can only have been found through a shared lemma. Before
+   * prisma/sql/setup-lemmas.sql existed, no query could satisfy this.
+   *
+   * Matched on whole words, which is the whole trick: Icelandic inflection is
+   * largely suffixal, so "stjórnsýslulög" is a *substring* of
+   * "stjórnsýslulögum" and a naive `includes` would pass this for entirely the
+   * wrong reason.
+   */
+  someHitLacksWord?: string;
+  /**
+   * Every hit must contain at least one of these surface forms.
+   *
+   * The other side of the same coin: `someHitLacksWord` fails when lemma
+   * matching is too narrow, this fails when it is too wide. A decomposition
+   * that reduced a compound to a common stem would make the query match half
+   * the corpus, and every one of those hits would be missing all of these.
+   */
+  everyHitContainsAnyOf?: string[];
 }
 
 interface EvalCase {
@@ -132,6 +159,21 @@ function gradeHits(hits: SearchHit[], relevant: EvalCase["relevant"]): number[] 
   return hits.map((h) => byUrl.get(h.officialUrl) ?? 0);
 }
 
+/**
+ * The text of a hit, as an assertion should see it.
+ *
+ * `stripMarks` is the point. A snippet arrives as a `ts_headline` string with
+ * the matched terms wrapped in <mark>, so a two-word phrase comes back as
+ * "<mark>greiðslu</mark> <mark>málskostnaðar</mark>" and a raw substring test
+ * for "greiðslu málskostnaðar" fails on a hit that is perfectly correct. A
+ * single-word assertion happens to survive that — "<mark>x</mark>" still
+ * contains "x" — which is why this went unnoticed: the bug is invisible until
+ * an assertion spans more than one word.
+ */
+function hitText(h: SearchHit): string {
+  return stripMarks(`${h.title} ${h.snippet} ${h.summary ?? ""}`);
+}
+
 function checkAssertions(c: EvalCase, hits: SearchHit[], total: number): string[] {
   const a = c.assert;
   if (!a) return [];
@@ -167,18 +209,45 @@ function checkAssertions(c: EvalCase, hits: SearchHit[], total: number): string[
   }
   if (a.everyHitContains) {
     const needle = a.everyHitContains.toLowerCase();
-    const missing = hits.filter(
-      (h) => !`${h.title} ${h.snippet} ${h.summary ?? ""}`.toLowerCase().includes(needle)
-    );
+    const missing = hits.filter((h) => !hitText(h).toLowerCase().includes(needle));
     if (missing.length) {
       failures.push(`${missing.length}/${hits.length} hits do not mention "${a.everyHitContains}"`);
     }
   }
+  if (a.someHitLacksWord) {
+    const word = wholeWord(a.someHitLacksWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    // Exact hits only. A trigram near-match can also lack the word, and
+    // counting one would let this pass with lemmatisation switched off.
+    const exact = hits.filter((h) => !h.isFuzzy);
+    const inflected = exact.filter((h) => !word.test(hitText(h)));
+    if (exact.length === 0) {
+      failures.push(`expected an exact hit found through inflection, got no exact hits at all`);
+    } else if (inflected.length === 0) {
+      failures.push(
+        `every exact hit spells "${a.someHitLacksWord}" out in full, so nothing was found ` +
+          `through its inflected forms — is the BÍN dictionary loaded?`
+      );
+    }
+  }
+  if (a.everyHitContainsAnyOf) {
+    const forms = a.everyHitContainsAnyOf.map((f) =>
+      wholeWord(f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    );
+    const stray = hits.filter((h) => {
+      const text = hitText(h);
+      return !forms.some((f) => f.test(text));
+    });
+    if (stray.length) {
+      failures.push(
+        `${stray.length}/${hits.length} hits contain none of ` +
+          `${a.everyHitContainsAnyOf.join(", ")} — lemma matching may be too wide ` +
+          `(e.g. ${stray[0].caseNumber ?? stray[0].title.slice(0, 40)})`
+      );
+    }
+  }
   if (a.noHitContains) {
     const needle = a.noHitContains.toLowerCase();
-    const offending = hits.filter((h) =>
-      `${h.title} ${h.snippet} ${h.summary ?? ""}`.toLowerCase().includes(needle)
-    );
+    const offending = hits.filter((h) => hitText(h).toLowerCase().includes(needle));
     if (offending.length) {
       failures.push(`${offending.length} hits contain the excluded term "${a.noHitContains}"`);
     }
@@ -202,6 +271,24 @@ async function checkActAssertion(c: EvalCase): Promise<string[]> {
 
 function pct(x: number): string {
   return `${(x * 100).toFixed(1)}%`;
+}
+
+/**
+ * How many surface forms the BÍN dictionary holds, or null when the table is
+ * not there at all.
+ *
+ * Checked before the run because the inflection cases cannot pass without it,
+ * and N assertion failures reading "nothing was found through its inflected
+ * forms" is a far worse way to learn that `db:load-bin` has not been run than
+ * one line saying so.
+ */
+async function dictionarySize(): Promise<number | null> {
+  try {
+    const rows = await prisma.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM bin_lemma`;
+    return Number(rows[0]?.n ?? 0);
+  } catch {
+    return null;
+  }
 }
 
 async function main() {
@@ -237,6 +324,33 @@ async function main() {
 
   const provider = getSearchProvider();
   const providerName = process.env.SEARCH_PROVIDER ?? "postgres";
+
+  // Warned about, not skipped over: an inflection case failing because the
+  // dictionary is missing is still a real failure of this deployment's search,
+  // and silently excluding those cases would report a green run over a corpus
+  // that cannot match an inflected word.
+  const needsDictionary = cases.some((c) => c.assert?.someHitLacksWord);
+  if (needsDictionary && providerName === "postgres") {
+    const forms = await dictionarySize();
+    if (forms === null) {
+      console.warn(
+        "! bin_lemma does not exist, so every inflection case below will fail.\n" +
+          "  Run: npm run db:setup-lemmas && npm run db:load-bin -- --rebuild\n"
+      );
+    } else if (forms === 0) {
+      console.warn(
+        "! bin_lemma is empty, so every inflection case below will fail.\n" +
+          "  Run: npm run db:load-bin -- --rebuild\n"
+      );
+    }
+  } else if (needsDictionary) {
+    console.warn(
+      `! provider is ${providerName}, which does its own tokenising — the lemma\n` +
+        "  vectors are a Postgres-only feature, so the inflection cases below\n" +
+        "  measure that provider's built-in handling instead.\n"
+    );
+  }
+
   const results: CaseResult[] = [];
 
   for (const c of cases) {

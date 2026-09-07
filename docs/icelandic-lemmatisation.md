@@ -201,6 +201,9 @@ BinPackage itself is MIT, © Miðeind ehf.
 - **Meilisearch.** The other provider has its own tokenising and typo
   tolerance and is untouched by this. A deployment on `SEARCH_PROVIDER=meilisearch`
   gets none of the above.
-- **Measuring it.** There are assertions in `src/search-eval` this ought to be
-  checked against, and no graded case yet that specifically tests inflection
-  recall. That belongs with the evaluation work in `docs/well-roadmap.md`.
+- **Graded** inflection cases. `src/search-eval` now carries seven assertion
+  cases in `category: "inflection"` — see *search-evaluation.md* — which prove
+  the mechanism works and, deliberately, fail when the dictionary is missing.
+  What they cannot say is how much recall this added; that needs hand-labelled
+  `relevant` entries over the real corpus, and belongs with the phase-0 work in
+  *well-roadmap.md*.
