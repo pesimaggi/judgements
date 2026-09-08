@@ -11,6 +11,8 @@ import type {
   ProvisionHit,
 } from "../types";
 import { actCitation, actDisplayTitle, actPath, scopeFilter } from "../acts";
+import { lemmaQuery, queryWords } from "../lemma";
+import { lookupLemmas } from "../lemma-lookup";
 import type { SearchProvider, ProviderResult } from "./provider";
 
 /**
@@ -30,6 +32,66 @@ export const COUNT_CAP = 10_000;
 const HEADLINE_MAX_CHARS = 60_000;
 
 /**
+ * How many of a lemma's surface forms are added to the highlighting query.
+ *
+ * A noun has at most sixteen; a verb has well over a hundred, and a headline
+ * query carrying every form of five verbs is a large tsquery run against every
+ * matching judgment. The cap keeps that bounded, and the forms are sorted so
+ * which ones survive it is at least deterministic.
+ */
+const MAX_HEADLINE_FORMS = 40;
+
+/**
+ * A lemma match is worth marginally less than an exact one.
+ *
+ * Not because it is weaker evidence — in Icelandic the surface form is chosen
+ * by grammar, not by the writer, so `ríkisborgararéttar` is no less about
+ * citizenship than `ríkisborgararéttur` is. It is so that adding this path
+ * cannot reorder results that already matched exactly: with the discount, a
+ * document matching both still ranks on its exact score, and the documents
+ * this newly finds sort in among them rather than above them.
+ */
+const LEMMA_RANK_DISCOUNT = 0.9;
+
+interface LemmaMatch {
+  /** The query rewritten to lemmas, or null when there is nothing to gain. */
+  query: string | null;
+  /** An OR of the query's words and their sibling forms, for ts_headline. */
+  headline: string | null;
+}
+
+/**
+ * The lemma half of a search: the rewritten query, and the surface forms that
+ * make its results highlight properly.
+ *
+ * Returns nulls — meaning "run the search exactly as it ran before" — for a
+ * phrase query, an empty query, a query no word of which is in BÍN, and any
+ * failure of the lookup. Every caller is written so that those nulls simply
+ * omit the extra SQL. See lib/lemma.ts for why phrases are excluded.
+ */
+async function lemmaMatch(websearch: string): Promise<LemmaMatch> {
+  const words = queryWords(websearch);
+  if (words.length === 0) return { query: null, headline: null };
+
+  const { lemmas, siblings } = await lookupLemmas(words);
+  const query = lemmaQuery(websearch, lemmas);
+  if (!query) return { query: null, headline: null };
+
+  // OR, not AND: this string is only ever handed to ts_headline, whose job is
+  // to mark whatever of the query is present. Requiring every form to appear
+  // would mark nothing at all.
+  const forms = new Set<string>(words);
+  for (const [, candidates] of lemmas) {
+    const sib = siblings.get(candidates[0]);
+    for (const form of (sib ?? []).slice(0, MAX_HEADLINE_FORMS)) forms.add(form);
+  }
+  // A form carrying websearch's own operators would be read as syntax.
+  const safe = Array.from(forms).filter((f) => /^[\p{L}\p{N}-]+$/u.test(f));
+
+  return { query, headline: safe.length ? safe.join(" OR ") : null };
+}
+
+/**
  * Default provider. Uses:
  *  - websearch_to_tsquery('simple', ...) → phrases ("..."), implicit AND,
  *    OR, and -negation, with Icelandic characters preserved.
@@ -42,6 +104,9 @@ const HEADLINE_MAX_CHARS = 60_000;
 export class PostgresSearchProvider implements SearchProvider {
   async search(req: SearchRequest): Promise<ProviderResult> {
     const parsed = parseQuery(req.query);
+    const lemma = parsed.websearch
+      ? await lemmaMatch(parsed.websearch)
+      : { query: null, headline: null };
     const page = Math.max(1, req.page ?? 1);
     const pageSize = Math.min(50, Math.max(1, req.pageSize ?? 15));
     const offset = (page - 1) * pageSize;
@@ -99,6 +164,16 @@ export class PostgresSearchProvider implements SearchProvider {
       indexedMatchParts.push(fts);
       exactMatchParts.push(fts);
     }
+    // Icelandic inflection, over the second GIN-indexed vector. Counted as an
+    // *exact* match rather than a fuzzy one: this is the same word in a
+    // different case, which is a far stronger claim than the trigram
+    // near-match below, and labelling these hits "near match" in the UI would
+    // put a warning on results that are simply correct.
+    if (lemma.query) {
+      const lemmaFts = Prisma.sql`d.lemma_vector @@ websearch_to_tsquery('simple', ${lemma.query})`;
+      indexedMatchParts.push(lemmaFts);
+      exactMatchParts.push(lemmaFts);
+    }
     for (const cn of parsed.caseNumbers) {
       const exact = Prisma.sql`d.case_number ILIKE ${cn}`;
       indexedMatchParts.push(exact);
@@ -117,9 +192,18 @@ export class PostgresSearchProvider implements SearchProvider {
       ? Prisma.sql`NOT (${Prisma.join(exactMatchParts, " OR ")})`
       : Prisma.sql`FALSE`;
 
-    const rankExpr = parsed.websearch
-      ? Prisma.sql`ts_rank(d.search_vector, websearch_to_tsquery('simple', ${parsed.websearch}))`
-      : Prisma.sql`0`;
+    // The greater of the two scores, not the exact one alone: a judgment found
+    // only through its inflected forms scores zero against the plain vector,
+    // so without this every document the lemma path newly finds would sort
+    // below every document that was already being found.
+    const rankExpr = !parsed.websearch
+      ? Prisma.sql`0`
+      : lemma.query
+        ? Prisma.sql`greatest(
+            ts_rank(d.search_vector, websearch_to_tsquery('simple', ${parsed.websearch})),
+            ts_rank(d.lemma_vector, websearch_to_tsquery('simple', ${lemma.query})) * ${LEMMA_RANK_DISCOUNT}
+          )`
+        : Prisma.sql`ts_rank(d.search_vector, websearch_to_tsquery('simple', ${parsed.websearch}))`;
 
     const order =
       req.sort === "newest"
@@ -128,8 +212,16 @@ export class PostgresSearchProvider implements SearchProvider {
           ? Prisma.sql`d.date ASC NULLS LAST`
           : Prisma.sql`rank DESC, d.date DESC NULLS LAST`;
 
+    // Highlighted against the query's words *and every surface form sharing
+    // their lemma*, so the word actually written in the judgment is the one
+    // marked. Without the expansion a lemma-only hit arrives with an
+    // unhighlighted snippet, which reads as a broken result rather than a
+    // wider search. See lemmaMatch.
+    const headlineQuery = lemma.headline
+      ? `${parsed.websearch} OR ${lemma.headline}`
+      : parsed.websearch;
     const headlineExpr = parsed.websearch
-      ? Prisma.sql`ts_headline('simple', left(p.full_text, ${HEADLINE_MAX_CHARS}::int), websearch_to_tsquery('simple', ${parsed.websearch}),
+      ? Prisma.sql`ts_headline('simple', left(p.full_text, ${HEADLINE_MAX_CHARS}::int), websearch_to_tsquery('simple', ${headlineQuery}),
           'StartSel=<mark>, StopSel=</mark>, MaxFragments=2, FragmentDelimiter= … , MinWords=8, MaxWords=28')`
       : Prisma.sql`left(p.full_text, 240)`;
 
@@ -365,9 +457,19 @@ export async function searchProvisionsPostgres(
   )`);
 
   const q = req.query.trim();
+  const lemma = parsed.websearch
+    ? await lemmaMatch(parsed.websearch)
+    : { query: null, headline: null };
   const match: Prisma.Sql[] = [];
   if (parsed.websearch) {
     match.push(Prisma.sql`p.search_vector @@ websearch_to_tsquery('simple', ${parsed.websearch})`);
+  }
+  // The inflected form of the same word. This matters more here than it does
+  // for judgments: the well's planner is asked for the term the legislation
+  // uses and produces the dictionary form, while an act's text says
+  // "réttar til", "réttinum", "réttar". See lib/ask/plan.ts.
+  if (lemma.query) {
+    match.push(Prisma.sql`p.lemma_vector @@ websearch_to_tsquery('simple', ${lemma.query})`);
   }
   // "5. gr.", "5 gr", or just "5" when an act is already selected.
   const artNum = /^(\d+)\s*\.?\s*(?:gr\.?)?\s*([a-záðéíóúýþæö])?\.?$/i.exec(q);
@@ -392,9 +494,14 @@ export async function searchProvisionsPostgres(
   // column position, not as a value, and errors with "ORDER BY position 0 is
   // not in select list" — which is the empty-query path the provision picker
   // uses to list an act's provisions before anything is typed.
-  const rank = parsed.websearch
-    ? Prisma.sql`ts_rank(p.search_vector, websearch_to_tsquery('simple', ${parsed.websearch}))`
-    : Prisma.sql`0::float`;
+  const rank = !parsed.websearch
+    ? Prisma.sql`0::float`
+    : lemma.query
+      ? Prisma.sql`greatest(
+          ts_rank(p.search_vector, websearch_to_tsquery('simple', ${parsed.websearch})),
+          ts_rank(p.lemma_vector, websearch_to_tsquery('simple', ${lemma.query})) * ${LEMMA_RANK_DISCOUNT}
+        )`
+      : Prisma.sql`ts_rank(p.search_vector, websearch_to_tsquery('simple', ${parsed.websearch}))`;
 
   // Typing "6" into the provision picker means article 6, not "any provision
   // whose text mentions 6" — and every long provision mentions some number.

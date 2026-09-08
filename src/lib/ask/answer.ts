@@ -20,6 +20,7 @@ import { getAskModel, type AskModel, type AskEffort, type AskUsage } from "./llm
 import { askConfig, type AskConfig } from "./config";
 import { classifyComplexity, type Complexity } from "./complexity";
 import { validateCitations } from "./citations";
+import { LineValidator } from "./stream";
 import type { AskSource, AskTurn, AskResponse, QueryPlan } from "./types";
 import type { Retrieval } from "./retrieve";
 
@@ -147,6 +148,21 @@ export interface AnswerOptions {
   onUsage?: (usage: AskUsage) => void;
   /** Reported back so the caller can log what was actually chosen. */
   onDecision?: (decision: { effort: AskEffort; complexity: Complexity }) => void;
+  /**
+   * Called with each complete line of the answer as it is written, already
+   * validated.
+   *
+   * Passing it switches the model call to streaming. What arrives has been
+   * through lib/ask/citations.ts a line at a time, so a citation to a source
+   * that does not exist is deleted before the reader sees it rather than
+   * after — see lib/ask/stream.ts for why that is equivalent to checking the
+   * finished answer, and stream.test.ts for the assertion that it is.
+   *
+   * The return value of this function is unchanged either way: the whole
+   * answer is still validated in one pass below, which is what the evaluation
+   * harness measures.
+   */
+  onLine?: (text: string) => void;
 }
 
 /**
@@ -188,6 +204,13 @@ export async function answer(
   const effort = options.effort ?? decision.effort;
   options.onDecision?.({ ...decision, effort });
 
+  // Built before the call because the set of valid source numbers is what
+  // validation needs, and retrieval has already finished — which is the fact
+  // that makes streaming safe at all.
+  const lines = options.onLine
+    ? new LineValidator(retrieval.sources, plan.language)
+    : null;
+
   const text = await model.complete({
     system: answerSystemPrompt(plan.language),
     // Earlier turns come along so a follow-up reads as one, but the sources
@@ -196,7 +219,14 @@ export async function answer(
     maxTokens: config.answerMaxTokens,
     effort,
     onUsage: options.onUsage,
+    onDelta: lines
+      ? (delta) => {
+          for (const line of lines.push(delta)) options.onLine!(line);
+        }
+      : undefined,
   });
+  // The last line carries no newline of its own.
+  if (lines) for (const line of lines.flush()) options.onLine!(line);
 
   // An empty completion is a failure with a cause — a ceiling spent entirely on
   // reasoning tokens, a filtered response, a provider hiccup — and the reader

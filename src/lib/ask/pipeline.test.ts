@@ -22,7 +22,7 @@ import { AskTimeout } from "@/lib/ask/timeout";
 import { askConfig } from "@/lib/ask/config";
 import type { AskModel } from "@/lib/ask/llm";
 import type { Retrieval } from "@/lib/ask/retrieve";
-import type { AskSource } from "@/lib/ask/types";
+import type { AskEvent, AskSource } from "@/lib/ask/types";
 
 const SOURCES: AskSource[] = [
   { n: 1, kind: "provision", title: "8. gr. laga nr. 100/1952", subtitle: "…", path: "/log/100-1952#G8", cited: false },
@@ -376,5 +376,129 @@ describe("historical law", () => {
     assert.match(prompt, /current consolidated text/);
     assert.equal(response.limitations?.length, 1);
     assert.equal(metrics.historical, true);
+  });
+});
+
+describe("streaming events", () => {
+  /** A model that streams its answer in small pieces, as a real one does. */
+  function streamingModel(answer: string): AskModel {
+    return model({
+      complete: async (req) => {
+        for (const chunk of answer.match(/.{1,7}/gs) ?? []) req.onDelta?.(chunk);
+        return answer;
+      },
+    });
+  }
+
+  test("the stages report in order: plan, then sources, then lines, then the answer", async () => {
+    const events: AskEvent[] = [];
+    await ask("Hvernig sæki ég um ríkisborgararétt?", [], {
+      ...QUIET,
+      retrieve: async () => retrieval(),
+      model: streamingModel("Svarið er þetta [1].\n\n## Ákvæðin\n\nHeimilt er að veita [1]."),
+      onEvent: (e) => events.push(e),
+    });
+
+    const order = events.map((e) => e.type);
+    assert.equal(order[0], "plan");
+    assert.equal(order[1], "sources");
+    assert.equal(order[order.length - 1], "answer");
+    assert.ok(order.slice(2, -1).every((t) => t === "line"), `unexpected: ${order.join(",")}`);
+  });
+
+  test("the plan event names the terms the corpus will be searched for", async () => {
+    const events: AskEvent[] = [];
+    await ask("Hvernig sæki ég um ríkisborgararétt?", [], {
+      ...QUIET,
+      retrieve: async () => retrieval(),
+      model: streamingModel("Svarið [1]."),
+      onEvent: (e) => events.push(e),
+    });
+
+    const plan = events.find((e) => e.type === "plan");
+    assert.ok(plan && plan.type === "plan");
+    assert.deepEqual(plan.terms, ["ríkisborgararéttur"]);
+    assert.equal(plan.language, "is");
+  });
+
+  test("the streamed lines reassemble into the answer that is returned", async () => {
+    // The property that matters to a reader: what they watched being written
+    // is what they are left with. If these diverge the client would visibly
+    // rewrite the answer at the end.
+    const events: AskEvent[] = [];
+    const { response } = await ask("Hvernig?", [], {
+      ...QUIET,
+      retrieve: async () => retrieval(),
+      model: streamingModel("Svarið er þetta [1].\n\n## Ákvæðin\n\nHeimilt er að veita [1]."),
+      onEvent: (e) => events.push(e),
+    });
+
+    const streamed = events
+      .filter((e): e is Extract<AskEvent, { type: "line" }> => e.type === "line")
+      .map((e) => e.text)
+      .join("\n");
+    assert.equal(streamed, response.answer);
+  });
+
+  test("a citation to a source that does not exist is never streamed", async () => {
+    const events: AskEvent[] = [];
+    await ask("Hvernig?", [], {
+      ...QUIET,
+      retrieve: async () => retrieval(),
+      // Only two sources came back; [9] does not exist.
+      model: streamingModel("Umsækjandi skal uppfylla skilyrði [9]."),
+      onEvent: (e) => events.push(e),
+    });
+
+    for (const e of events) {
+      if (e.type === "line") assert.ok(!e.text.includes("[9]"), `leaked: ${e.text}`);
+    }
+  });
+
+  test("an event handler that throws does not fail the question", async () => {
+    // The ordinary case is a reader who navigated away mid-answer, closing the
+    // connection the handler writes to.
+    const { response } = await ask("Hvernig?", [], {
+      ...QUIET,
+      retrieve: async () => retrieval(),
+      model: streamingModel("Svarið er þetta [1]."),
+      onEvent: () => {
+        throw new Error("connection closed");
+      },
+    });
+    assert.match(response.answer, /Svarið/);
+  });
+
+  test("without onEvent the answer stage does not stream at all", async () => {
+    // Guards the promise made to the evaluation harness: no handler, no
+    // streaming, one call, same behaviour as before any of this existed.
+    let streamed = false;
+    await ask("Hvernig?", [], {
+      ...QUIET,
+      retrieve: async () => retrieval(),
+      model: model({
+        complete: async (req) => {
+          streamed = req.onDelta !== undefined;
+          return "Svarið er þetta [1].";
+        },
+      }),
+    });
+    assert.equal(streamed, false);
+  });
+
+  test("an abstention still arrives, as the answer event", async () => {
+    const events: AskEvent[] = [];
+    await ask("hvað er klukkan?", [], {
+      ...QUIET,
+      retrieve: async () => retrieval({ sources: [], context: "", evidence: new Map() }),
+      model: streamingModel(""),
+      onEvent: (e) => events.push(e),
+    });
+
+    const last = events[events.length - 1];
+    assert.ok(last.type === "answer");
+    assert.equal(last.response.abstained, true);
+    // Nothing was written, so nothing should have been streamed as prose.
+    assert.equal(events.filter((e) => e.type === "line").length, 0);
   });
 });

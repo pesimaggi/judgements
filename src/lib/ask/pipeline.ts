@@ -27,7 +27,7 @@ import { answer } from "./answer";
 import { verifyAnswer } from "./verify";
 import { AskMetricsRecorder, logAskMetrics, type AskMetrics } from "./metrics";
 import { withTimeout, withTimeoutOr } from "./timeout";
-import type { AskResponse, AskTurn } from "./types";
+import type { AskEvent, AskResponse, AskTurn } from "./types";
 
 export interface AskOptions {
   scope?: "eea" | "eu";
@@ -35,6 +35,20 @@ export interface AskOptions {
   config?: AskConfig;
   /** Skips the metrics line — the evaluation harness reports its own. */
   quiet?: boolean;
+  /**
+   * Called as each stage produces something a reader could be shown.
+   *
+   * Purely additive: with no `onEvent` this function behaves exactly as it did
+   * before — one request, one response — which is what the evaluation harness
+   * runs and why it can keep measuring the same thing. With one, the same
+   * stages in the same order also report as they finish, and the answer stage
+   * streams line by line.
+   *
+   * Never throws into the pipeline: an event handler that fails is the
+   * caller's problem, not a reason to fail a question that was answered. See
+   * `emit`.
+   */
+  onEvent?: (event: AskEvent) => void;
   /**
    * Stands in for the retrieval stage.
    *
@@ -58,6 +72,21 @@ export async function ask(
   options: AskOptions = {}
 ): Promise<AskResult> {
   const config = options.config ?? askConfig();
+  /**
+   * Sends one event, and swallows anything the handler throws.
+   *
+   * A closed connection is the ordinary case here — the reader navigated away
+   * mid-answer — and it must not turn into a failed request in the log or an
+   * exception that skips the metrics line.
+   */
+  const emit = (event: AskEvent): void => {
+    if (!options.onEvent) return;
+    try {
+      options.onEvent(event);
+    } catch (e) {
+      console.error("Ask: event handler threw, continuing:", e);
+    }
+  };
   const model = options.model ?? getAskModel();
   const metrics = new AskMetricsRecorder();
 
@@ -81,6 +110,16 @@ export async function ask(
     metrics.stages.planned = true;
     metrics.language = plan.language;
     metrics.historical = plan.historical;
+    // The first thing that can be shown, and the most reassuring: it says the
+    // question was understood and names the words the corpus is about to be
+    // searched for.
+    emit({
+      type: "plan",
+      language: plan.language,
+      standalone: plan.standalone,
+      terms: [...plan.actQueries, ...plan.provisionQueries, ...plan.phrases, ...plan.concepts],
+      historical: plan.historical,
+    });
 
     // ---- retrieve --------------------------------------------------------
     const runRetrieval = options.retrieve
@@ -109,6 +148,10 @@ export async function ask(
     metrics.acts = retrieval.counts.acts;
     metrics.provisions = retrieval.counts.provisions;
     metrics.decisions = retrieval.counts.decisions;
+    // `cited` is false on every one of these: nothing has been written yet, so
+    // nothing has been cited yet. The final "answer" event carries the same
+    // sources with that filled in.
+    emit({ type: "sources", sources: retrieval.sources });
 
     // ---- answer ----------------------------------------------------------
     const response = await metrics.time("answer", () =>
@@ -121,6 +164,9 @@ export async function ask(
             metrics.complex = complexity.complex;
             metrics.complexitySignals = complexity.signals;
           },
+          // Only when somebody is listening. Without this the answer stage
+          // makes a single unstreamed call, as it always did.
+          onLine: options.onEvent ? (text) => emit({ type: "line", text }) : undefined,
         }),
         config.timeouts.answer,
         "answer"
@@ -163,7 +209,13 @@ export async function ask(
 
     const snapshot = metrics.snapshot();
     if (!options.quiet) logAskMetrics(snapshot);
-    return { response: { ...final, requestId: metrics.requestId }, metrics: snapshot };
+    const finalResponse = { ...final, requestId: metrics.requestId };
+    // Supersedes the streamed lines. Normally identical to them — but the
+    // optional verifier runs after the answer is complete and can qualify a
+    // line the reader has already been shown, and an abstention never streamed
+    // at all.
+    emit({ type: "answer", response: finalResponse });
+    return { response: finalResponse, metrics: snapshot };
   } catch (e) {
     metrics.fail(e);
     const snapshot = metrics.snapshot();

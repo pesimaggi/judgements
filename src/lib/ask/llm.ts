@@ -81,6 +81,19 @@ export interface CompleteRequest {
   effort: AskEffort;
   /** Called once, with what the provider reported, when it reports anything. */
   onUsage?: (usage: AskUsage) => void;
+  /**
+   * Called with each chunk of visible text as it arrives.
+   *
+   * Passing this switches the provider to its streaming endpoint; leaving it
+   * off keeps the single request/response call exactly as it was, which is
+   * what the evaluation harness and every non-interactive caller use. The
+   * return value is identical either way — the complete answer — so nothing
+   * downstream of `complete()` has to know which path ran.
+   *
+   * Never the whole answer so far: only the new text. And never thinking
+   * tokens, which are not the answer and must not reach a reader.
+   */
+  onDelta?: (text: string) => void;
 }
 
 export interface ExtractRequest<T> {
@@ -208,19 +221,29 @@ class AnthropicAskModel implements AskModel {
   private model = askModelId("anthropic");
 
   async complete(req: CompleteRequest): Promise<string> {
-    const response = await this.client.beta.messages.create({
+    const params = {
       model: this.model,
       max_tokens: req.maxTokens,
       betas: [FALLBACK_BETA],
-      fallbacks: "default",
-      thinking: { type: "adaptive" },
+      fallbacks: "default" as const,
+      thinking: { type: "adaptive" as const },
       output_config: { effort: req.effort },
       // The system prompt is the same on every question and sits first in the
       // request, so caching it costs one write and is read back on every
       // question after it.
-      system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }],
+      system: [
+        { type: "text" as const, text: req.system, cache_control: { type: "ephemeral" as const } },
+      ],
       messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
-    });
+    };
+
+    // The streamed and unstreamed paths converge on the same BetaMessage, so
+    // the refusal and usage handling below is written once. `finalMessage()`
+    // is what makes that possible — it resolves to the complete message even
+    // though the text has already been handed out in pieces.
+    const response = req.onDelta
+      ? await this.streamed(params, req.onDelta)
+      : await this.client.beta.messages.create(params);
 
     // Checked before the content is read: on a refusal `content` carries no
     // answer, and treating it as an empty string would put a blank card in
@@ -236,6 +259,28 @@ class AnthropicAskModel implements AskModel {
       .map((block) => block.text)
       .join("")
       .trim();
+  }
+
+  /**
+   * The same call, streamed.
+   *
+   * Only `text` deltas are forwarded. Thinking is on (adaptive) and its
+   * summaries arrive as their own delta type — they are the model reasoning
+   * about the answer, not the answer, and putting them in front of a reader
+   * as legal prose would be indefensible.
+   *
+   * A refusal mid-stream still resolves through `finalMessage()`, so it is
+   * handled by the shared code above rather than separately here.
+   */
+  private async streamed(
+    params: Parameters<typeof this.client.beta.messages.create>[0] & object,
+    onDelta: (text: string) => void
+  ): Promise<Anthropic.Beta.BetaMessage> {
+    const stream = this.client.beta.messages.stream(
+      params as Parameters<typeof this.client.beta.messages.stream>[0]
+    );
+    stream.on("text", onDelta);
+    return stream.finalMessage();
   }
 
   async extract<T>(req: ExtractRequest<T>): Promise<T | null> {
@@ -291,6 +336,8 @@ class OpenAIAskModel implements AskModel {
   }
 
   async complete(req: CompleteRequest): Promise<string> {
+    if (req.onDelta) return this.streamed(req, req.onDelta);
+
     const response = await this.client.chat.completions.create({
       model: this.model,
       max_completion_tokens: req.maxTokens,
@@ -303,6 +350,45 @@ class OpenAIAskModel implements AskModel {
     const choice = response.choices[0];
     if (choice?.finish_reason === "content_filter") throw new AskRefusal();
     return choice?.message?.content?.trim() ?? "";
+  }
+
+  /**
+   * The same call, streamed.
+   *
+   * `include_usage` is asked for explicitly: on this API a streamed response
+   * reports usage only in a final chunk that carries no choices, and without
+   * the flag it is not reported at all — which would silently blank the token
+   * counts in the metrics line for every streamed question.
+   */
+  private async streamed(req: CompleteRequest, onDelta: (text: string) => void): Promise<string> {
+    const stream = await this.client.chat.completions.create({
+      model: this.model,
+      max_completion_tokens: req.maxTokens,
+      reasoning_effort: req.effort,
+      messages: this.messages(req),
+      stream: true,
+      stream_options: { include_usage: true },
+    });
+
+    let text = "";
+    let filtered = false;
+
+    for await (const chunk of stream) {
+      if (chunk.usage) reportOpenAIUsage(req.onUsage, chunk.usage);
+      const choice = chunk.choices[0];
+      if (!choice) continue;
+      if (choice.finish_reason === "content_filter") filtered = true;
+      const delta = choice.delta?.content;
+      if (delta) {
+        text += delta;
+        onDelta(delta);
+      }
+    }
+
+    // Raised after the stream is drained rather than mid-loop, so usage from
+    // the final chunk is still reported for a request that was filtered.
+    if (filtered) throw new AskRefusal();
+    return text.trim();
   }
 
   async extract<T>(req: ExtractRequest<T>): Promise<T | null> {

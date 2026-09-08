@@ -31,6 +31,8 @@ answer is:
 | `everyHitContains` | a quoted phrase being matched as loose words |
 | `noHitContains` | `NOT` no longer excluding |
 | `topHitIsExact` | a trigram near-match being served as the answer |
+| `someHitLacksWord` | Icelandic inflection matching regressing — see below |
+| `everyHitContainsAnyOf` | the same going too wide |
 
 These run today and catch most of what actually goes wrong. A ranking
 regression that empties a common query shows up here long before it shows up
@@ -138,3 +140,86 @@ The `topHitIsExact` assertion holds this down on the case-number cases.
 inside the engine and does not report whether a hit needed it, so `isFuzzy` is
 always false under `SEARCH_PROVIDER=meilisearch` and the mark never appears.
 Worth weighing if you ever compare the two on anything but ranking numbers.
+
+## The inflection cases
+
+`category: "inflection"` measures the one thing this corpus needs most and the
+one thing an assertion can prove without a single hand-labelled document.
+
+The property is simple: **at least one exact hit must not contain the queried
+word at all.** A hit that is an exact match — not a trigram near-match — and
+does not contain the word can only have been found through a shared lemma. That
+is `someHitLacksWord`, and before `prisma/sql/setup-lemmas.sql` existed no query
+could satisfy it.
+
+Two details in it are load-bearing.
+
+**It matches whole words, not substrings.** Icelandic inflection is largely
+suffixal, so `stjórnsýslulög` is a *substring* of `stjórnsýslulögum`. A naive
+`includes` check would pass this assertion on a corpus with no lemmatisation
+whatsoever, which is worse than not having the assertion.
+
+**It ignores fuzzy hits.** `pg_trgm` will also find a hit that lacks the word.
+Counting one would let the case pass with the dictionary switched off.
+
+`everyHitContainsAnyOf` watches the other direction. `someHitLacksWord` fails
+when lemma matching is too narrow; this fails when it is too wide — a
+decomposition that reduced a compound to a common stem would match half the
+corpus, and none of those hits would contain any real form of the word.
+
+The queries were chosen from BÍN's actual inflection tables rather than from
+memory, and favour words whose **stem changes**, because those are the ones no
+prefix, substring or trigram match can reach:
+
+| Query | What the judgments actually write |
+|---|---|
+| `dráttarvextir` | `dráttarvaxta`, `dráttarvöxtum` |
+| `stjórnsýslulög` | `stjórnsýslulaga`, `stjórnsýslulögum` |
+| `uppsögn` | `uppsagnar`, `uppsagnarinnar` |
+| `skaðabætur` | `skaðabóta`, `skaðabótum` |
+
+`skaðabætur` is the one worth understanding. BÍN lemmatises it to the
+**singular** `skaðabót` — so the word a lawyer types is not the lemma, it is
+merely mapped to one, and from there reaches forms that share almost nothing
+with it. No hand-written synonym list would have produced that.
+
+`inflection-phrase-untouched` guards the opposite promise: a quoted phrase is
+deliberately never lemmatised, and must keep behaving exactly as it did before.
+
+### Running them
+
+They need the dictionary. Without it the run says so once, in a line, rather
+than producing several failures that read like a ranking problem:
+
+```
+! bin_lemma is empty, so every inflection case below will fail.
+  Run: npm run db:load-bin -- --rebuild
+```
+
+They are not skipped in that state. An inflection case failing because the
+dictionary is missing is a real failure of that deployment's search, and
+quietly excluding them would report a green run over a corpus that cannot match
+an inflected word. On `SEARCH_PROVIDER=meilisearch` the warning says instead
+that these are measuring that provider's own tokenising, since the lemma
+vectors are Postgres-only.
+
+### One thing found while writing them
+
+`everyHitContains` and `noHitContains` were comparing against the raw snippet,
+which is a `ts_headline` string with the matched terms wrapped in `<mark>`. A
+two-word phrase therefore arrived as
+`<mark>greiðslu</mark> <mark>málskostnaðar</mark>` and never matched a substring
+test for `greiðslu málskostnaðar`.
+
+Single-word assertions survive it by luck — `<mark>x</mark>` still contains `x`
+— which is why it went unnoticed: the bug is invisible until an assertion spans
+more than one word. Both now compare against `hitText()`, which strips the
+markup first.
+
+### What is still missing
+
+No **graded** inflection cases. The assertions prove the mechanism works; they
+do not say how much recall it added, which needs `relevant: [{officialUrl,
+grade}]` labels over the real corpus. `npm run eval:search -- --record` prints
+the stubs. That is the phase-0 work in *well-roadmap.md*, and it is where a
+number like "governing provision in the top 5" would come from.

@@ -21,10 +21,11 @@ The three Icelandic courts published at [island.is/domar](https://island.is/doma
 - **Specific search** — alongside the keyword search, two live lookups that narrow the results, each accepting several selections that combine as AND: an act/provision box that takes the citation as it is written ("lög um aðbúnað og hollustuhætti" finds the cases about the act; "57. gr. a. laga um aðbúnað og hollustuhætti" narrows to the cases citing that article), and a subject-tag box. Acts match on title, citation number, or the short names judgments actually use — "vaxtalög" finds lög nr. 38/2001.
 - **Administrative case law** — the úrskurðarnefndir, kærunefndir and ministry appeal desks at stjornarradid.is, each board its own tickable source rather than one undifferentiated pile. For immigration, benefits, tenancy, procurement and freedom of information this is where the case law actually is, and a search of the courts alone would miss it. See *Úrskurðarnefndir og ráðuneyti* below.
 - **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`. `Act` holds both jurisdictions: `jurisdiction` and `docType` say which corpus and which instrument, and an EU act adds its CELEX, its citation, its EEA marker and the Joint Committee decisions naming it.
+- **Icelandic lemmatisation** — the search index is built twice: once on the words as written, and once on their lemmas, mapped through [BÍN](https://bin.arnastofnun.is/). Icelandic inflects a noun into as many as sixteen forms, and the `simple` text-search configuration does no stemming, so `ríkisborgararéttur` used to find none of `ríkisborgararéttar`, `ríkisborgararétti` or `ríkisborgararéttinum`. Both vectors are searched; the exact one is unchanged, so nothing that matched before stopped matching. See *docs/icelandic-lemmatisation.md*.
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
 - **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force Icelandic act; `eur-lex` ingests the EU regulations and directives in force from the Publications Office; `cjeu` ingests the judgments of the Court of Justice and the General Court from the same endpoint; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `eea-joint-committee` ingests the EEA Joint Committee's decisions (their own text, one record each); `eftasurv` ingests the EFTA Surveillance Authority's ~6,725 public documents; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court, both halves of it; `uua` ingests Úrskurðarnefnd umhverfis- og auðlindamála (~3,000 planning and environmental rulings, on its own site); `obyggdanefnd` ingests the þjóðlendu commission's 84 úrskurðir; `neytendamal` ingests Áfrýjunarnefnd neytendamála; `yfirskattanefnd` ingests the tax appeal board's 4,175 úrskurðir back to 1973, ríkisskattanefnd's included; `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
 - **Scholarly commentary** — Tímarit Lögréttu and Vefrit Úlfljóts, searched alongside the case law rather than in a separate silo, so a query about an unsettled point returns both the judgments and the articles arguing about them. Articles are indexed in full but read at the journal that published them: their cards and pages link out rather than reproducing the text here.
-- **The well** — an assistant that answers a question in prose instead of returning a result list. Drop a question in ("Hvernig sæki ég um íslenskan ríkisborgararétt?") and it runs a handful of focused searches over the acts, the provisions and every decision source, ranks what comes back by authority as well as by relevance, and writes an answer in the language you asked in with a numbered citation on every proposition — each one a link to the article or the judgment it rests on. It opens as a split screen: the conversation on one side, the law it found on the other, each source carrying the passage it was selected for. It answers only from what the search returned; a citation to a source that does not exist is removed rather than renumbered, and a statement of law with nothing behind it is marked as unverified in the answer you read. Off unless an LLM API key is configured; OpenAI and Anthropic are both supported and swap with one variable. See *Asking the well* below.
+- **The well** — an assistant that answers a question in prose instead of returning a result list. Drop a question in ("Hvernig sæki ég um íslenskan ríkisborgararétt?") and it runs a handful of focused searches over the acts, the provisions and every decision source, ranks what comes back by authority as well as by relevance, and writes an answer in the language you asked in with a numbered citation on every proposition — each one a link to the article or the judgment it rests on. It opens as a split screen: the conversation on one side, the law it found on the other, each source carrying the passage it was selected for — and clicking a source or a citation opens the judgment itself in that half, so the answer and the law it rests on are read side by side without leaving the conversation. The stages stream as they finish — the search terms first, then the law, then the prose a line at a time — and every line is citation-checked *before* it is sent, so an invented citation is never briefly on screen. It answers only from what the search returned; a citation to a source that does not exist is removed rather than renumbered, and a statement of law with nothing behind it is marked as unverified in the answer you read. Off unless an LLM API key is configured; OpenAI and Anthropic are both supported and swap with one variable. See *Asking the well* below.
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
 
 ## Quick start
@@ -35,6 +36,8 @@ docker compose up -d db        # PostgreSQL 16 on :5432
 npm install
 npm run db:push                # create tables
 npm run db:setup-search        # FTS + pg_trgm indexes (requires psql on PATH)
+npm run db:setup-lemmas        # BÍN lemma table, vectors and indexes
+npm run db:load-bin            # downloads BÍN (~34 MB) and loads the dictionary
 npm run db:seed                # courts + sample judgments
 npm run dev                    # http://localhost:3000
 ```
@@ -1920,6 +1923,52 @@ puts the limitation into the answer's context under `LIMITATIONS OF THIS
 SEARCH`, and the answer states it. The limitation is also returned to the
 browser separately, and the evaluation fixtures assert that it appears.
 
+### It is streamed, and what is streamed is already checked
+
+A hard question takes the better part of a minute. Until recently the reader
+watched the animation for all of it and then received everything at once, which
+spends a latency budget without buying anything with it. Now the stages report
+as they finish:
+
+| Event | When | What the reader sees |
+|---|---|---|
+| `plan` | a second or two in | the corpus terms the search will run on |
+| `sources` | when ranking has chosen them | the law, standing open in the other pane |
+| `line` | as the answer is written | the prose, a line at a time |
+| `answer` | at the end | the finished response, superseding the above |
+
+**The streamed text is validated before it is sent.** That is the part worth
+being careful about. The well's central promise is that a citation to a source
+that does not exist never reaches the reader — and streaming raw tokens would
+put an invented `[11]` on screen for a second before deleting it, which for a
+legal tool is worse than useless. A reader who saw it once has seen it.
+
+It is possible to keep the promise because `validateCitations` is *line-local*:
+deleting a citation to a nonexistent source needs only the set of valid source
+numbers, and retrieval has finished before the answer stage starts; qualifying a
+proposition with nothing behind it is decided per line. So the text is buffered
+until a line is complete, that line is checked on its own, and the checked line
+is what is sent. `src/lib/ask/stream.test.ts` asserts that this produces exactly
+the same text as validating the whole answer at the end, at chunk sizes from one
+character upwards, because that equivalence is the whole basis of doing it this
+way.
+
+Two consequences worth knowing:
+
+- Sources arrive **numbered and all at once**, not one by one. The number on a
+  source is its rank, and nothing can be numbered until ranking has seen every
+  candidate — emitting them as they were found would mean renumbering them
+  afterwards, which is the one thing citations must never do.
+- The final `answer` event supersedes the streamed lines. Normally it is
+  identical to them; it exists because the optional verifier runs after the
+  answer is complete and can qualify a line already on screen, and because an
+  abstention never streams at all.
+
+Streaming is purely additive inside the pipeline: `ask()` takes an optional
+`onEvent`, and without one it makes a single unstreamed model call and behaves
+exactly as it did before. That is what lets the evaluation harness keep
+measuring the same thing.
+
 ### The animation is doing a job
 
 Opening the well shows a stone well; the question falls in on a slip of paper;
@@ -1930,6 +1979,13 @@ watch — and what comes *out* says what the well is doing. It is fetching law,
 not thinking. Under `prefers-reduced-motion` all of it is switched off and the
 scene is a drawing of a well; the request is sent while the paper is still in
 the air, so the animation covers the wait rather than adding to it.
+
+It now has less to cover. The planner's terms appear under the scene within a
+second or two and the sources fill the other pane behind it, so the animation
+carries the first moment rather than the whole minute — and the floor on how
+long the loading state is shown matters *more* than it did, not less, because a
+first line can now arrive in a couple of hundred milliseconds and artefacts that
+appear and vanish read as a glitch.
 
 ### It opens as a split screen
 
@@ -1947,6 +2003,33 @@ passage it was selected for, expandable in place, and a label saying what kind
 of thing it is: **Lagaákvæði**, **Úrlausn**, **Álit**, **Fræðiskrif** (marked
 "ekki gildandi réttur"). Below 60rem there is no room for two panes and they
 become two tabs over one.
+
+#### The source opens where the list was
+
+The right-hand half is a reading surface, not only a list. Clicking a source —
+or clicking a citation chip in the prose, which is the shortest path there is
+from *"it says this"* to *"does it though"* — replaces the list with the
+document itself: the judgment typeset as it is on its own page, or the cited
+article with the rest of its act around it and the cited one marked.
+
+This is the point of the split screen finally being paid off. The list's link
+used to navigate away, which closed the well and lost the conversation, so
+checking a citation meant choosing between the answer and the evidence — which
+is exactly the choice a reader of a grounded answer should never have to make.
+Now the answer stays on the left and the law is read on the right.
+
+The reading pane carries what you need to actually check a citation: the
+copyable citation line, a link to the official source, and search-within-the-
+document, because a Niðurstaða can run to twenty pages and the sentence the
+answer rests on is one line of it. **← Heimildir** goes back to the list, and
+asking a new question closes the document — it belonged to the answer being
+replaced.
+
+It fetches from `/api/documents/[id]` and `/api/acts/[slug]`, the same two
+endpoints the document page and the act reader use, so there is no second copy
+of the corpus to keep in step. A journal article is the exception and still
+links out: its text is indexed here for searching and never sent to a browser,
+so the pane says so rather than showing an empty document.
 
 ### Feedback
 
@@ -2081,8 +2164,16 @@ says so rather than showing a blank card.
 
 ### The endpoint
 
-`POST /api/ask` takes `{ question, history, scope? }` and returns `{ answer,
-sources, language, abstained, limitations, issues, requestId }`. It is
+`POST /api/ask` takes `{ question, history, scope?, stream? }` and returns
+`{ answer, sources, language, abstained, limitations, issues, requestId }`.
+
+With `stream: true` in the body — or `Accept: text/event-stream` — the same
+endpoint answers as Server-Sent Events instead: one `data:` frame per event,
+in the shapes above under *It is streamed*. JSON remains the default, so an
+existing caller is unaffected. Note that once the stream has opened there is no
+status code left to send, so a failure arrives as an `error` event *inside* the
+stream rather than as a 4xx or 5xx; validation, rate limiting and an
+unconfigured provider all answer before it opens and so still use statuses. It is
 rate-limited to 12 questions per 10 minutes per address, in memory — enough to
 stop an unmetered public endpoint spending money, and no substitute for a real
 limit in front of the app. The **same question from the same address while the
@@ -2682,3 +2773,17 @@ Note: this repo uses `prisma db push` rather than `prisma migrate`, so there's n
 This tool searches and links to public judgments. It always displays the official island.is URL, does not present itself as an official publisher, and displays on every page: *"This is an unofficial research tool. Always verify text against the official source."*
 
 The journals are treated differently, because an article is not a public record — it is the work of its named author and the journal that published it. Both are kept with the record: the byline as the journal wrote it, and a link to the article on the journal's own site. The text is indexed so the article can be **found** here, and is not served for **reading** here — every route into an article opens the journal's page instead, and the document API withholds the text for a scholarly source. Where a journal's own host asks crawlers away from the article files, this repo stays out of them by default and says so above rather than burying the choice in a flag's default.
+
+## Data attribution
+
+Icelandic inflectional analysis in the search index is built from
+**Beygingarlýsing íslensks nútímamáls (BÍN)**:
+
+> Beygingarlýsing íslensks nútímamáls. Stofnun Árna Magnússonar í íslenskum
+> fræðum. Höfundur og ritstjóri Kristín Bjarnadóttir.
+
+Used under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). The
+data is downloaded at load time and is not redistributed by this repository;
+`prisma/data/` is gitignored. Compound resolution optionally uses
+[BinPackage](https://github.com/mideind/BinPackage) (MIT, © Miðeind ehf.), which
+embeds the same BÍN data. See *docs/icelandic-lemmatisation.md*.

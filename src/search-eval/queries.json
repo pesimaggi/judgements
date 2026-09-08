@@ -249,6 +249,102 @@
       "assert": {
         "maxResults": 0
       }
+    },
+    {
+      "id": "inflection-drattarvextir",
+      "category": "inflection",
+      "split": "development",
+      "query": "dráttarvextir",
+      "note": "Judgments award 'dráttarvaxta' and 'dráttarvöxtum'; almost none write the nominative plural the query uses. The stem itself changes (vextir/vaxta/vöxtum), so no prefix, substring or trigram match reaches them either — this is only findable through the lemma. Before prisma/sql/setup-lemmas.sql, the most natural query for the commonest money claim in the corpus missed most of it.",
+      "assert": {
+        "minResults": 1,
+        "topHitIsExact": true,
+        "someHitLacksWord": "dráttarvextir"
+      }
+    },
+    {
+      "id": "inflection-stjornsysluog",
+      "category": "inflection",
+      "split": "development",
+      "query": "stjórnsýslulög",
+      "note": "The act is cited as 'stjórnsýslulögum' or 'stjórnsýslulaga' and essentially never in the nominative. Note that the ö/a shift makes 'stjórnsýslulaga' unreachable by prefix, while 'stjórnsýslulögum' is a superset of the query string — which is exactly why someHitLacksWord matches whole words and not substrings.",
+      "assert": {
+        "minResults": 1,
+        "topHitIsExact": true,
+        "someHitLacksWord": "stjórnsýslulög",
+        "everyHitContainsAnyOf": [
+          "stjórnsýslulög",
+          "stjórnsýslulögum",
+          "stjórnsýslulaga",
+          "stjórnsýslulögin",
+          "stjórnsýslulögunum",
+          "stjórnsýslulaganna"
+        ]
+      }
+    },
+    {
+      "id": "inflection-uppsogn",
+      "category": "inflection",
+      "split": "development",
+      "query": "uppsögn",
+      "note": "Employment cases are argued in the genitive — 'lögmæti uppsagnar', 'vegna uppsagnarinnar'. ö→a again, so the inflected forms share only a prefix with the query.",
+      "assert": {
+        "minResults": 1,
+        "someHitLacksWord": "uppsögn"
+      }
+    },
+    {
+      "id": "inflection-skadabaetur",
+      "category": "inflection",
+      "split": "development",
+      "query": "skaðabætur",
+      "note": "The hardest of these, and the one that shows why a hand-built synonym list would not have done. BÍN lemmatises 'skaðabætur' to the SINGULAR 'skaðabót', so the query a lawyer would actually type is not the lemma — it is mapped to one, and from there reaches 'skaðabóta' and 'skaðabótum'. Nothing about that is guessable from the query string.",
+      "assert": {
+        "minResults": 1,
+        "someHitLacksWord": "skaðabætur"
+      }
+    },
+    {
+      "id": "inflection-gaesluvardhald",
+      "category": "inflection",
+      "split": "holdout",
+      "query": "gæsluvarðhald",
+      "note": "Purely suffixal: 'gæsluvarðhaldi', 'gæsluvarðhalds'. Held out because it is the easy shape of the problem — the one a naive prefix match would appear to solve — and it is worth knowing whether a change fixes the easy case while breaking the stem-changing ones above.",
+      "assert": {
+        "minResults": 1,
+        "topHitIsExact": true,
+        "someHitLacksWord": "gæsluvarðhald",
+        "everyHitContainsAnyOf": [
+          "gæsluvarðhald",
+          "gæsluvarðhaldi",
+          "gæsluvarðhalds",
+          "gæsluvarðhaldið",
+          "gæsluvarðhaldinu",
+          "gæsluvarðhaldsins"
+        ]
+      }
+    },
+    {
+      "id": "inflection-malskostnadur",
+      "category": "inflection",
+      "split": "holdout",
+      "query": "málskostnaður",
+      "note": "Appears in nearly every judgment in the corpus, and nearly always as 'málskostnaðar' or 'málskostnaði' in the operative sentence. A high-frequency term is the case most likely to expose lemma matching going too wide, which is what the recall floor here is really watching.",
+      "assert": {
+        "minResults": 1,
+        "someHitLacksWord": "málskostnaður"
+      }
+    },
+    {
+      "id": "inflection-phrase-untouched",
+      "category": "inflection",
+      "split": "development",
+      "query": "\"greiðslu málskostnaðar\"",
+      "note": "The guard on the other side. A quoted phrase is deliberately never lemmatised — adjacency in the lemma vector is only approximate, and someone who quotes a phrase is asking for those words. This must keep behaving exactly as it did before setup-lemmas.sql existed: every hit contains the phrase, as written.",
+      "assert": {
+        "minResults": 1,
+        "everyHitContains": "greiðslu málskostnaðar"
+      }
     }
   ]
 }

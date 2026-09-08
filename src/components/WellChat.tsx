@@ -1,9 +1,10 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { WellScene, type WellPhase } from "./WellScene";
-import { parseAnswer, type InlineSpan } from "@/lib/ask/render";
+import { WellReader } from "./WellReader";
+import { markCitedIn, parseAnswer, type InlineSpan } from "@/lib/ask/render";
 import { FEEDBACK_KINDS, FEEDBACK_LABELS, type FeedbackKind } from "@/lib/ask/feedback";
+import { readAskEvents } from "@/lib/ask/sse";
 import type { AskSource, AskTurn } from "@/lib/ask/types";
 
 /**
@@ -65,10 +66,40 @@ export function WellChat({ enabled }: { enabled: boolean }) {
   const [falling, setFalling] = useState("");
   /** Which pane is showing, when the screen is too narrow for both. */
   const [pane, setPane] = useState<"chat" | "sources">("chat");
+  /**
+   * The corpus terms the planner chose, shown while the well is working.
+   *
+   * The first thing that can be shown at all, and the most reassuring: it says
+   * the question was understood, and in what words the law is about to be
+   * searched for. It arrives a second or two in, against an answer that can
+   * take a minute.
+   */
+  const [terms, setTerms] = useState<string[]>([]);
+  /**
+   * The source open in the right-hand pane, if any.
+   *
+   * Null is the list of everything the search found; a source here replaces it
+   * with the document itself. Reading a judgment beside the sentence that
+   * cites it is the actual work, and it used to mean navigating away from the
+   * conversation to do it. See components/WellReader.tsx.
+   */
+  const [reading, setReading] = useState<AskSource | null>(null);
 
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const busy = phase === "dropping" || phase === "loading";
+
+  /**
+   * Opens a source in the reading pane.
+   *
+   * Below 60rem there is no second pane to open it into, so the panes are
+   * tabs and this switches to the one the document is about to appear in —
+   * otherwise the click does something invisible.
+   */
+  const openSource = useCallback((source: AskSource) => {
+    setReading(source);
+    setPane("sources");
+  }, []);
 
   /** The sources panel follows the most recent answer that had any. */
   const latest = useMemo(
@@ -138,30 +169,21 @@ export function WellChat({ enabled }: { enabled: boolean }) {
       setFalling(trimmed);
       setPhase("dropping");
       setPane("chat");
+      setTerms([]);
+      // The open document belongs to the answer being replaced. Leaving it up
+      // beside a new question is showing the law for the previous one.
+      setReading(null);
 
       // Sent while the paper is still in the air: the animation is there to
-      // cover the wait, not to add to it.
+      // cover the wait, not to add to it. Events that arrive during the fall
+      // wait in the socket until the read loop below starts, so the drop is
+      // never cut short by a fast first stage.
       const history: AskTurn[] = messages.map((m) => ({ role: m.role, content: m.content }));
       const request = fetch("/api/ask", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: trimmed, history }),
-      })
-        .then(async (res) => {
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error ?? "The well could not answer that.");
-          return data as {
-            answer: string;
-            sources: AskSource[];
-            requestId?: string;
-            language?: "is" | "en";
-          };
-        })
-        .catch((e: Error) => ({
-          answer: e.message,
-          sources: [] as AskSource[],
-          failed: true,
-        }));
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body: JSON.stringify({ question: trimmed, history, stream: true }),
+      });
 
       await wait(still ? 0 : DROP_MS);
       // The question joins the transcript when it lands, not when it is typed.
@@ -169,20 +191,100 @@ export function WellChat({ enabled }: { enabled: boolean }) {
       setFalling("");
       setPhase("loading");
 
-      const [result] = await Promise.all([request, wait(still ? 0 : MIN_LOAD_MS)]);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: result.answer,
-          sources: result.sources,
-          requestId: "requestId" in result ? result.requestId : undefined,
-          language: "language" in result ? result.language : undefined,
-          failed: "failed" in result && result.failed === true,
-        },
-      ]);
-      setPhase("answered");
-      if (result.sources.length > 0) setPane("chat");
+      const startedAt = Date.now();
+      let revealed = false;
+      /**
+       * The answer's language, known from the plan.
+       *
+       * Carried on the turn as soon as it is created so the feedback panel is
+       * labelled in the right language even if the request fails before the
+       * final `answer` event supplies it again.
+       */
+      let language: "is" | "en" = "is";
+      /**
+       * Moves off the loading scene, but never sooner than MIN_LOAD_MS.
+       *
+       * Streaming made the floor matter more, not less: the first line can now
+       * arrive in a couple of hundred milliseconds, and without this the well's
+       * artefacts would appear and vanish, which reads as a glitch rather than
+       * as the well working.
+       */
+      const reveal = () => {
+        if (revealed) return;
+        revealed = true;
+        const left = (still ? 0 : MIN_LOAD_MS) - (Date.now() - startedAt);
+        if (left > 0) window.setTimeout(() => setPhase("answered"), left);
+        else setPhase("answered");
+      };
+
+      /** Rewrites the assistant turn being streamed into, creating it if needed. */
+      const update = (change: (m: Message) => Message) =>
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "assistant") {
+            return [...prev.slice(0, -1), change(last)];
+          }
+          return [...prev, change({ role: "assistant", content: "" })];
+        });
+
+      try {
+        const response = await request;
+        if (!response.ok) {
+          // Validation, rate limiting and a well with no key configured all
+          // answer before the stream opens, as ordinary JSON with a status.
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.error ?? "Brunnurinn gat ekki svarað þessu.");
+        }
+
+        await readAskEvents(response, (event) => {
+          switch (event.type) {
+            case "plan":
+              setTerms(event.terms);
+              language = event.language;
+              break;
+            case "sources":
+              // Creates the assistant turn, which is what fills the sources
+              // pane — the law stands open beside the answer before a word of
+              // the answer has been written.
+              update((m) => ({ ...m, sources: event.sources, language }));
+              break;
+            case "line": {
+              reveal();
+              update((m) => {
+                const content = m.content ? `${m.content}\n${event.text}` : event.text;
+                // Re-marked on every line so a source moves into "cited" as
+                // the sentence citing it is written, rather than jumping there
+                // when the final event arrives.
+                return { ...m, content, sources: markCitedIn(content, m.sources ?? []) };
+              });
+              break;
+            }
+            case "answer":
+              // Supersedes what was streamed. Normally identical; the optional
+              // verifier can qualify a line already on screen, and an
+              // abstention never streamed at all.
+              update((m) => ({
+                ...m,
+                content: event.response.answer,
+                sources: event.response.sources,
+                requestId: event.response.requestId,
+                language: event.response.language,
+              }));
+              break;
+            case "error":
+              update((m) => ({ ...m, content: event.message, failed: true }));
+              break;
+          }
+        });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Brunnurinn gat ekki svarað þessu.";
+        // Replaces a half-written answer rather than appending to it: a
+        // truncated argument with an error under it is worse than the error.
+        update((m) => ({ ...m, content: message, sources: m.sources ?? [], failed: true }));
+      } finally {
+        reveal();
+        setPhase("answered");
+      }
     },
     [busy, messages]
   );
@@ -270,6 +372,42 @@ export function WellChat({ enabled }: { enabled: boolean }) {
                 compact={phase === "answered" && messages.length > 0}
               />
 
+              {/* What the well is doing, while it does it.
+                  The planner's terms are the first thing that exists — a
+                  second or two in, against an answer that can take a minute —
+                  and they are worth showing because they say the question was
+                  understood and name the words the law is being searched for.
+                  Under them, the count of sources the search brought back;
+                  those are already standing open in the other pane by the time
+                  this appears. */}
+              {phase === "loading" && terms.length > 0 && (
+                <div className="px-4 pb-3">
+                  <div className="mx-auto max-w-[30rem] rounded-md border border-line bg-paper/60 px-3 py-2">
+                    <p className="text-[11px] uppercase tracking-wide text-inkSoft">
+                      Leitað í safninu
+                    </p>
+                    <p className="mt-1 flex flex-wrap gap-1.5">
+                      {terms.slice(0, 6).map((term) => (
+                        <span
+                          key={term}
+                          className="rounded bg-white px-1.5 py-0.5 text-[12px] text-ink shadow-sm"
+                        >
+                          {term}
+                        </span>
+                      ))}
+                    </p>
+                    {sources.length > 0 && (
+                      <p className="mt-1.5 text-[11px] text-inkSoft">
+                        {sources.length === 1
+                          ? "1 heimild fundin"
+                          : `${sources.length} heimildir fundnar`}{" "}
+                        — sjá hægra megin
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {messages.length === 0 && phase === "idle" && (
                 <div className="px-4 pb-4 text-center">
                   <p className="mx-auto max-w-[22rem] text-[13px] leading-relaxed text-inkSoft">
@@ -303,7 +441,12 @@ export function WellChat({ enabled }: { enabled: boolean }) {
                         {message.content}
                       </p>
                     ) : (
-                      <Answer key={i} message={message} onShowSources={() => setPane("sources")} />
+                      <Answer
+                        key={i}
+                        message={message}
+                        onShowSources={() => setPane("sources")}
+                        onOpen={openSource}
+                      />
                     )
                   )}
                 </div>
@@ -355,13 +498,17 @@ export function WellChat({ enabled }: { enabled: boolean }) {
             </form>
           </section>
 
-          {/* ---- what the well found ----------------------------------- */}
+          {/* ---- what the well found, or the one being read ------------- */}
           <aside
             className={`min-h-0 min-w-0 flex-1 flex-col border-line bg-paper/40 lg:flex lg:basis-1/2 lg:border-l ${
               pane === "sources" ? "flex" : "hidden"
             }`}
           >
-            <SourcePanel sources={sources} busy={busy} />
+            {reading ? (
+              <WellReader source={reading} onBack={() => setReading(null)} />
+            ) : (
+              <SourcePanel sources={sources} busy={busy} onOpen={openSource} />
+            )}
           </aside>
         </div>
       </div>
@@ -401,7 +548,15 @@ function PaneTab({
  * the answer did not use is worth something, and is also the fastest way to
  * spot that the well found the right provision and then wrote around it.
  */
-function SourcePanel({ sources, busy }: { sources: AskSource[]; busy: boolean }) {
+function SourcePanel({
+  sources,
+  busy,
+  onOpen,
+}: {
+  sources: AskSource[];
+  busy: boolean;
+  onOpen: (source: AskSource) => void;
+}) {
   const cited = sources.filter((s) => s.cited);
   const rest = sources.filter((s) => !s.cited);
 
@@ -423,6 +578,7 @@ function SourcePanel({ sources, busy }: { sources: AskSource[]; busy: boolean })
         title={`Vitnað til (${cited.length})`}
         note="Heimildirnar sem svarið byggir beinlínis á."
         sources={cited}
+        onOpen={onOpen}
       />
       {rest.length > 0 && (
         <SourceGroup
@@ -430,6 +586,7 @@ function SourcePanel({ sources, busy }: { sources: AskSource[]; busy: boolean })
           note="Fannst í leitinni en er ekki vitnað til í svarinu."
           sources={rest}
           muted
+          onOpen={onOpen}
         />
       )}
     </div>
@@ -441,11 +598,13 @@ function SourceGroup({
   note,
   sources,
   muted,
+  onOpen,
 }: {
   title: string;
   note: string;
   sources: AskSource[];
   muted?: boolean;
+  onOpen: (source: AskSource) => void;
 }) {
   if (sources.length === 0) return null;
   return (
@@ -457,7 +616,7 @@ function SourceGroup({
       <ul className="mt-2 space-y-2">
         {sources.map((source) => (
           <li key={source.n}>
-            <SourceCard source={source} muted={muted} />
+            <SourceCard source={source} muted={muted} onOpen={onOpen} />
           </li>
         ))}
       </ul>
@@ -481,7 +640,15 @@ const KIND_LABEL: Record<AskSource["kind"], string> = {
  * a title, and asking them to open the judgment to find out why it is here is
  * asking them not to check at all.
  */
-function SourceCard({ source, muted }: { source: AskSource; muted?: boolean }) {
+function SourceCard({
+  source,
+  muted,
+  onOpen,
+}: {
+  source: AskSource;
+  muted?: boolean;
+  onOpen: (source: AskSource) => void;
+}) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -495,11 +662,11 @@ function SourceCard({ source, muted }: { source: AskSource; muted?: boolean }) {
           [{source.n}]
         </span>
         <div className="min-w-0 flex-1">
-          <SourceLink source={source} className="block hover:underline">
+          <OpenSource source={source} onOpen={onOpen} className="block text-left hover:underline">
             <span className="block text-[12px] font-medium leading-snug text-ink">
               {source.title}
             </span>
-          </SourceLink>
+          </OpenSource>
           <span className="mt-0.5 block text-[11px] leading-snug text-inkSoft">
             {source.subtitle}
           </span>
@@ -519,9 +686,16 @@ function SourceCard({ source, muted }: { source: AskSource; muted?: boolean }) {
                 className="text-[10px] text-inkSoft underline underline-offset-2 hover:text-ink"
                 aria-expanded={open}
               >
-                {open ? "Fela textann" : "Sýna textann"}
+                {open ? "Fela brotið" : "Sýna brotið"}
               </button>
             )}
+            <OpenSource
+              source={source}
+              onOpen={onOpen}
+              className="text-[10px] font-medium text-accent underline underline-offset-2"
+            >
+              Lesa hér
+            </OpenSource>
           </div>
         </div>
       </div>
@@ -536,7 +710,15 @@ function SourceCard({ source, muted }: { source: AskSource; muted?: boolean }) {
 }
 
 /** One answer: the prose, then a way to say what was wrong with it. */
-function Answer({ message, onShowSources }: { message: Message; onShowSources: () => void }) {
+function Answer({
+  message,
+  onShowSources,
+  onOpen,
+}: {
+  message: Message;
+  onShowSources: () => void;
+  onOpen: (source: AskSource) => void;
+}) {
   const blocks = parseAnswer(message.content);
   const sources = message.sources ?? [];
   const byNumber = new Map(sources.map((s) => [s.n, s]));
@@ -555,7 +737,7 @@ function Answer({ message, onShowSources }: { message: Message; onShowSources: (
                 key={i}
                 className="pt-1 font-sans text-[11px] font-semibold uppercase tracking-wide text-inkSoft"
               >
-                <Spans spans={block.spans} sources={byNumber} />
+                <Spans spans={block.spans} sources={byNumber} onOpen={onOpen} />
               </h4>
             );
           }
@@ -564,7 +746,7 @@ function Answer({ message, onShowSources }: { message: Message; onShowSources: (
               <ul key={i} className="list-disc space-y-1 pl-4 marker:text-line">
                 {block.items.map((item, j) => (
                   <li key={j}>
-                    <Spans spans={item} sources={byNumber} />
+                    <Spans spans={item} sources={byNumber} onOpen={onOpen} />
                   </li>
                 ))}
               </ul>
@@ -572,7 +754,7 @@ function Answer({ message, onShowSources }: { message: Message; onShowSources: (
           }
           return (
             <p key={i}>
-              <Spans spans={block.spans} sources={byNumber} />
+              <Spans spans={block.spans} sources={byNumber} onOpen={onOpen} />
             </p>
           );
         })}
@@ -684,15 +866,20 @@ function Feedback({ message }: { message: Message }) {
  * page — or, for a journal article, at the journal that published it. The
  * second kind opens in a new tab and says so, the way the result cards do.
  */
-function SourceLink({
+function OpenSource({
   source,
+  onOpen,
   className,
   children,
 }: {
   source: AskSource;
+  onOpen: (source: AskSource) => void;
   className?: string;
   children: React.ReactNode;
 }) {
+  // A journal article is read at the journal that published it: its text is
+  // indexed here for searching and never sent out, so there is nothing for the
+  // reading pane to show and the link has to leave.
   if (/^https?:/.test(source.path)) {
     return (
       <a href={source.path} target="_blank" rel="noopener noreferrer" className={className}>
@@ -701,13 +888,21 @@ function SourceLink({
     );
   }
   return (
-    <Link href={source.path} className={className}>
+    <button type="button" onClick={() => onOpen(source)} className={className}>
       {children}
-    </Link>
+    </button>
   );
 }
 
-function Spans({ spans, sources }: { spans: InlineSpan[]; sources: Map<number, AskSource> }) {
+function Spans({
+  spans,
+  sources,
+  onOpen,
+}: {
+  spans: InlineSpan[];
+  sources: Map<number, AskSource>;
+  onOpen: (source: AskSource) => void;
+}) {
   return (
     <>
       {spans.map((span, i) => {
@@ -729,14 +924,17 @@ function Spans({ spans, sources }: { spans: InlineSpan[]; sources: Map<number, A
             [{span.n}]
           </span>
         );
+        // The shortest path from "it says this" to "does it though": the chip
+        // opens the source it points at in the pane beside the sentence.
         return (
-          <SourceLink
+          <OpenSource
             key={i}
             source={source}
+            onOpen={onOpen}
             className="ml-0.5 rounded bg-accentSoft px-1 align-super text-[9px] font-semibold text-accent hover:underline"
           >
-            <span title={`${source.title} — ${source.subtitle}`}>{span.n}</span>
-          </SourceLink>
+            <span title={`Lesa: ${source.title} — ${source.subtitle}`}>{span.n}</span>
+          </OpenSource>
         );
       })}
     </>

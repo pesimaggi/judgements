@@ -30,6 +30,33 @@ export type AnswerBlock =
 const CITATION_RE = /\[(\d{1,2}(?:\s*[,;]\s*\d{1,2})*)\]/g;
 const BOLD_RE = /\*\*(.+?)\*\*/g;
 
+/**
+ * Marks which of `sources` the answer text cites.
+ *
+ * The same job `markCited` in lib/ask/answer.ts does on the server, needed
+ * again on the client because an answer now arrives a line at a time: the
+ * `sources` event precedes the prose, so every source starts out uncited and a
+ * source the answer is about to cite would otherwise sit under "came up in the
+ * search but is not cited" and jump to "cited" when the last event landed.
+ *
+ * It lives here rather than being imported from lib/ask/citations.ts so that
+ * the marker's shape is read from the same constant this module renders — the
+ * two must agree, and they already have to agree here.
+ */
+export function markCitedIn<T extends { n: number; cited: boolean }>(
+  answer: string,
+  sources: T[]
+): T[] {
+  const cited = new Set<number>();
+  for (const match of answer.matchAll(CITATION_RE)) {
+    for (const part of match[1].split(/[,;]/)) {
+      const n = Number(part.trim());
+      if (Number.isFinite(n)) cited.add(n);
+    }
+  }
+  return sources.map((s) => (s.cited === cited.has(s.n) ? s : { ...s, cited: cited.has(s.n) }));
+}
+
 export function parseInline(text: string): InlineSpan[] {
   const spans: InlineSpan[] = [];
   let cursor = 0;
