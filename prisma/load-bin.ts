@@ -58,6 +58,10 @@ interface Options {
   extra: string | null;
   /** Rebuild every stored vector, not only the ones never built. */
   rebuildAll: boolean;
+  /** Do nothing at all if the dictionary is already loaded. */
+  ifEmpty: boolean;
+  /** Stop the rebuild after this many rows, leaving the rest for next time. */
+  rebuildMax: number | null;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -68,6 +72,8 @@ function parseArgs(argv: string[]): Options {
     unknown: null,
     extra: null,
     rebuildAll: false,
+    ifEmpty: false,
+    rebuildMax: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -75,6 +81,8 @@ function parseArgs(argv: string[]): Options {
     else if (a === "--unknown") opts.unknown = argv[++i];
     else if (a === "--extra") opts.extra = argv[++i];
     else if (a === "--rebuild") opts.rebuild = true;
+    else if (a === "--if-empty") opts.ifEmpty = true;
+    else if (a === "--rebuild-max") opts.rebuildMax = Math.max(1, Number(argv[++i]) || 1);
     else if (a === "--rebuild-all") {
       opts.rebuildAll = true;
       opts.rebuild = true;
@@ -94,6 +102,13 @@ function parseArgs(argv: string[]): Options {
           "                    reload — because the existing vectors are then",
           "                    stale rather than absent.",
           "  --rebuild-only    Skip the load; only rebuild the vectors.",
+          "  --if-empty        Do nothing when the dictionary is already loaded.",
+          "                    What the scheduled ingest runs: the first firing",
+          "                    after deploy loads BÍN, every firing after it",
+          "                    costs one COUNT.",
+          "  --rebuild-max <n> Stop the rebuild after n rows. The rest stay NULL",
+          "                    and the next run continues, so a firing cannot",
+          "                    spend its whole slot on a backfill.",
           "  --unknown <path>  Write the corpus words BÍN does not know, one",
           "                    per line, for scripts/bin-compounds.py.",
           "  --extra <path>    Merge a form<TAB>lemma file in, as that script",
@@ -240,10 +255,17 @@ async function load(client: Client, file: string): Promise<void> {
  * run as one UPDATE, because one statement over a large corpus is a single
  * transaction holding a lock on the whole table for as long as it takes.
  */
-async function rebuild(client: Client, all: boolean): Promise<void> {
+async function rebuild(client: Client, all: boolean, max: number | null): Promise<void> {
+  let budget = max ?? Number.POSITIVE_INFINITY;
+
+  // Provisions before judgments, which is the reverse of how they are listed
+  // everywhere else in this file. When the budget runs out partway — which is
+  // the normal case on a first load — the half that is finished should be the
+  // legislation: it is the law itself, there is far less of it, and the well
+  // leads with it.
   for (const [table, expr] of [
-    [`"Document"`, `document_lemma_vector(title, case_name, case_number, parties, full_text)`],
     [`provisions`, `provision_lemma_vector(display_label, heading, full_text)`],
+    [`"Document"`, `document_lemma_vector(title, case_name, case_number, parties, full_text)`],
   ] as const) {
     console.log(`Rebuilding lemma vectors for ${table} …`);
     // Clearing first, then filling the NULLs, is the same two-step
@@ -253,19 +275,29 @@ async function rebuild(client: Client, all: boolean): Promise<void> {
     // acceptable for a maintenance operation and is why it is not the default.
     if (all) await client.query(`UPDATE ${table} SET lemma_vector = NULL`);
     let done = 0;
-    for (;;) {
+    while (budget > 0) {
+      const take = Math.min(REBUILD_BATCH, budget);
       const { rowCount } = await client.query(`
         WITH batch AS (
-          SELECT id FROM ${table} WHERE lemma_vector IS NULL LIMIT ${REBUILD_BATCH}
+          SELECT id FROM ${table} WHERE lemma_vector IS NULL LIMIT ${take}
         )
         UPDATE ${table} t SET lemma_vector = ${expr}
           FROM batch WHERE t.id = batch.id
       `);
       if (!rowCount) break;
       done += rowCount;
+      budget -= rowCount;
       if (done % (REBUILD_BATCH * 25) === 0) console.log(`  ${done.toLocaleString()} rows …`);
     }
-    console.log(`  ${done.toLocaleString()} rows rebuilt.`);
+
+    const { rows: left } = await client.query<{ n: string }>(
+      `SELECT count(*) AS n FROM ${table} WHERE lemma_vector IS NULL`
+    );
+    const remaining = Number(left[0]?.n ?? 0);
+    console.log(
+      `  ${done.toLocaleString()} rows rebuilt` +
+        (remaining ? `, ${remaining.toLocaleString()} still to do — the next run continues.` : ".")
+    );
   }
 }
 
@@ -369,15 +401,6 @@ async function main() {
     process.exit(1);
   }
 
-  const needsCsv = !opts.rebuildOnly && !opts.extra && !opts.unknown;
-  if (needsCsv && !existsSync(opts.file)) {
-    if (opts.file !== DEFAULT_FILE) {
-      console.error(`No such file: ${opts.file}`);
-      process.exit(1);
-    }
-    await download(opts.file);
-  }
-
   const client = new Client({ connectionString: url });
   await client.connect();
   try {
@@ -385,15 +408,63 @@ async function main() {
       `SELECT to_regclass('public.bin_lemma') IS NOT NULL AS exists`
     );
     if (!rows[0].exists) {
-      console.error("bin_lemma does not exist. Run `npm run db:setup-lemmas` first.");
+      const message = "bin_lemma does not exist. Run `npm run db:setup-lemmas` first.";
+      // Under --if-empty this is one step of the scheduled ingest chain, and a
+      // missing table is a deploy that has not run db:deploy yet — a thing to
+      // report, not a reason to mark the whole run failed.
+      if (opts.ifEmpty) {
+        console.warn(message);
+        return;
+      }
+      console.error(message);
       process.exit(1);
     }
 
     const started = Date.now();
+
+    if (opts.ifEmpty) {
+      const { rows: counted } = await client.query<{ n: string }>(
+        `SELECT count(*) AS n FROM bin_lemma`
+      );
+      const forms = Number(counted[0]?.n ?? 0);
+
+      if (forms > 0) {
+        console.log(`BÍN is loaded: ${forms.toLocaleString()} surface forms.`);
+      } else {
+        console.log("BÍN is not loaded. Fetching it now — this happens once.");
+        if (!existsSync(opts.file)) await download(opts.file);
+        await load(client, opts.file);
+        // Everything stored so far was lemmatised against an empty dictionary,
+        // so its vectors are the surface forms rather than the lemmas. They are
+        // not missing, they are wrong — which `WHERE lemma_vector IS NULL` will
+        // never find — so they are invalidated here and rebuilt below and over
+        // the firings after this one.
+        console.log("Invalidating the vectors built before the dictionary existed …");
+        await client.query(`UPDATE provisions SET lemma_vector = NULL`);
+        await client.query(`UPDATE "Document" SET lemma_vector = NULL`);
+      }
+
+      // Always, loaded just now or long ago: any rows still without a vector
+      // are the unfinished part of an earlier run's rebuild, and this is what
+      // carries it forward. With none left it costs two counts.
+      await rebuild(client, false, opts.rebuildMax);
+      console.log(`Done in ${((Date.now() - started) / 1000).toFixed(0)}s.`);
+      return;
+    }
+
+    const needsCsv = !opts.rebuildOnly && !opts.extra && !opts.unknown;
+    if (needsCsv && !existsSync(opts.file)) {
+      if (opts.file !== DEFAULT_FILE) {
+        console.error(`No such file: ${opts.file}`);
+        process.exit(1);
+      }
+      await download(opts.file);
+    }
+
     if (needsCsv) await load(client, opts.file);
     if (opts.extra) await loadExtra(client, opts.extra);
     if (opts.unknown) await writeUnknown(client, opts.unknown);
-    if (opts.rebuild) await rebuild(client, opts.rebuildAll);
+    if (opts.rebuild) await rebuild(client, opts.rebuildAll, opts.rebuildMax);
     console.log(`Done in ${((Date.now() - started) / 1000).toFixed(0)}s.`);
   } finally {
     await client.end();
