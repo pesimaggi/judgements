@@ -23,6 +23,7 @@ import { getAskModel, askProviderInfo, type AskModel } from "./llm";
 import { askConfig, type AskConfig } from "./config";
 import { planQuery, heuristicPlan } from "./plan";
 import { retrieve, type Retrieval } from "./retrieve";
+import { deepResearch } from "./research";
 import { answer } from "./answer";
 import { verifyAnswer } from "./verify";
 import { AskMetricsRecorder, logAskMetrics, type AskMetrics } from "./metrics";
@@ -31,6 +32,13 @@ import type { AskEvent, AskResponse, AskTurn } from "./types";
 
 export interface AskOptions {
   scope?: "eea" | "eu";
+  /**
+   * Which retrieval to run. Omit to take the deployment's default
+   * (`ASK_RESEARCH`); "deep" sends the question through the research loop in
+   * lib/ask/research.ts, which is slower and finds what one fan of searches
+   * cannot. Ignored when `retrieve` below is supplied.
+   */
+  mode?: "quick" | "deep";
   model?: AskModel;
   config?: AskConfig;
   /** Skips the metrics line — the evaluation harness reports its own. */
@@ -59,6 +67,23 @@ export interface AskOptions {
    * not a copy of it. Nothing in the app passes this.
    */
   retrieve?: (plan: Parameters<typeof retrieve>[0], config: AskConfig) => Promise<Retrieval>;
+}
+
+/**
+ * The argument worth showing a reader watching the loop work.
+ *
+ * A query, a case number or an id — not the whole JSON, which is noise on a
+ * progress line, and not nothing, which makes every step look identical.
+ */
+function stepDetail(input: unknown): string {
+  if (!input || typeof input !== "object") return "";
+  const a = input as Record<string, unknown>;
+  for (const key of ["query", "caseNumber", "documentId", "provisionId", "actId"]) {
+    const v = a[key];
+    if (typeof v === "string" && v.trim()) return v.trim().slice(0, 80);
+  }
+  const tags = Array.isArray(a.tags) ? a.tags.filter((t) => typeof t === "string") : [];
+  return tags.length ? tags.join(", ").slice(0, 80) : "";
 }
 
 export interface AskResult {
@@ -122,25 +147,56 @@ export async function ask(
     });
 
     // ---- retrieve --------------------------------------------------------
+    // The evaluation harness's own retrieval wins outright: it is replaying a
+    // recorded run and must not be sent researching.
+    const deep = !options.retrieve && (options.mode ? options.mode === "deep" : config.research);
+
     const runRetrieval = options.retrieve
       ? () => options.retrieve!(plan, config)
-      : () =>
-          retrieve(plan, config, {
-            scope: options.scope ?? "eea",
-            model,
-            onRerank: ({ ran, ms }) => {
-              metrics.stages.reranked = ran;
-              metrics.setTiming("rerank", ms);
-            },
-          });
+      : deep
+        ? async () => {
+            const outcome = await deepResearch(plan, config, {
+              scope: options.scope ?? "eea",
+              model,
+              onStep: (step) => {
+                emit({
+                  type: "step",
+                  round: step.round,
+                  name: step.name,
+                  detail: stepDetail(step.input),
+                  ms: step.ms,
+                });
+              },
+            });
+            metrics.stages.researched = !outcome.fellBack;
+            metrics.research = {
+              steps: outcome.steps,
+              rounds: outcome.rounds,
+              exhausted: outcome.exhausted,
+              fellBack: outcome.fellBack,
+            };
+            return outcome.retrieval;
+          }
+        : () =>
+            retrieve(plan, config, {
+              scope: options.scope ?? "eea",
+              model,
+              onRerank: ({ ran, ms }) => {
+                metrics.stages.reranked = ran;
+                metrics.setTiming("rerank", ms);
+              },
+            });
 
     const retrieval: Retrieval = await metrics.time("retrieve", () =>
       withTimeout(
         runRetrieval(),
         // The rerank runs inside retrieval and shares its budget, so a rerank
-        // that hangs cannot add its own timeout to the total.
-        config.timeouts.retrieve + (config.rerankWithModel ? config.timeouts.rerank : 0),
-        "retrieval"
+        // that hangs cannot add its own timeout to the total. Research gets a
+        // budget of its own, which is much larger — that is the point of it.
+        deep
+          ? config.timeouts.research
+          : config.timeouts.retrieve + (config.rerankWithModel ? config.timeouts.rerank : 0),
+        deep ? "research" : "retrieval"
       )
     );
     metrics.candidates = retrieval.counts.candidates;

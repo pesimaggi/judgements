@@ -84,6 +84,24 @@ export function WellChat({ enabled }: { enabled: boolean }) {
    * conversation to do it. See components/WellReader.tsx.
    */
   const [reading, setReading] = useState<AskSource | null>(null);
+  /**
+   * The research loop's steps, newest last, while it works.
+   *
+   * Deep research can run for minutes. This is what makes that legible rather
+   * than a long silence — the reader watches it search a court, open a
+   * judgment, ask what cites a case — and it doubles as the record of how the
+   * answer was arrived at, which in legal research is worth having.
+   */
+  const [steps, setSteps] = useState<{ name: string; detail: string }[]>([]);
+  /**
+   * Folded away to the corner while it works, without stopping it.
+   *
+   * The stream is held by the request in `ask`, not by the panel, so hiding
+   * the panel costs nothing: events keep arriving and the transcript keeps
+   * filling. Somebody who asked a two-minute question should be able to go and
+   * read something else in the meantime.
+   */
+  const [minimised, setMinimised] = useState(false);
 
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
@@ -170,6 +188,7 @@ export function WellChat({ enabled }: { enabled: boolean }) {
       setPhase("dropping");
       setPane("chat");
       setTerms([]);
+      setSteps([]);
       // The open document belongs to the answer being replaced. Leaving it up
       // beside a new question is showing the law for the previous one.
       setReading(null);
@@ -242,6 +261,11 @@ export function WellChat({ enabled }: { enabled: boolean }) {
               setTerms(event.terms);
               language = event.language;
               break;
+            case "step":
+              // Capped: a long run is dozens of calls and the reader wants the
+              // shape of the search, not a log.
+              setSteps((prev) => [...prev, { name: event.name, detail: event.detail }].slice(-40));
+              break;
             case "sources":
               // Creates the assistant turn, which is what fills the sources
               // pane — the law stands open beside the answer before a word of
@@ -307,6 +331,16 @@ export function WellChat({ enabled }: { enabled: boolean }) {
 
   const sources = latest?.sources ?? [];
 
+  if (minimised) {
+    return (
+      <MinimisedWell
+        busy={busy}
+        step={steps[steps.length - 1] ?? null}
+        onRestore={() => setMinimised(false)}
+      />
+    );
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-0 sm:p-4"
@@ -336,6 +370,17 @@ export function WellChat({ enabled }: { enabled: boolean }) {
                 Heimildir{sources.length > 0 ? ` (${sources.length})` : ""}
               </PaneTab>
             </div>
+            <button
+              type="button"
+              onClick={() => setMinimised(true)}
+              className="rounded p-1.5 text-inkSoft transition hover:bg-paper hover:text-ink"
+              aria-label="Fela á meðan brunnurinn vinnur"
+              title="Fela — brunnurinn heldur áfram"
+            >
+              <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
+                <path d="M4 11h8" strokeLinecap="round" />
+              </svg>
+            </button>
             <button
               type="button"
               onClick={() => setOpen(false)}
@@ -396,6 +441,19 @@ export function WellChat({ enabled }: { enabled: boolean }) {
                         </span>
                       ))}
                     </p>
+                    {steps.length > 0 && (
+                      // What the research loop is doing, newest last. Only the
+                      // last few: the reader wants the shape of the search, and
+                      // the full trail is in the metrics line.
+                      <ul className="mt-2 space-y-0.5 border-t border-line/60 pt-1.5">
+                        {steps.slice(-4).map((step, i) => (
+                          <li key={i} className="truncate text-[11px] text-inkSoft">
+                            <span className="text-ink">{STEP_LABEL[step.name] ?? step.name}</span>
+                            {step.detail ? ` — ${step.detail}` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                     {sources.length > 0 && (
                       <p className="mt-1.5 text-[11px] text-inkSoft">
                         {sources.length === 1
@@ -938,6 +996,54 @@ function Spans({
         );
       })}
     </>
+  );
+}
+
+/** What each tool is doing, in the language the panel is written in. */
+const STEP_LABEL: Record<string, string> = {
+  search_decisions: "Leitar í úrlausnum",
+  search_provisions: "Leitar í lagaákvæðum",
+  find_citing_cases: "Leitar að málum sem vísa til",
+  read_decision: "Les úrlausn",
+  read_provision: "Les ákvæði",
+  list_subject_tags: "Flettir upp efnisorðum",
+};
+
+/**
+ * The well folded away while it works.
+ *
+ * Not a cancel: the request is held by the ask() call, so this only hides the
+ * panel. It keeps the last thing the loop did on screen, so the pill says
+ * something true rather than spinning, and it says when the answer has landed.
+ */
+function MinimisedWell({
+  busy,
+  step,
+  onRestore,
+}: {
+  busy: boolean;
+  step: { name: string; detail: string } | null;
+  onRestore: () => void;
+}) {
+  const label = step ? (STEP_LABEL[step.name] ?? "Leitar") : "Sæki lögin úr brunninum";
+  return (
+    <button
+      type="button"
+      onClick={onRestore}
+      className="fixed bottom-5 right-5 z-50 flex max-w-[22rem] items-center gap-2.5 rounded-full border border-line bg-white py-2 pl-2 pr-4 shadow-lg shadow-ink/10 transition hover:-translate-y-0.5 hover:shadow-xl"
+      aria-live="polite"
+    >
+      <WellMark />
+      <span className="min-w-0 text-left">
+        <span className="block truncate font-serif text-[13px] font-semibold text-ink">
+          {busy ? label : "Svarið er tilbúið"}
+        </span>
+        {busy && step?.detail && (
+          <span className="block truncate text-[11px] text-inkSoft">{step.detail}</span>
+        )}
+      </span>
+      {busy && <span className="well-pulse h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}
+    </button>
   );
 }
 

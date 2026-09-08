@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import {
   buildDecisionEvidence,
   evidenceWindow,
+  isRegisterOnly,
   markedTerms,
   provisionEvidence,
   sanitizeEvidence,
@@ -176,5 +177,48 @@ describe("sanitizeEvidence", () => {
 describe("stripMarks", () => {
   test("removes the highlight tags and collapses whitespace", () => {
     assert.equal(stripMarks("a <mark>b</mark>\n  c"), "a b c");
+  });
+});
+
+describe("register-only records", () => {
+  // The EFTA Court's decisions are PDFs under a path its robots.txt disallows,
+  // so unless EFTA_FETCH_DOCUMENTS=1 was set the stored record is the case
+  // register: parties, subject, and the list of documents the Court published.
+  // It reads like a short judgment, which is exactly the problem.
+  const REGISTER = [
+    "E-5/21",
+    "A v The Icelandic State",
+    "",
+    "Summary:",
+    "Social security — Migrant workers — Equal treatment — Calculation of parental benefit",
+    "",
+    "Case details:",
+    "• Type: Advisory Opinion (AO)",
+    "• Referring court: Héraðsdómur Reykjavíkur",
+    "",
+    "Documents:",
+    "• Judgment (8 December 2022, EN)",
+  ].join("\n");
+
+  test("an EFTA case register entry is recognised as one", () => {
+    assert.equal(isRegisterOnly("eftacourt", REGISTER), true);
+  });
+
+  test("the same record with the decision appended is not", () => {
+    const withJudgment = `${REGISTER}\n\nJudgment\n${"On those grounds the Court held. ".repeat(200)}`;
+    assert.equal(isRegisterOnly("eftacourt", withJudgment), false);
+  });
+
+  test("no other source is ever treated as register-only", () => {
+    // Only the EFTA Court adapter composes records this way. A genuinely short
+    // Icelandic ruling must not be reported as a missing document.
+    assert.equal(isRegisterOnly("haestirettur", REGISTER), false);
+    assert.equal(isRegisterOnly("cjeu", REGISTER), false);
+    assert.equal(isRegisterOnly("eftasurv", REGISTER), false);
+  });
+
+  test("an empty or absent text is not mistaken for a register entry", () => {
+    assert.equal(isRegisterOnly("eftacourt", ""), true);
+    assert.equal(isRegisterOnly("haestirettur", null), false);
   });
 });

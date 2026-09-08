@@ -225,6 +225,35 @@ export function provisionEvidence(
   return { text: kept, truncated: kept.includes("[…]") };
 }
 
+/**
+ * The EFTA Court's records are the case register, not the judgment — unless
+ * the ingest was run with EFTA_FETCH_DOCUMENTS=1.
+ *
+ * The Court publishes each decision as a PDF under /download/, and its
+ * robots.txt disallows that path for every user agent, so the adapter stores
+ * the case record by default: parties, subject, the Court's own note about the
+ * case, and the list of documents it has published. See
+ * src/ingestion/adapters/efta-court.ts.
+ *
+ * This matters here because the difference is invisible to the answer stage. A
+ * register entry reads like a short judgment — it has a "Summary" heading and
+ * prose under it — so the well was quoting one as though it were the decision
+ * and then reporting, accurately but uselessly, that the sources did not show
+ * the outcome. Told what it is holding, it can say the useful thing instead:
+ * that the decision text is not in this database and where to read it.
+ *
+ * Separated by length, which is a clean divide rather than a fine judgement: a
+ * register entry runs to a couple of thousand characters, and the same record
+ * with the decision appended runs to tens of thousands. When the flag is
+ * switched on and the corpus re-ingested, this simply stops firing.
+ */
+const REGISTER_ONLY_MAX_CHARS = 4_000;
+
+export function isRegisterOnly(sourceKey: string, fullText: string | null | undefined): boolean {
+  if (sourceKey !== "eftacourt") return false;
+  return (fullText?.trim().length ?? 0) < REGISTER_ONLY_MAX_CHARS;
+}
+
 /** Characters that have no business in a judgment and can hide text. */
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u200B-\u200F\u2028\u2029\u202A-\u202E\u2066-\u2069]/g;
 
