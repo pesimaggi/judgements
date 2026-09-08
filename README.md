@@ -553,8 +553,9 @@ INGEST_MODE=eea-links  npm run ingest -- --adapter=eur-lex   # what the JCDs nam
   names (EUR-Lex records "gdpr" as one, which is what makes the type-ahead
   find it), its dates, its EEA marker and its current consolidated version.
   Seconds per year, no document fetches, resumable from a cursor:
-  `EURLEX_YEARS_PER_RUN` (default 8) years per firing, **backwards from this
-  year** to 1952 and then round again. The direction matters more than the
+  `EURLEX_YEARS_PER_RUN` years per firing — 8 in the adapter, 3 as
+  `scripts/ingest-all.sh` sets it, which is what the scheduled service runs —
+  **backwards from this year** to 1952 and then round again. The direction matters more than the
   rate — the first version swept forwards from 1952 at three years a firing,
   and the production log read "1955: 0 acts in force. 1956: 0. 1957: 0" while
   the acts anyone would actually search for sat two decades of firings away.
@@ -2684,7 +2685,7 @@ npm run ingest -- --adapter=citations
 | `ESA_BASE` / `ESA_LISTING_ALIAS` | eftasurv | Override the site or the database's page alias |
 | `INGEST_MODE=listing` | eur-lex (`catalogue`/`text`/`text-retry`/`eea-links`), cjeu | Which pass to run — see each source above |
 | `EURLEX_TYPES` | eur-lex | Act families to ingest, as CELEX letters (default `R,L`; anything stored outside the list is deleted) |
-| `EURLEX_YEARS_PER_RUN` | eur-lex | Catalogue years per firing, newest first (default 8) |
+| `EURLEX_YEARS_PER_RUN` | eur-lex | Catalogue years per firing, newest first (adapter default 8; the scheduled service runs 3 — see *Every variable, by service*) |
 | `EURLEX_ACTS` | eur-lex | Act texts fetched per run (default 150) |
 | `EURLEX_TEXT_SCOPE` | eur-lex | `eea` (default) fetches the possibly-EEA acts first; `all` works through the rest |
 | `CJEU_TYPES` | cjeu | Courts to sweep, as CELEX letters (default `CJ,TJ`; `CJ` alone drops the General Court) |
@@ -2852,6 +2853,172 @@ Headroom is the thing to keep an eye on at this cadence. A worst-case run where 
 Once those archives are complete, weekly (`0 6 * * 1`) is enough again; to push harder in the meantime, `0 */3 * * *` or `0 */2 * * *` are the next steps up — watch `/admin/ingestion` for run durations first, and mind that the sources are being fetched politely at one request per 1.5 s. If you ever need to backfill from scratch — a fresh database, or a gap — drop `INGEST_MODE=recent` from the start command and raise `INGEST_MAX_PAGES`; the `IngestCursor` table means each firing continues where the last one stopped.
 
 Note: this repo uses `prisma db push` rather than `prisma migrate`, so there's no `prisma/migrations` folder — `npm run db:deploy` (not `prisma migrate deploy`) is the correct pre-deploy command here. If you later want real migration history for a production database, run `npx prisma migrate dev --name init` locally once, commit the generated `prisma/migrations` folder, and switch the pre-deploy command to `npx prisma migrate deploy && npm run db:setup-search`.
+
+### Every variable, by service
+
+The complete reference. **Only one variable is required** — `DATABASE_URL` —
+and everything else has a working default, so a service with nothing else set
+runs correctly. What follows is what each one changes and what the alternatives
+are, grouped by which service needs it.
+
+The prose above says which of these are worth reaching for and in what order;
+this is the list to check a value against. Where a table earlier in this file
+covers the same variable in context, **this section is the one to trust for the
+default** — it is checked against the code, and against
+`scripts/ingest-all.sh`, which is what the service actually runs and which
+sometimes sets a different default from the adapter's own.
+
+#### Both services
+
+| Variable | Default | Options / notes |
+|---|---|---|
+| `DATABASE_URL` | — | **Required.** Add as a Reference Variable pointing at the Postgres service. |
+| `SEARCH_PROVIDER` | `postgres` | `postgres` \| `meilisearch`. Anything else is read as `postgres`. |
+| `MEILISEARCH_HOST` | `http://localhost:7700` | Only read when `SEARCH_PROVIDER=meilisearch`. |
+| `MEILISEARCH_API_KEY` | unset | As above. |
+
+Both services need the search variables: the ingestion service writes into the
+index the website reads.
+
+#### Website service — the well
+
+Off entirely until a key is set: with none, the launcher is not rendered and
+`/api/ask` answers 503.
+
+| Variable | Default | Options / notes |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | unset | One key is enough. |
+| `OPENAI_API_KEY` | unset | With both set, `ASK_PROVIDER` decides; without it, OpenAI, with a warning in the log. |
+| `ASK_PROVIDER` | whichever key is present | `openai` \| `anthropic`. Wins outright, including when its key is missing — naming a provider and silently getting the other is worse than an error. |
+| `ASK_MODEL_ANTHROPIC` | `claude-opus-5` | Model id. |
+| `ASK_MODEL_OPENAI` | `gpt-5.6-terra` | Model id. |
+| `ASK_MODEL` | unset | Overrides whichever of the two is active. For a quick one-off. |
+
+**Effort.** All take `low` \| `medium` \| `high` \| `xhigh` \| `max`.
+
+| Variable | Default | What it governs |
+|---|---|---|
+| `ASK_EFFORT` | unset | The old single knob, and the fallback for the answer branches below. Still works; setting nothing new changes nothing. |
+| `ASK_PLAN_EFFORT` | `low` | Planning. Six short strings; it does not need more. |
+| `ASK_EFFORT_SIMPLE` | `ASK_EFFORT`, else `low` | A question with one legal issue. |
+| `ASK_EFFORT_COMPLEX` | `ASK_EFFORT`, else `medium` | Several issues, conflicting sources, historical law, EEA/EU. **Do not raise past `medium` without measuring** — nothing escalates there on its own. |
+| `ASK_VERIFY_EFFORT` | `low` | The citation verifier, when on. |
+| `ASK_RESEARCH_EFFORT` | `ASK_EFFORT`, else `high` | The research loop. The stage that most repays thinking. |
+
+**Optional stages.** Each is another model call on every question. `1`/`true`/`yes`/`on` is on; anything else, including the empty string Railway leaves behind when a variable is cleared, is off.
+
+| Variable | Default | What it adds |
+|---|---|---|
+| `ASK_VERIFY_CITATIONS` | off | Checks each claim against the source it cites. A third call. |
+| `ASK_RERANK_WITH_MODEL` | off | Reorders the ranked candidates. A fourth call. |
+| `ASK_RESEARCH` | off | Deep research — the loop searches, reads and follows what it finds. See *Deep research* above. A request may also ask per question with `{"mode":"deep"}`. |
+
+**Sizes and budgets.** Each is clamped, so a typo in the dashboard cannot become a corpus scan.
+
+| Variable | Default | Range |
+|---|---|---|
+| `ASK_MAX_CANDIDATES` | `30` | 5–120 — gathered, then ranked. |
+| `ASK_MAX_SOURCES` | `10` | 3–30 — shown to the model and to the reader. |
+| `ASK_EVIDENCE_CHARS` | `1200` | 200–6000 — context around a matched passage. |
+| `ASK_PROVISION_CHARS` | `2400` | 400–12000 — of an article, cut at a paragraph boundary. |
+| `ASK_ANSWER_MAX_TOKENS` | `8000` | 1500–32000 — reasoning included. |
+| `ASK_PLAN_MAX_TOKENS` | `3000` | 500–32000 |
+| `ASK_VERIFY_MAX_TOKENS` | `4000` | 500–32000 |
+| `ASK_RESEARCH_MAX_TOKENS` | `16000` | 2000–64000 |
+| `ASK_RESEARCH_MAX_ROUNDS` | `12` | 1–40 — hard ceiling on model round-trips in the loop. |
+
+**Timeouts**, in milliseconds. A stage that runs out degrades as *The stages* describes; retrieval and the answer fail the request, the rest fall back.
+
+| Variable | Default | Range |
+|---|---|---|
+| `ASK_TIMEOUT_PLAN_MS` | `20000` | 1000–120000 |
+| `ASK_TIMEOUT_RETRIEVE_MS` | `20000` | 1000–120000 |
+| `ASK_TIMEOUT_RERANK_MS` | `20000` | 1000–120000 |
+| `ASK_TIMEOUT_ANSWER_MS` | `90000` | 1000–300000 |
+| `ASK_TIMEOUT_VERIFY_MS` | `30000` | 1000–120000 |
+| `ASK_TIMEOUT_RESEARCH_MS` | `240000` | 5000–900000 — the research loop's own budget, which is much larger on purpose. |
+
+One more, unrelated to the well: `TAG_CACHE_TTL_MS` (default `300000`) is how long the subject-tag type-ahead caches its list.
+
+#### Ingestion service
+
+Set the **Config File Path** to `railway.ingest.json` — that is what makes it a
+scheduled job rather than a second copy of the website.
+
+**Which adapters run, and how politely.**
+
+| Variable | Default | Options / notes |
+|---|---|---|
+| `INGEST_ADAPTERS` | all, in order | Space-separated adapter names, e.g. `"icelandic-gaps"` or `"logretta ulfljotur"`. Command-line arguments win over it. |
+| `INGEST_DELAY_MS` | `1500` | Minimum gap between requests to a source. One request at a time. Lower it only with a reason. |
+| `INGEST_USER_AGENT` | `logbrunnur-mvp/0.1 (…)` | Sent on every request. |
+| `INGEST_MAX_BYTES` | `33554432` | 32 MB. A larger document is skipped, not truncated. |
+| `INGEST_RETRY_BASE_MS` | `3000` | Backoff base. |
+
+**Per-source budgets**, all read by `scripts/ingest-all.sh` so they can be
+changed from the dashboard. Each bounds *one firing*; cursors mean the next
+firing continues where it stopped. Raise one for a one-off backfill, then put
+it back — a run that regularly fills every budget is the signal to lower one,
+not to fire more often.
+
+| Variable | Default | What it bounds |
+|---|---|---|
+| `ICELANDIC_INGEST_MODE` | `recent` | `recent` \| `backfill` \| `retry`. |
+| `ICELANDIC_MAX_PAGES` | `40` | List pages the incremental pass walks. |
+| `ICELANDIC_GAP_PAGES` | `600` | Pages the rolling gap sweep walks; `0` for no limit (~4,300). |
+| `ICELANDIC_RETRY_CASES` | `500` | Cases the retry sweep re-attempts. |
+| `STJORNARRADID_CASES` | `400` | Incremental pass, across the 40 boards. |
+| `STJORNARRADID_BACKFILL` | `900` | Rolling backfill, shared across the boards. |
+| `STJORNARRADID_PRIORITY` | `kaerunefnd-husamala` | Board key(s), comma-separated, backfilled first. Empty drops the pass. |
+| `STJORNARRADID_PRIORITY_CASES` | `1200` | That pass's own budget. |
+| `STJORNARRADID_RETRY` | `300` | Retry sweep. |
+| `STJORNARRADID_BOARDS` | all 40 | Comma-separated board keys. |
+| `UMBODSMADUR_MAX_CASES` | `600` | Full backfill is ~11,455. |
+| `YFIRSKATTANEFND_MAX_CASES` | `300` | Archive is 4,175 back to 1973. |
+| `YFIRSKATTANEFND_RETRY` | `100` | Retry sweep. |
+| `YSKN_INDEX_YEARS` | unset | List only the newest N years. For a constrained one-off. |
+| `UUA_MAX_CASES` | `400` | Archive is ~3,000. |
+| `UUA_RETRY` | `200` | Retry sweep. |
+| `FELAGSDOMUR_MAX_CASES` | `400` | The court has published 306. |
+| `NEYTENDAMAL_MAX_CASES` | `120` | The board has published ~228. |
+| `OBYGGDANEFND_MAX_CASES` | `12` | Small on purpose: each is a 1–5 MB PDF of hundreds of pages. |
+| `EFTA_MAX_CASES` | `1000` | The register is ~461 cases. |
+| `ESA_CASES` | `300` | ~6,725 documents, one PDF each. |
+| `ESA_RETRY` | `100` | Retry sweep. |
+| `JCD_DECISIONS` | `300` | EEA Joint Committee decisions per run. |
+| `JCD_LISTING` | on | `0` stops it asking EUR-Lex which decisions exist. |
+| `EURLEX_YEARS_PER_RUN` | `3` | Calendar years of the EU act catalogue swept, newest first. (`eur-lex.ts`'s own default is 8; `scripts/ingest-all.sh` sets 3, and the script is what the service runs.) |
+| `EURLEX_ACTS` | `150` | EU acts whose text is fetched. |
+| `EURLEX_TEXT_SCOPE` | `eea` | `eea` \| `all`. `all` is ~17,500 acts and weeks of runs. |
+| `EURLEX_RETRY` | `50` | Retry sweep. |
+| `EURLEX_JCD_LINKS` | on | `0` skips the EUR-Lex half of the incorporation pass. |
+| `CJEU_YEARS_PER_RUN` | `3` | Years listed per run, back to 1954 and round again. |
+| `CJEU_CASES` | `200` | Judgments whose text is fetched. ~33,400 exist. |
+| `CJEU_TYPES` | `CJ,TJ` | `CJ` alone drops the General Court's ~12,200 judgments. |
+| `LAGASAFN_MAX_ACTS` | `1000` | Left unbounded in the scheduled command on purpose — see above. |
+| `CITATION_BATCH_SIZE` | `50` | Documents scanned per batch. |
+| `CITATION_MAX_DOCS` | unbounded | Bounds one run. |
+
+**Two flags that are compliance decisions, not tuning.** Both are documented
+above with the robots.txt they turn on:
+
+| Variable | Default | |
+|---|---|---|
+| `EFTA_FETCH_DOCUMENTS` | `1` in `scripts/ingest-all.sh` | Downloads EFTA Court decision PDFs. `0` stores the case register only. See *EFTA Court*. |
+| `LOGRETTA_FETCH_PDFS` | unset (off) | Downloads Lögrétta article PDFs. See the journals section. |
+
+**One-off runs.** `INGEST_PROBE=1` reports what a site serves without storing
+anything; `INGEST_FULL=1` ignores cursors; `INGEST_MODE`, `INGEST_YEAR`,
+`INGEST_COURT`, `INGEST_SEARCH_TERM`, `INGEST_TEST_ID`, `INGEST_MAX_CASES` and
+`INGEST_MAX_PAGES` shape a manual `npm run ingest` invocation. These belong on
+the command line rather than on the service.
+
+**Endpoints.** Every adapter's base URL is overridable — `ISLAND_IS_GRAPHQL`,
+`EFTA_BASE`, `ESA_BASE`, `STJORNARRADID_BASE`, `UMBODSMADUR_BASE`, `UUA_BASE`,
+`YFIRSKATTANEFND_BASE`, `NEYTENDAMAL_BASE`, `OBYGGDANEFND_BASE`,
+`FELAGSDOMUR_BASE`, `LAGASAFN_INDEX_URL`, `EURLEX_SPARQL`, `LOGRETTA_API`,
+`ULFLJOTUR_API` and a few more. These exist so a source that moves can be
+followed without a deploy. Do not set them otherwise.
 
 ## Legal note
 

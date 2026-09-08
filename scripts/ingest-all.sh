@@ -91,7 +91,7 @@
 #   STJORNARRADID_RETRY     default 300   — cases the retry sweep re-attempts
 #   STJORNARRADID_BOARDS    unset         — comma-separated board keys; all 40 by default
 #   LOGRETTA_FETCH_PDFS     unset         — see README on the Prismic CDN's robots.txt
-#   EURLEX_YEARS_PER_RUN    default 8     — calendar years of the EU act catalogue
+#   EURLEX_YEARS_PER_RUN    default 3     — calendar years of the EU act catalogue
 #                                           swept per run. The sweep runs backwards
 #                                           from this year to 1952 and then starts
 #                                           over: the acts anyone searches for are
