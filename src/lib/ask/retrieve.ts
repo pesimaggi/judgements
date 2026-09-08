@@ -248,6 +248,31 @@ export async function retrieve(
 
   const chosen = select(ranked, plan, config);
 
+  // The rest — fetching the text, extracting the labelled evidence, numbering
+  // the sources and rendering the blocks — is shared with the deep research
+  // path, which arrives at its own `chosen` a completely different way. See
+  // composeRetrieval below and lib/ask/research.ts.
+  return composeRetrieval(chosen, plan, config, candidates.length);
+}
+
+/**
+ * Turns a chosen, ranked set of candidates into what the answer stage sees.
+ *
+ * Extracted from `retrieve` so the deep research loop can reuse it. The two
+ * paths disagree about everything up to this point — one runs a fixed fan of
+ * searches and fuses them, the other lets a model go and look — and must not
+ * disagree about anything after it. Everything that makes a source safe to
+ * quote lives here: the labelled parts of a decision, the paragraph-boundary
+ * truncation of a provision, the note on a record that is not the judgment,
+ * the fencing and the sanitising. A second copy of this would drift, and the
+ * drift would be invisible until an answer rested on it.
+ */
+export async function composeRetrieval<T extends RankCandidate & { payload: CandidatePayload }>(
+  chosen: { candidate: T; score: number; tier: AskAuthorityTier }[],
+  plan: QueryPlan,
+  config: AskConfig,
+  candidateCount: number
+): Promise<Retrieval> {
   // ---- the text, fetched only for what survived ranking -------------------
   const [provisionBodies, documentBodies] = await Promise.all([
     fetchProvisionBodies(chosen.flatMap((c) => (c.candidate.payload.type === "provision" ? [c.candidate.payload.hit.id] : []))),
@@ -258,7 +283,7 @@ export async function retrieve(
   const blocks: string[] = [];
   const registerOnly: string[] = [];
   const evidence = new Map<number, string>();
-  const counts = { acts: 0, provisions: 0, decisions: 0, candidates: candidates.length };
+  const counts = { acts: 0, provisions: 0, decisions: 0, candidates: candidateCount };
   let n = 0;
 
   for (const { candidate, score, tier } of chosen) {
@@ -437,7 +462,7 @@ type ProvisionHitLike = Awaited<
   ReturnType<ReturnType<typeof getSearchProvider>["searchProvisions"]>
 >["hits"][number];
 
-type CandidatePayload =
+export type CandidatePayload =
   | { type: "act"; act: MatchedAct }
   | { type: "provision"; hit: ProvisionHitLike }
   | { type: "decision"; hit: SearchHit };
@@ -450,7 +475,7 @@ type CandidatePayload =
  */
 const OPINION_SOURCES = new Set(["umbodsmadur"]);
 
-function decisionKind(sourceKey: string): AskSourceKind {
+export function decisionKind(sourceKey: string): AskSourceKind {
   if (isScholarship(sourceKey)) return "commentary";
   if (OPINION_SOURCES.has(sourceKey)) return "opinion";
   return "decision";
@@ -664,7 +689,7 @@ async function runAll<T>(
  * and commentary kept from crowding out the law when the question did not ask
  * for commentary.
  */
-function select<T extends RankCandidate & { payload: CandidatePayload }>(
+export function select<T extends RankCandidate & { payload: CandidatePayload }>(
   ranked: { candidate: T; score: number; tier: AskAuthorityTier }[],
   plan: QueryPlan,
   config: AskConfig

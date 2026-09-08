@@ -1951,6 +1951,63 @@ puts the limitation into the answer's context under `LIMITATIONS OF THIS
 SEARCH`, and the answer states it. The limitation is also returned to the
 browser separately, and the evaluation fixtures assert that it appears.
 
+### Deep research: it goes and looks
+
+The stages above run one fan of searches derived from the plan, and then
+answer. That can only ever find what the first guess at the corpus's vocabulary
+reaches, and — the sharper limit — it cannot act on what it learns.
+
+The question that made this obvious: *what did EFTA Court case E-5/21 decide,
+and has Hæstiréttur ruled since?* The well found the right EFTA case, could not
+answer the second half, and wrote down the two searches it would have needed:
+
+> „þyrfti að leita sérstaklega að efnislegu áliti EFTA-dómstólsins í E-5/21 og
+> síðar dómi í íslenska aðalmálinu"
+
+It knew exactly what to do next and had no way to do it. A person answered the
+same question in seconds — one search of one court, plus a subject tag.
+
+So `ASK_RESEARCH=1`, or `"mode": "deep"` on a request, replaces the retrieval
+stage with a loop that has the search itself (`src/lib/ask/research.ts`):
+
+| Tool | The question it asks |
+|---|---|
+| `search_decisions` | judgments and rulings, narrowed by source, **subject tag** and date |
+| `find_citing_cases` | *and then what?* — which decisions cite this case number |
+| `search_provisions` | the articles themselves |
+| `read_decision` | open one, or just its `reasoning` or `holding` |
+| `read_provision` | an article in full, exceptions included |
+| `list_subject_tags` | what the corpus files a subject under, before guessing at words |
+
+`find_citing_cases` and the tag filter are there because between them they are
+how a person answered the question above. Tags were supported by the search
+provider and reachable from nowhere in the well.
+
+**The rule that keeps it honest: nothing unread can be cited.** A result list
+is a lead. Only `read_decision` and `read_provision` add a source, which is what
+stops a case being cited on the strength of its title.
+
+**And the loop never writes the answer.** It returns a `Retrieval` — the same
+shape the ordinary path returns — so everything downstream is untouched:
+`composeRetrieval` numbers the sources, the answer prompt is the same one, and
+`lib/ask/citations.ts` checks the result exactly as before. The loop decides
+*what law the answer rests on*; it never decides that something is supported.
+
+It is bounded, because a loop is a bill: `ASK_RESEARCH_MAX_ROUNDS` (12) and
+`ASK_TIMEOUT_RESEARCH_MS` (four minutes). Hitting either is not a failure —
+whatever was gathered is composed and answered from. If it read nothing at all,
+the ordinary retrieval runs instead, so deep mode is never *worse* than quick.
+
+A supplied `retrieve` always wins over deep mode, so the evaluation harness
+replays recorded runs rather than going researching; there is a test for that.
+
+**You can watch it, and you can fold it away.** Every call is a `step` event —
+round, tool, and the argument worth showing — so the panel says *"Leitar að
+málum sem vísa til — E-5/21"* rather than spinning. The **—** button in the
+header minimises the well to a pill in the corner that keeps reporting what the
+loop is doing and says when the answer has landed. Nothing is cancelled: the
+request is held by the page, not the panel.
+
 ### It is streamed, and what is streamed is already checked
 
 A hard question takes the better part of a minute. Until recently the reader

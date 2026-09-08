@@ -116,6 +116,58 @@ export interface ExtractRequest<T> {
   parse: (input: unknown) => T | null;
 }
 
+/** One tool the research loop may call. Schema shared by both providers. */
+export interface AskToolDef {
+  name: string;
+  description: string;
+  schema: Record<string, unknown>;
+}
+
+/** What one call did, reported as it happens so the reader can watch. */
+export interface ToolStep {
+  round: number;
+  name: string;
+  input: unknown;
+  ms: number;
+  /** Characters handed back to the model — the cost of the answer. */
+  resultChars: number;
+  ok: boolean;
+}
+
+export interface RunToolsRequest {
+  system: string;
+  /** The opening turns. The transcript after that belongs to the provider. */
+  messages: AskTurn[];
+  tools: AskToolDef[];
+  maxTokens: number;
+  effort: AskEffort;
+  /**
+   * Runs one call and returns what the model should see.
+   *
+   * Never throws: a tool that fails returns its failure as text, because a
+   * model told "that search errored" can try another and a model handed an
+   * exception cannot. See `runTool` in lib/ask/tools.ts.
+   */
+  execute: (name: string, input: unknown) => Promise<string>;
+  onStep?: (step: ToolStep) => void;
+  onUsage?: (usage: AskUsage) => void;
+  /**
+   * Hard ceiling on model round-trips.
+   *
+   * The loop is bounded by this and by the caller's wall-clock timeout, and by
+   * nothing else. A research loop with no ceiling is a bill with no ceiling.
+   */
+  maxRounds: number;
+}
+
+export interface RunToolsResult {
+  /** The model's closing prose, if it wrote any. Often empty by design. */
+  text: string;
+  rounds: number;
+  /** True when it stopped at `maxRounds` rather than because it was finished. */
+  exhausted: boolean;
+}
+
 export interface AskModel {
   /** Prose, in the model's own words. */
   complete(req: CompleteRequest): Promise<string>;
@@ -125,6 +177,21 @@ export interface AskModel {
    * because a question is still answerable without a plan.
    */
   extract<T>(req: ExtractRequest<T>): Promise<T | null>;
+  /**
+   * Drives a tool-calling loop until the model stops asking for tools.
+   *
+   * The transcript — assistant turns carrying tool calls, and the results fed
+   * back — is built inside each provider, because the two wire formats have
+   * nothing in common and leaking either one into the caller would put a
+   * provider's message shapes into the research code. What the caller supplies
+   * is the tools and a function that runs them.
+   *
+   * Optional because only the deep research path needs it. Both real providers
+   * implement it; the fakes in the tests and in the evaluation harness answer
+   * one question each and would gain nothing but a stub. `deepResearch` checks
+   * for it and says plainly what is missing rather than failing on undefined.
+   */
+  runTools?(req: RunToolsRequest): Promise<RunToolsResult>;
 }
 
 /**
@@ -150,6 +217,11 @@ export interface AskEnv {
   ASK_RERANK_WITH_MODEL?: string;
   ASK_MAX_CANDIDATES?: string;
   ASK_MAX_SOURCES?: string;
+  ASK_RESEARCH?: string;
+  ASK_RESEARCH_EFFORT?: string;
+  ASK_RESEARCH_MAX_ROUNDS?: string;
+  ASK_RESEARCH_MAX_TOKENS?: string;
+  ASK_TIMEOUT_RESEARCH_MS?: string;
 }
 
 /**
@@ -283,6 +355,91 @@ class AnthropicAskModel implements AskModel {
     return stream.finalMessage();
   }
 
+  /**
+   * A manual loop rather than the SDK's tool runner.
+   *
+   * The runner is a beta helper and does not resume a `pause_turn` on its own;
+   * more to the point, this loop needs a hard round ceiling and a report of
+   * every call as it happens, and owning the loop is the simplest way to have
+   * both. See `RunToolsRequest.maxRounds`.
+   */
+  async runTools(req: RunToolsRequest): Promise<RunToolsResult> {
+    const messages: Anthropic.Beta.BetaMessageParam[] = req.messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+    const tools: Anthropic.Beta.BetaTool[] = req.tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      input_schema: t.schema as Anthropic.Beta.BetaTool["input_schema"],
+    }));
+
+    let text = "";
+    let rounds = 0;
+
+    while (rounds < req.maxRounds) {
+      rounds += 1;
+      const response = await this.client.beta.messages.create({
+        model: this.model,
+        max_tokens: req.maxTokens,
+        betas: [FALLBACK_BETA],
+        fallbacks: "default",
+        thinking: { type: "adaptive" },
+        output_config: { effort: req.effort },
+        // Stable prefix first, so the tools and the instructions are read from
+        // cache on every round after the first. In a fifteen-round loop that is
+        // most of the input bill.
+        system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }],
+        messages,
+        tools,
+      });
+
+      reportAnthropicUsage(req.onUsage, response.usage);
+      if (response.stop_reason === "refusal") {
+        throw new AskRefusal(response.stop_details?.explanation ?? undefined);
+      }
+
+      for (const block of response.content) {
+        if (block.type === "text") text += block.text;
+      }
+
+      // A server-tool turn that paused: append and re-send to continue.
+      if (response.stop_reason === "pause_turn") {
+        messages.push({ role: "assistant", content: response.content });
+        continue;
+      }
+
+      const calls = response.content.filter(
+        (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use"
+      );
+      if (calls.length === 0) return { text: text.trim(), rounds, exhausted: false };
+
+      messages.push({ role: "assistant", content: response.content });
+
+      // Run them together, and return every result in ONE user message.
+      // Splitting them across messages teaches the model to stop asking for
+      // parallel calls, which is most of what makes a research loop quick.
+      const results = await Promise.all(
+        calls.map(async (call) => {
+          const at = Date.now();
+          const out = await req.execute(call.name, call.input);
+          req.onStep?.({
+            round: rounds,
+            name: call.name,
+            input: call.input,
+            ms: Date.now() - at,
+            resultChars: out.length,
+            ok: true,
+          });
+          return { type: "tool_result" as const, tool_use_id: call.id, content: out };
+        })
+      );
+      messages.push({ role: "user", content: results });
+    }
+
+    return { text: text.trim(), rounds, exhausted: true };
+  }
+
   async extract<T>(req: ExtractRequest<T>): Promise<T | null> {
     const response = await this.client.beta.messages.create({
       model: this.model,
@@ -389,6 +546,81 @@ class OpenAIAskModel implements AskModel {
     // the final chunk is still reported for a request that was filtered.
     if (filtered) throw new AskRefusal();
     return text.trim();
+  }
+
+  /** The same loop in this API's shape: tool_calls out, `role: "tool"` back. */
+  async runTools(req: RunToolsRequest): Promise<RunToolsResult> {
+    type Msg = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+    const messages: Msg[] = [
+      { role: "developer", content: req.system },
+      ...req.messages.map((m) => ({ role: m.role, content: m.content }) as Msg),
+    ];
+    const tools = req.tools.map((t) => ({
+      type: "function" as const,
+      function: { name: t.name, description: t.description, parameters: t.schema },
+    }));
+
+    let text = "";
+    let rounds = 0;
+
+    while (rounds < req.maxRounds) {
+      rounds += 1;
+      const response = await this.client.chat.completions.create({
+        model: this.model,
+        max_completion_tokens: req.maxTokens,
+        reasoning_effort: req.effort,
+        messages,
+        tools,
+      });
+
+      reportOpenAIUsage(req.onUsage, response.usage);
+      const choice = response.choices[0];
+      if (choice?.finish_reason === "content_filter") throw new AskRefusal();
+
+      const message = choice?.message;
+      if (message?.content) text += message.content;
+
+      const calls = message?.tool_calls ?? [];
+      if (calls.length === 0) return { text: text.trim(), rounds, exhausted: false };
+
+      messages.push(message as Msg);
+      const results = await Promise.all(
+        calls.map(async (call) => {
+          // Only function calls are ever requested here; anything else is a
+          // shape this loop did not ask for and is reported as such rather
+          // than crashing the research.
+          if (call.type !== "function") {
+            return { role: "tool" as const, tool_call_id: call.id, content: "Unsupported tool call." };
+          }
+          const at = Date.now();
+          // Never raw string matching on the arguments: these models escape
+          // JSON differently between versions.
+          let input: unknown = {};
+          try {
+            input = JSON.parse(call.function.arguments || "{}");
+          } catch {
+            return {
+              role: "tool" as const,
+              tool_call_id: call.id,
+              content: "Arguments were not valid JSON. Call the tool again with a valid object.",
+            };
+          }
+          const out = await req.execute(call.function.name, input);
+          req.onStep?.({
+            round: rounds,
+            name: call.function.name,
+            input,
+            ms: Date.now() - at,
+            resultChars: out.length,
+            ok: true,
+          });
+          return { role: "tool" as const, tool_call_id: call.id, content: out };
+        })
+      );
+      messages.push(...(results as Msg[]));
+    }
+
+    return { text: text.trim(), rounds, exhausted: true };
   }
 
   async extract<T>(req: ExtractRequest<T>): Promise<T | null> {

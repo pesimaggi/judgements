@@ -20,6 +20,13 @@ export interface AskRequestBody {
   /** How much of the EU library the act lookups may see. See lib/acts.ts. */
   scope?: "eea" | "eu";
   /**
+   * "deep" sends the question through the research loop, which searches,
+   * reads and follows what it finds instead of running one fan of searches.
+   * Slower by design. Omit to use the deployment's own default
+   * (`ASK_RESEARCH`).
+   */
+  mode?: "quick" | "deep";
+  /**
    * Ask for the answer as Server-Sent Events rather than one JSON object.
    *
    * `Accept: text/event-stream` does the same thing. JSON remains the default
@@ -244,6 +251,24 @@ export type AskEvent =
        */
       type: "sources";
       sources: AskSource[];
+    }
+  | {
+      /**
+       * One step the deep research loop took, as it takes it.
+       *
+       * The loop can run for minutes, and this is what makes that legible
+       * rather than a long silence: the reader watches it search a court, open
+       * a judgment, look for what cites a case. It is also the honest record of
+       * how an answer was arrived at, which for legal research is worth as much
+       * as the answer.
+       */
+      type: "step";
+      round: number;
+      /** The tool's name, e.g. "find_citing_cases". */
+      name: string;
+      /** The argument worth showing — the query, the case number, the id. */
+      detail: string;
+      ms: number;
     }
   | {
       /** One validated line of the answer. Appended in order. */
