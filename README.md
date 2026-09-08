@@ -25,7 +25,7 @@ The three Icelandic courts published at [island.is/domar](https://island.is/doma
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
 - **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force Icelandic act; `eur-lex` ingests the EU regulations and directives in force from the Publications Office; `cjeu` ingests the judgments of the Court of Justice and the General Court from the same endpoint; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `eea-joint-committee` ingests the EEA Joint Committee's decisions (their own text, one record each); `eftasurv` ingests the EFTA Surveillance Authority's ~6,725 public documents; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court, both halves of it; `uua` ingests Úrskurðarnefnd umhverfis- og auðlindamála (~3,000 planning and environmental rulings, on its own site); `obyggdanefnd` ingests the þjóðlendu commission's 84 úrskurðir; `neytendamal` ingests Áfrýjunarnefnd neytendamála; `yfirskattanefnd` ingests the tax appeal board's 4,175 úrskurðir back to 1973, ríkisskattanefnd's included; `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
 - **Scholarly commentary** — Tímarit Lögréttu and Vefrit Úlfljóts, searched alongside the case law rather than in a separate silo, so a query about an unsettled point returns both the judgments and the articles arguing about them. Articles are indexed in full but read at the journal that published them: their cards and pages link out rather than reproducing the text here.
-- **The well** — an assistant that answers a question in prose instead of returning a result list. Drop a question in ("Hvernig sæki ég um íslenskan ríkisborgararétt?") and it runs a handful of focused searches over the acts, the provisions and every decision source, ranks what comes back by authority as well as by relevance, and writes an answer in the language you asked in with a numbered citation on every proposition — each one a link to the article or the judgment it rests on. It opens as a split screen: the conversation on one side, the law it found on the other, each source carrying the passage it was selected for. The stages stream as they finish — the search terms first, then the law, then the prose a line at a time — and every line is citation-checked *before* it is sent, so an invented citation is never briefly on screen. It answers only from what the search returned; a citation to a source that does not exist is removed rather than renumbered, and a statement of law with nothing behind it is marked as unverified in the answer you read. Off unless an LLM API key is configured; OpenAI and Anthropic are both supported and swap with one variable. See *Asking the well* below.
+- **The well** — an assistant that answers a question in prose instead of returning a result list. Drop a question in ("Hvernig sæki ég um íslenskan ríkisborgararétt?") and it runs a handful of focused searches over the acts, the provisions and every decision source, ranks what comes back by authority as well as by relevance, and writes an answer in the language you asked in with a numbered citation on every proposition — each one a link to the article or the judgment it rests on. It opens as a split screen: the conversation on one side, the law it found on the other, each source carrying the passage it was selected for — and clicking a source or a citation opens the judgment itself in that half, so the answer and the law it rests on are read side by side without leaving the conversation. The stages stream as they finish — the search terms first, then the law, then the prose a line at a time — and every line is citation-checked *before* it is sent, so an invented citation is never briefly on screen. It answers only from what the search returned; a citation to a source that does not exist is removed rather than renumbered, and a statement of law with nothing behind it is marked as unverified in the answer you read. Off unless an LLM API key is configured; OpenAI and Anthropic are both supported and swap with one variable. See *Asking the well* below.
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
 
 ## Quick start
@@ -2003,6 +2003,33 @@ passage it was selected for, expandable in place, and a label saying what kind
 of thing it is: **Lagaákvæði**, **Úrlausn**, **Álit**, **Fræðiskrif** (marked
 "ekki gildandi réttur"). Below 60rem there is no room for two panes and they
 become two tabs over one.
+
+#### The source opens where the list was
+
+The right-hand half is a reading surface, not only a list. Clicking a source —
+or clicking a citation chip in the prose, which is the shortest path there is
+from *"it says this"* to *"does it though"* — replaces the list with the
+document itself: the judgment typeset as it is on its own page, or the cited
+article with the rest of its act around it and the cited one marked.
+
+This is the point of the split screen finally being paid off. The list's link
+used to navigate away, which closed the well and lost the conversation, so
+checking a citation meant choosing between the answer and the evidence — which
+is exactly the choice a reader of a grounded answer should never have to make.
+Now the answer stays on the left and the law is read on the right.
+
+The reading pane carries what you need to actually check a citation: the
+copyable citation line, a link to the official source, and search-within-the-
+document, because a Niðurstaða can run to twenty pages and the sentence the
+answer rests on is one line of it. **← Heimildir** goes back to the list, and
+asking a new question closes the document — it belonged to the answer being
+replaced.
+
+It fetches from `/api/documents/[id]` and `/api/acts/[slug]`, the same two
+endpoints the document page and the act reader use, so there is no second copy
+of the corpus to keep in step. A journal article is the exception and still
+links out: its text is indexed here for searching and never sent to a browser,
+so the pane says so rather than showing an empty document.
 
 ### Feedback
 

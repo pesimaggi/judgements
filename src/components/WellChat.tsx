@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { WellScene, type WellPhase } from "./WellScene";
+import { WellReader } from "./WellReader";
 import { markCitedIn, parseAnswer, type InlineSpan } from "@/lib/ask/render";
 import { FEEDBACK_KINDS, FEEDBACK_LABELS, type FeedbackKind } from "@/lib/ask/feedback";
 import { readAskEvents } from "@/lib/ask/sse";
@@ -75,10 +75,31 @@ export function WellChat({ enabled }: { enabled: boolean }) {
    * take a minute.
    */
   const [terms, setTerms] = useState<string[]>([]);
+  /**
+   * The source open in the right-hand pane, if any.
+   *
+   * Null is the list of everything the search found; a source here replaces it
+   * with the document itself. Reading a judgment beside the sentence that
+   * cites it is the actual work, and it used to mean navigating away from the
+   * conversation to do it. See components/WellReader.tsx.
+   */
+  const [reading, setReading] = useState<AskSource | null>(null);
 
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const busy = phase === "dropping" || phase === "loading";
+
+  /**
+   * Opens a source in the reading pane.
+   *
+   * Below 60rem there is no second pane to open it into, so the panes are
+   * tabs and this switches to the one the document is about to appear in —
+   * otherwise the click does something invisible.
+   */
+  const openSource = useCallback((source: AskSource) => {
+    setReading(source);
+    setPane("sources");
+  }, []);
 
   /** The sources panel follows the most recent answer that had any. */
   const latest = useMemo(
@@ -149,6 +170,9 @@ export function WellChat({ enabled }: { enabled: boolean }) {
       setPhase("dropping");
       setPane("chat");
       setTerms([]);
+      // The open document belongs to the answer being replaced. Leaving it up
+      // beside a new question is showing the law for the previous one.
+      setReading(null);
 
       // Sent while the paper is still in the air: the animation is there to
       // cover the wait, not to add to it. Events that arrive during the fall
@@ -417,7 +441,12 @@ export function WellChat({ enabled }: { enabled: boolean }) {
                         {message.content}
                       </p>
                     ) : (
-                      <Answer key={i} message={message} onShowSources={() => setPane("sources")} />
+                      <Answer
+                        key={i}
+                        message={message}
+                        onShowSources={() => setPane("sources")}
+                        onOpen={openSource}
+                      />
                     )
                   )}
                 </div>
@@ -469,13 +498,17 @@ export function WellChat({ enabled }: { enabled: boolean }) {
             </form>
           </section>
 
-          {/* ---- what the well found ----------------------------------- */}
+          {/* ---- what the well found, or the one being read ------------- */}
           <aside
             className={`min-h-0 min-w-0 flex-1 flex-col border-line bg-paper/40 lg:flex lg:basis-1/2 lg:border-l ${
               pane === "sources" ? "flex" : "hidden"
             }`}
           >
-            <SourcePanel sources={sources} busy={busy} />
+            {reading ? (
+              <WellReader source={reading} onBack={() => setReading(null)} />
+            ) : (
+              <SourcePanel sources={sources} busy={busy} onOpen={openSource} />
+            )}
           </aside>
         </div>
       </div>
@@ -515,7 +548,15 @@ function PaneTab({
  * the answer did not use is worth something, and is also the fastest way to
  * spot that the well found the right provision and then wrote around it.
  */
-function SourcePanel({ sources, busy }: { sources: AskSource[]; busy: boolean }) {
+function SourcePanel({
+  sources,
+  busy,
+  onOpen,
+}: {
+  sources: AskSource[];
+  busy: boolean;
+  onOpen: (source: AskSource) => void;
+}) {
   const cited = sources.filter((s) => s.cited);
   const rest = sources.filter((s) => !s.cited);
 
@@ -537,6 +578,7 @@ function SourcePanel({ sources, busy }: { sources: AskSource[]; busy: boolean })
         title={`Vitnað til (${cited.length})`}
         note="Heimildirnar sem svarið byggir beinlínis á."
         sources={cited}
+        onOpen={onOpen}
       />
       {rest.length > 0 && (
         <SourceGroup
@@ -544,6 +586,7 @@ function SourcePanel({ sources, busy }: { sources: AskSource[]; busy: boolean })
           note="Fannst í leitinni en er ekki vitnað til í svarinu."
           sources={rest}
           muted
+          onOpen={onOpen}
         />
       )}
     </div>
@@ -555,11 +598,13 @@ function SourceGroup({
   note,
   sources,
   muted,
+  onOpen,
 }: {
   title: string;
   note: string;
   sources: AskSource[];
   muted?: boolean;
+  onOpen: (source: AskSource) => void;
 }) {
   if (sources.length === 0) return null;
   return (
@@ -571,7 +616,7 @@ function SourceGroup({
       <ul className="mt-2 space-y-2">
         {sources.map((source) => (
           <li key={source.n}>
-            <SourceCard source={source} muted={muted} />
+            <SourceCard source={source} muted={muted} onOpen={onOpen} />
           </li>
         ))}
       </ul>
@@ -595,7 +640,15 @@ const KIND_LABEL: Record<AskSource["kind"], string> = {
  * a title, and asking them to open the judgment to find out why it is here is
  * asking them not to check at all.
  */
-function SourceCard({ source, muted }: { source: AskSource; muted?: boolean }) {
+function SourceCard({
+  source,
+  muted,
+  onOpen,
+}: {
+  source: AskSource;
+  muted?: boolean;
+  onOpen: (source: AskSource) => void;
+}) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -609,11 +662,11 @@ function SourceCard({ source, muted }: { source: AskSource; muted?: boolean }) {
           [{source.n}]
         </span>
         <div className="min-w-0 flex-1">
-          <SourceLink source={source} className="block hover:underline">
+          <OpenSource source={source} onOpen={onOpen} className="block text-left hover:underline">
             <span className="block text-[12px] font-medium leading-snug text-ink">
               {source.title}
             </span>
-          </SourceLink>
+          </OpenSource>
           <span className="mt-0.5 block text-[11px] leading-snug text-inkSoft">
             {source.subtitle}
           </span>
@@ -633,9 +686,16 @@ function SourceCard({ source, muted }: { source: AskSource; muted?: boolean }) {
                 className="text-[10px] text-inkSoft underline underline-offset-2 hover:text-ink"
                 aria-expanded={open}
               >
-                {open ? "Fela textann" : "Sýna textann"}
+                {open ? "Fela brotið" : "Sýna brotið"}
               </button>
             )}
+            <OpenSource
+              source={source}
+              onOpen={onOpen}
+              className="text-[10px] font-medium text-accent underline underline-offset-2"
+            >
+              Lesa hér
+            </OpenSource>
           </div>
         </div>
       </div>
@@ -650,7 +710,15 @@ function SourceCard({ source, muted }: { source: AskSource; muted?: boolean }) {
 }
 
 /** One answer: the prose, then a way to say what was wrong with it. */
-function Answer({ message, onShowSources }: { message: Message; onShowSources: () => void }) {
+function Answer({
+  message,
+  onShowSources,
+  onOpen,
+}: {
+  message: Message;
+  onShowSources: () => void;
+  onOpen: (source: AskSource) => void;
+}) {
   const blocks = parseAnswer(message.content);
   const sources = message.sources ?? [];
   const byNumber = new Map(sources.map((s) => [s.n, s]));
@@ -669,7 +737,7 @@ function Answer({ message, onShowSources }: { message: Message; onShowSources: (
                 key={i}
                 className="pt-1 font-sans text-[11px] font-semibold uppercase tracking-wide text-inkSoft"
               >
-                <Spans spans={block.spans} sources={byNumber} />
+                <Spans spans={block.spans} sources={byNumber} onOpen={onOpen} />
               </h4>
             );
           }
@@ -678,7 +746,7 @@ function Answer({ message, onShowSources }: { message: Message; onShowSources: (
               <ul key={i} className="list-disc space-y-1 pl-4 marker:text-line">
                 {block.items.map((item, j) => (
                   <li key={j}>
-                    <Spans spans={item} sources={byNumber} />
+                    <Spans spans={item} sources={byNumber} onOpen={onOpen} />
                   </li>
                 ))}
               </ul>
@@ -686,7 +754,7 @@ function Answer({ message, onShowSources }: { message: Message; onShowSources: (
           }
           return (
             <p key={i}>
-              <Spans spans={block.spans} sources={byNumber} />
+              <Spans spans={block.spans} sources={byNumber} onOpen={onOpen} />
             </p>
           );
         })}
@@ -798,15 +866,20 @@ function Feedback({ message }: { message: Message }) {
  * page — or, for a journal article, at the journal that published it. The
  * second kind opens in a new tab and says so, the way the result cards do.
  */
-function SourceLink({
+function OpenSource({
   source,
+  onOpen,
   className,
   children,
 }: {
   source: AskSource;
+  onOpen: (source: AskSource) => void;
   className?: string;
   children: React.ReactNode;
 }) {
+  // A journal article is read at the journal that published it: its text is
+  // indexed here for searching and never sent out, so there is nothing for the
+  // reading pane to show and the link has to leave.
   if (/^https?:/.test(source.path)) {
     return (
       <a href={source.path} target="_blank" rel="noopener noreferrer" className={className}>
@@ -815,13 +888,21 @@ function SourceLink({
     );
   }
   return (
-    <Link href={source.path} className={className}>
+    <button type="button" onClick={() => onOpen(source)} className={className}>
       {children}
-    </Link>
+    </button>
   );
 }
 
-function Spans({ spans, sources }: { spans: InlineSpan[]; sources: Map<number, AskSource> }) {
+function Spans({
+  spans,
+  sources,
+  onOpen,
+}: {
+  spans: InlineSpan[];
+  sources: Map<number, AskSource>;
+  onOpen: (source: AskSource) => void;
+}) {
   return (
     <>
       {spans.map((span, i) => {
@@ -843,14 +924,17 @@ function Spans({ spans, sources }: { spans: InlineSpan[]; sources: Map<number, A
             [{span.n}]
           </span>
         );
+        // The shortest path from "it says this" to "does it though": the chip
+        // opens the source it points at in the pane beside the sentence.
         return (
-          <SourceLink
+          <OpenSource
             key={i}
             source={source}
+            onOpen={onOpen}
             className="ml-0.5 rounded bg-accentSoft px-1 align-super text-[9px] font-semibold text-accent hover:underline"
           >
-            <span title={`${source.title} — ${source.subtitle}`}>{span.n}</span>
-          </SourceLink>
+            <span title={`Lesa: ${source.title} — ${source.subtitle}`}>{span.n}</span>
+          </OpenSource>
         );
       })}
     </>
