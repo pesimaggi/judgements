@@ -502,3 +502,43 @@ describe("streaming events", () => {
     assert.equal(events.filter((e) => e.type === "line").length, 0);
   });
 });
+
+describe("deep research mode", () => {
+  test("a supplied retrieval always wins, so the eval harness never researches", () => {
+    // The harness replays a recorded run. If ASK_RESEARCH were on in the
+    // environment it happened to run in, deep mode would send it off searching
+    // a live corpus and it would be measuring something else entirely.
+    let researched = false;
+    return ask("Hvernig?", [], {
+      ...QUIET,
+      mode: "deep",
+      retrieve: async () => retrieval(),
+      model: model({
+        runTools: async () => {
+          researched = true;
+          return { text: "", rounds: 1, exhausted: false };
+        },
+      }),
+    }).then(({ response }) => {
+      assert.equal(researched, false, "the research loop ran despite a supplied retrieval");
+      assert.match(response.answer, /Svarið/);
+    });
+  });
+
+  test("quick mode never reaches for the loop", async () => {
+    let researched = false;
+    await ask("Hvernig?", [], {
+      ...QUIET,
+      mode: "quick",
+      retrieve: async () => retrieval(),
+      model: model({
+        runTools: async () => {
+          researched = true;
+          return { text: "", rounds: 1, exhausted: false };
+        },
+      }),
+    });
+    assert.equal(researched, false);
+  });
+});
+

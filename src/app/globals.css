@@ -310,3 +310,29 @@ mark {
     opacity: 1;
   }
 }
+
+/* The dot on the minimised well, which says the loop is still working. A
+   two-second cycle rather than a spinner: this runs for minutes, and anything
+   faster reads as impatience. */
+.well-pulse {
+  animation: well-pulse 2s ease-in-out infinite;
+}
+
+@keyframes well-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .well-pulse {
+    animation: none;
+    opacity: 0.7;
+  }
+}

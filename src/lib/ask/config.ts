@@ -66,8 +66,23 @@ export interface AskConfig {
   planMaxTokens: number;
   /** Ceiling on the verification call. */
   verifyMaxTokens: number;
+  /** Deep research: the model goes and looks, instead of one fan of searches. */
+  research: boolean;
+  /** Effort for the research loop. It is the stage that most repays thinking. */
+  researchEffort: AskEffort;
+  /** Hard ceiling on model round-trips inside the loop. */
+  researchMaxRounds: number;
+  /** Ceiling on each research call. */
+  researchMaxTokens: number;
   /** Per-stage wall-clock budgets, in milliseconds. */
-  timeouts: { plan: number; retrieve: number; answer: number; verify: number; rerank: number };
+  timeouts: {
+    plan: number;
+    retrieve: number;
+    answer: number;
+    verify: number;
+    rerank: number;
+    research: number;
+  };
 }
 
 /**
@@ -104,7 +119,12 @@ export function askConfig(env: AskEnv = process.env): AskConfig {
     answerMaxTokens: count(env.ASK_ANSWER_MAX_TOKENS, DEFAULT_ANSWER_TOKENS, 1500, 32000),
     planMaxTokens: count(env.ASK_PLAN_MAX_TOKENS, DEFAULT_PLAN_TOKENS, 500, 32000),
     verifyMaxTokens: count(env.ASK_VERIFY_MAX_TOKENS, DEFAULT_VERIFY_TOKENS, 500, 32000),
+    research: flag(env.ASK_RESEARCH),
+    researchEffort: effort(env.ASK_RESEARCH_EFFORT, legacy ?? "high"),
+    researchMaxRounds: count(env.ASK_RESEARCH_MAX_ROUNDS, 12, 1, 40),
+    researchMaxTokens: count(env.ASK_RESEARCH_MAX_TOKENS, 16_000, 2000, 64_000),
     timeouts: {
+      research: count(env.ASK_TIMEOUT_RESEARCH_MS, 240_000, 5000, 900_000),
       plan: count(env.ASK_TIMEOUT_PLAN_MS, 20_000, 1000, 120_000),
       retrieve: count(env.ASK_TIMEOUT_RETRIEVE_MS, 20_000, 1000, 120_000),
       answer: count(env.ASK_TIMEOUT_ANSWER_MS, 90_000, 1000, 300_000),

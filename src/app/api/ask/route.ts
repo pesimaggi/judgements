@@ -119,6 +119,7 @@ function streamAnswer(
   question: string,
   history: AskTurn[],
   scope: "eea" | "eu",
+  mode: "quick" | "deep" | undefined,
   signal: AbortSignal,
   onDone: () => void
 ): Response {
@@ -155,7 +156,7 @@ function streamAnswer(
       controller.enqueue(encoder.encode(": open\n\n"));
 
       try {
-        await ask(question, history, { scope, onEvent: send });
+        await ask(question, history, { scope, mode, onEvent: send });
       } catch (e) {
         send({ type: "error", message: failure(e).message });
       } finally {
@@ -251,6 +252,9 @@ export async function POST(req: Request) {
     .map((t) => ({ role: t.role, content: t.content.slice(0, MAX_HISTORY_CHARS) }));
 
   const scope = body.scope === "eu" ? "eu" : "eea";
+  // Undefined, not a default: with nothing asked for, the deployment's own
+  // ASK_RESEARCH setting decides, and the route does not get a vote.
+  const mode = body.mode === "deep" ? "deep" : body.mode === "quick" ? "quick" : undefined;
   const wantsStream =
     body.stream === true || (req.headers.get("accept") ?? "").includes("text/event-stream");
 
@@ -259,11 +263,11 @@ export async function POST(req: Request) {
     // returns as soon as the headers are written, and clearing it now would
     // let a double-click start a second full run of a pipeline that is still
     // paying for the first.
-    return streamAnswer(question, history, scope, req.signal, () => inFlight.delete(key));
+    return streamAnswer(question, history, scope, mode, req.signal, () => inFlight.delete(key));
   }
 
   try {
-    const { response } = await ask(question, history, { scope });
+    const { response } = await ask(question, history, { scope, mode });
     return NextResponse.json(response);
   } catch (e) {
     const { status, message } = failure(e);

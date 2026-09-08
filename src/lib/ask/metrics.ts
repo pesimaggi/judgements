@@ -70,7 +70,15 @@ export interface AskMetrics {
   };
 
   /** Which optional stages ran, as opposed to being switched on and failing. */
-  stages: { planned: boolean; reranked: boolean; verified: boolean };
+  stages: { planned: boolean; reranked: boolean; verified: boolean; researched: boolean };
+  /**
+   * The deep research loop, when it ran. `steps` is tool calls made, `rounds`
+   * model round-trips; `exhausted` means the round ceiling stopped it, and
+   * `fellBack` that it read nothing and the ordinary retrieval stood in. Those
+   * last two are the numbers worth watching — one says the ceiling is too low,
+   * the other that the loop is not working at all.
+   */
+  research?: { steps: number; rounds: number; exhausted: boolean; fellBack: boolean };
 
   language: string | null;
   /** True when the well declined to answer rather than answering from nothing. */
@@ -112,7 +120,8 @@ export class AskMetricsRecorder {
   historical = false;
   ok = true;
   errorKind?: string;
-  stages = { planned: false, reranked: false, verified: false };
+  stages = { planned: false, reranked: false, verified: false, researched: false };
+  research: AskMetrics["research"];
 
   private issues: AskValidationIssue[] = [];
 
@@ -173,6 +182,7 @@ export class AskMetricsRecorder {
         verified: this.verifiedClaims,
       },
       stages: { ...this.stages },
+      ...(this.research ? { research: { ...this.research } } : {}),
       language: this.language,
       abstained: this.abstained,
       historical: this.historical,
