@@ -42,6 +42,7 @@ import { fuse, maxPossibleScore, type RankedList } from "./fusion";
 import { rankCandidates, authorityName, type RankCandidate } from "./rank";
 import {
   buildDecisionEvidence,
+  isRegisterOnly,
   provisionEvidence,
   sanitizeEvidence,
   stripMarks,
@@ -130,6 +131,21 @@ export interface Retrieval {
  * the legislation here — only from decisions that happen to quote the old
  * wording.
  */
+/**
+ * What to say when the only record of a decision is its register entry.
+ *
+ * Stated as a limitation of the *search*, in the same channel as the
+ * historical-law one, because it is the same kind of fact: something the
+ * corpus cannot do for this question, which the answer must say out loud
+ * rather than work around.
+ */
+export function registerOnlyLimitation(language: "is" | "en", cases: string[]): string {
+  const list = cases.join(", ");
+  return language === "is"
+    ? `Fyrir eftirfarandi mál EFTA-dómstólsins geymir þessi gagnagrunnur aðeins málaskrárfærslu dómstólsins — aðila, álitaefni og lista yfir birt skjöl — en ekki texta dómsins sjálfs: ${list}. Svarið verður að taka fram að niðurstaða dómsins verði ekki lesin úr þessum heimildum og vísa lesanda á dómstólinn sjálfan, í stað þess að segja einungis að heimildirnar sýni hana ekki.`
+    : `For the following EFTA Court cases this database holds only the Court's case-register entry — the parties, the subject and the list of published documents — and not the text of the decision itself: ${list}. The answer must say that the outcome cannot be read from these sources and point the reader to the Court, rather than merely reporting that the sources do not show it.`;
+}
+
 export function historicalLimitation(language: "is" | "en"): string {
   return language === "is"
     ? "Lagasafnið í brunninum geymir aðeins gildandi texta laga eins og hann stendur í dag — hvorki brottfelld lög né eldri útgáfur ákvæða. Spurningin virðist varða réttarástand á fyrri tíma. Svarið verður að taka fram að ekki er unnt að staðfesta orðalag ákvæðis eins og það hljóðaði þá, nema úrlausn í heimildunum vitni beinlínis til eldra orðalags."
@@ -240,6 +256,7 @@ export async function retrieve(
 
   const sources: AskSource[] = [];
   const blocks: string[] = [];
+  const registerOnly: string[] = [];
   const evidence = new Map<number, string>();
   const counts = { acts: 0, provisions: 0, decisions: 0, candidates: candidates.length };
   let n = 0;
@@ -321,6 +338,9 @@ export async function retrieve(
 
     // A journal article's text never leaves the server; the search snippet is
     // all this app ever shows of one, here as everywhere else.
+    const registerEntry = isRegisterOnly(hit.source, stored);
+    if (registerEntry) registerOnly.push(label);
+
     const ev = buildDecisionEvidence(
       {
         fullText: scholarship ? null : stored,
@@ -358,6 +378,9 @@ export async function retrieve(
         : null,
       ev.reasoning ? `\nREASONING (Niðurstaða):\n${sanitizeEvidence(ev.reasoning)}` : null,
       ev.holding ? `\nHOLDING (Dómsorð):\n${sanitizeEvidence(ev.holding)}` : null,
+      registerEntry
+        ? "\nWHAT THIS RECORD IS: the EFTA Court's case-register entry, not the decision. It carries the parties, the subject and the list of documents the Court has published; the text of the decision is not held in this database. Do not state what the Court held from this record. Say that the decision itself is not among these sources and send the reader to the Court."
+        : null,
     ]
       .filter(Boolean)
       .join("\n");
@@ -373,7 +396,10 @@ export async function retrieve(
     );
   }
 
-  const limitations = plan.historical ? [historicalLimitation(plan.language)] : [];
+  const limitations = [
+    ...(plan.historical ? [historicalLimitation(plan.language)] : []),
+    ...(registerOnly.length ? [registerOnlyLimitation(plan.language, registerOnly)] : []),
+  ];
 
   return {
     sources,

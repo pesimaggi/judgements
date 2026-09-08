@@ -275,3 +275,104 @@ describe("truncateByParagraph", () => {
     assert.equal(truncateByParagraph(["", "  ", "Texti."], 100), "Texti.");
   });
 });
+
+describe("the EU and EEA courts, which write in English", () => {
+  // Until the English headings were added to HEADING_WORDS, both extractors
+  // returned null for every one of these and the well was left with a keyword
+  // window it was forbidden to draw a holding from.
+
+  const EFTA = [
+    "JUDGMENT OF THE COURT",
+    "8 December 2022",
+    "",
+    "(Social security — Regulation (EC) No 883/2004 — Migrant workers — Equal treatment)",
+    "",
+    "I Legal background",
+    "",
+    "Article 6 of Regulation (EC) No 883/2004 provides for the aggregation of periods.",
+    "",
+    "II Facts and procedure",
+    "",
+    "By a letter registered at the Court on 4 October 2021, Héraðsdómur Reykjavíkur requested an Advisory Opinion.",
+    "",
+    "V Findings of the Court",
+    "",
+    "It follows that Article 21 must be interpreted as precluding national legislation under which the reference period is calculated without regard to periods completed in another EEA State.",
+    "",
+    "Such a rule places migrant workers at a disadvantage and is therefore incompatible with the principle of equal treatment.",
+    "",
+    "VI Costs",
+    "",
+    "The costs incurred by the Icelandic Government are not recoverable.",
+    "",
+    "On those grounds,",
+    "",
+    "THE COURT gives the following Advisory Opinion:",
+    "",
+    "Article 21 of Regulation (EC) No 883/2004 must be interpreted as precluding a calculation of parental benefit which disregards periods of employment completed in another EEA State.",
+  ].join("\n");
+
+  const CJEU = [
+    "JUDGMENT OF THE COURT (Grand Chamber)",
+    "21 December 2016",
+    "",
+    "Legal context",
+    "",
+    "Article 15(1) of Directive 2002/58 permits Member States to adopt legislative measures.",
+    "",
+    "Consideration of the questions referred",
+    "",
+    "Article 15(1) of Directive 2002/58 must be interpreted as precluding national legislation which, for the purpose of fighting crime, provides for general and indiscriminate retention of all traffic data.",
+    "",
+    "On those grounds, the Court (Grand Chamber) hereby rules:",
+    "",
+    "1. Article 15(1) of Directive 2002/58 must be interpreted as precluding national legislation providing for general and indiscriminate retention of traffic and location data.",
+  ].join("\n");
+
+  test("an EFTA advisory opinion yields its findings and its operative part", () => {
+    const reasoning = extractReasoning(EFTA);
+    assert.ok(reasoning, "no reasoning extracted");
+    assert.match(reasoning, /precluding national legislation/);
+    // What must hold is that the reasoning stops before the operative part —
+    // the two are different things and the answer prompt treats them as such.
+    // It may still carry the short costs paragraph between them, which is
+    // accurate and cheap; "Costs" is deliberately not a heading word, because
+    // matching it case-insensitively would cut a section wherever a sentence
+    // begins with the word.
+    assert.doesNotMatch(reasoning, /gives the following Advisory Opinion/);
+    assert.doesNotMatch(reasoning, /disregards periods of employment/);
+
+    const holding = extractHolding(EFTA);
+    assert.ok(holding, "no operative part extracted");
+    assert.match(holding, /parental benefit/);
+  });
+
+  test("a CJEU judgment yields its reasoning and its ruling", () => {
+    const reasoning = extractReasoning(CJEU);
+    assert.ok(reasoning, "no reasoning extracted");
+    assert.match(reasoning, /general and indiscriminate retention/);
+
+    const holding = extractHolding(CJEU);
+    assert.ok(holding, "no ruling extracted");
+    assert.match(holding, /Article 15\(1\)/);
+  });
+
+  test("the generic words around them are NOT treated as headings", () => {
+    // RAW_HEADING_RE is case-insensitive, so a bare "Costs", "Grounds" or
+    // "Conclusion" in HEADING_WORDS would match wherever a sentence begins
+    // with one and cut the section short there. Only distinctive multi-word
+    // phrases were added, and this is what holds that line.
+    const prose = [
+      "Findings of the Court",
+      "",
+      "The applicant submits that the measure is unlawful. Costs are dealt with below.",
+      "Grounds relied on by the applicant were threefold. Conclusion of the Advocate General was to the contrary.",
+      "The assessment of the evidence is a matter for the national court.",
+    ].join("\n");
+    const reasoning = extractReasoning(prose);
+    assert.ok(reasoning);
+    // Everything after the heading survives: none of those words ended it.
+    assert.match(reasoning, /Advocate General/);
+    assert.match(reasoning, /matter for the national court/);
+  });
+});

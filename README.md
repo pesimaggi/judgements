@@ -1835,6 +1835,34 @@ them for the document page. Never the whole judgment: Óbyggðanefnd's rulings
 run to several hundred pages, so only the head and tail of a long document are
 read back, and each part has its own character budget.
 
+**The headings are recognised in both languages.** They were Icelandic-only for
+longer than they should have been, and the consequence was invisible in exactly
+the way that matters: `extractReasoning` and `extractHolding` matched
+`Niðurstaða` and `Dómsorð`, the EFTA Court, the CJEU, the General Court and ESA
+all write in English, so both returned `null` for every one of their documents.
+The well was handed a keyword window of a judgment it held in full, and then —
+correctly, per the rule above — told that a case may be cited as holding
+something only from its reasoning or its operative part. It duly reported that
+the sources did not show the outcome. They did. So the vocabulary now also
+carries `Findings of the Court`, `Consideration of the questions referred`,
+`The Court's assessment`, `Grounds of the judgment`, `Operative part` and
+`On those grounds` — the last with its comma, because the CJEU writes
+"On those grounds, the Court hereby rules:" and the heading matcher would
+otherwise stop at the punctuation and miss every EU operative part.
+
+Only multi-word phrases were added. The heading matcher is case-insensitive, so
+a bare `Costs`, `Grounds` or `Conclusion` would match wherever an ordinary
+sentence begins with that word and end the section there — which is the same
+failure from the other direction.
+
+**Where a decision is not held in full**, the source block says so. An EFTA
+Court record whose decision PDF could not be fetched is the case register
+rather than the judgment (see *EFTA Court* above), and it reads like a short
+judgment — a "Summary" heading with prose under it — so the well would quote it
+as though it were the decision. It is now labelled as what it is, and the
+answer is required to say that the decision text is not among these sources and
+send the reader to the Court.
+
 **Truncation is structural, never by character count.** This is the part with
 the sharpest edge in the whole feature. A provision is a rule plus its
 exceptions, and the exceptions are at the end: cutting `…nema þegar` mid-clause

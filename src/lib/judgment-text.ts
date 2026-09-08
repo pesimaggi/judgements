@@ -71,6 +71,30 @@ const HEADING_WORDS = [
   // abstract runs on into the body it precedes.
   "Höfundur", "Heimild", "Heimildaskrá", "Efnisorð", "Efnisyfirlit",
   "Meginmál", "Abstract",
+  // The EU and EEA courts, which write in English and so carry none of the
+  // Icelandic headings above. Until these were here, extractReasoning() and
+  // extractHolding() returned null for every CJEU, General Court, EFTA Court
+  // and ESA document in the corpus — so the well was shown a keyword window of
+  // a judgment and then told, correctly, that it must not state what a case
+  // held from anything but the reasoning or the operative part. It duly
+  // reported that the sources did not show the outcome. The documents did; the
+  // extractor could not see it.
+  //
+  // Multi-word phrases only, deliberately. RAW_HEADING_RE is case-insensitive,
+  // so a bare "Costs", "Grounds" or "Conclusion" would match those words
+  // wherever a sentence happens to begin with them and cut the section short
+  // there — which is the failure being fixed, reintroduced from the other side.
+  "Findings of the Court", "Consideration of the questions referred",
+  "The Court['’]s assessment", "Grounds of the judgment", "Legal context",
+  // The comma is part of the phrase, not punctuation after it: the CJEU and
+  // the EFTA Court both write "On those grounds, the Court hereby rules:" and
+  // "On those grounds," on a line of its own. The trailing `[.:]?` the shared
+  // suffix allows does not cover a comma, so without the `,?` here the
+  // operative part of every EU judgment goes undetected — which is most of
+  // what this block exists to fix. It is done per-phrase rather than by
+  // widening that suffix, which would newly admit "Ákvörðun," and every other
+  // Icelandic heading word that happens to begin a clause.
+  "Operative part", "On those grounds,?",
 ];
 
 /**
@@ -498,7 +522,7 @@ export function extractSummary(raw: string): string | null {
  */
 const RAW_HEADING_RE = new RegExp(
   `(?:^|[.:!?…”“"»)]\\s+|\\n)` +
-    `((?:(?:[IVXL]{1,6}|\\d{1,3})[.)]\\s+)?(?:${HEADING_WORDS.join("|")})` +
+    `((?:(?:[IVXL]{1,6}|\\d{1,3})[.)]?\\s+)?(?:${HEADING_WORDS.join("|")})` +
     `(?![${UPPER}${LOWER}])${HEADING_SUFFIX}[.:]?)(?=\\s|$)`,
   "gi"
 );
@@ -620,10 +644,12 @@ export function truncateByParagraph(paragraphs: string[], maxChars: number): str
 }
 
 /** "Niðurstaða", and the words courts and boards use for the same section. */
-export const REASONING_HEADING_RE = /^(?:(?:[IVXL]{1,6}|\d{1,3})[.)]\s+)?(?:Niðurstaða|Niðurstöður|Forsendur|Forsendur og niðurstaða|Álit|Niðurstaða nefndarinnar)/i;
+export const REASONING_HEADING_RE =
+  /^(?:(?:[IVXL]{1,6}|\d{1,3})[.)]?\s+)?(?:Niðurstaða|Niðurstöður|Forsendur|Forsendur og niðurstaða|Álit|Niðurstaða nefndarinnar|Findings of the Court|Consideration of the questions referred|The Court['’]s assessment|Grounds of the judgment)/i;
 
 /** "Dómsorð", "Úrskurðarorð" — the operative part, what was actually ordered. */
-export const HOLDING_HEADING_RE = /^(?:(?:[IVXL]{1,6}|\d{1,3})[.)]\s+)?(?:Dómsorð|Úrskurðarorð|Ályktarorð)/i;
+export const HOLDING_HEADING_RE =
+  /^(?:(?:[IVXL]{1,6}|\d{1,3})[.)]?\s+)?(?:Dómsorð|Úrskurðarorð|Ályktarorð|Operative part|On those grounds)/i;
 
 /** The court's reasoning, where the document marks it off. */
 export function extractReasoning(raw: string, maxChars = 3000): string | null {
