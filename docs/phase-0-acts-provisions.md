@@ -1,11 +1,46 @@
 # Phase 0 research spike — legal acts + provision-level case linking
 
-Findings from the research spike that precedes schema work for Lögbrunnur's
-act/provision feature. Nothing here is shipped code; the throwaway scripts
-that produced these numbers are described at the end so they can be re-run.
+Findings from the research spike that preceded the schema work for
+Lögbrunnur's act/provision feature. The spike itself shipped no code; the
+throwaway scripts that produced these numbers are described at the end so they
+can be re-run. What it proposed was then built — see *Status* below.
 
 Measured on 2026-08-03 against Lagasafn codex version **157b** (Íslensk lög
 20. apríl 2026) and a 255-judgment sample of the island.is/domar archive.
+
+---
+
+## Status: this spike is finished, and what it proposed has shipped
+
+**Read this as a record of the research, not as a plan.** Everything below in
+the future tense — "proposed data model", "proposed seed set", "can proceed" —
+was built and has been in production for some time. `Act`, `Chapter`,
+`Provision`, `ProvisionParagraph`, `CaseProvisionLink` and `CaseActLink` are all
+in `prisma/schema.prisma`; the act reader is at `/log/{slug}`; the citation scan
+runs as the `citations` adapter; provision-level case linking shows on every
+article.
+
+It is kept because the findings are still true and still load-bearing, and
+because two of them are the kind of thing that is expensive to rediscover:
+
+- **The Lagasafn HTML contract** (§1) — the per-article and per-paragraph
+  anchors that make the parse tractable, and the temporary-provisions shape
+  that does not follow the same rule.
+- **The two citation pattern traps** (§2) — both of which would have shipped as
+  silent bugs.
+- **Short names must come from the corpus, not the titles** (§2) — which is
+  why `Act.aliases` exists and why "vaxtalög" finds 38/2001.
+
+For how any of it behaves *now*, the README is the live documentation:
+*Icelandic acts (lög)*, *Provision-level case linking* and *Searching for a
+law*.
+
+### One thing here that is still current
+
+§0 says there is no RAG layer — no pgvector, no embeddings, nothing. **That is
+still true today.** It has since become §3.2 of *well-roadmap.md*, where it is
+the largest unstarted item in the retrieval plan. The paragraph below about
+sequencing around it is spent; the observation is not.
 
 ---
 

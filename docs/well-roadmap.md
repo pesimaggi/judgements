@@ -4,9 +4,45 @@ A plan for turning the well from a good retrieval-grounded answer feature into
 something that answers legal questions well enough that a lawyer would use it
 instead of opening three tabs.
 
-Written against the code as it stands on `main` at `b26ba46`. Every claim about
-the current behaviour below is a claim about a file in this repository, and the
-file is named.
+Originally written against `main` at `b26ba46`. Every claim about current
+behaviour below is a claim about a file in this repository, and the file is
+named.
+
+---
+
+## Where this stands
+
+**Read this first.** Roughly half of what follows has shipped, and the
+diagnosis sections are written in the present tense describing problems that
+no longer exist. They are kept because *why* something was done is worth more
+than the fact that it was — but check here before treating any of it as a
+description of today.
+
+| Item | State |
+|---|---|
+| §2 Phase 0 — measurement | **partly.** Seven inflection assertions in `src/search-eval` (see *search-evaluation.md*). No gold set, no nDCG, no LLM-judge, not in CI. The largest thing still outstanding. |
+| §3.1 Icelandic morphology | **shipped** (#56). Route B, BÍN, 3.7M surface forms. Route A turned out to be impossible on managed Postgres — see the correction in that section. Written up in *icelandic-lemmatisation.md*. |
+| §3.2 Hybrid / vector search | **not started.** No pgvector, no embeddings anywhere in the repo. |
+| §3.3 A real reranker | **not started.** `ASK_RERANK_WITH_MODEL` is still off and still the expensive LLM version; no cross-encoder. |
+| §3.4 Raise the budgets | **not started.** Still `maxCandidates` 30, `maxSources` 10, evidence 1,200 chars, provisions 2,400, and case-number searches fetching 5 rows. |
+| §4 Phase 2 — make the wait visible | **shipped** (#58). SSE, per-line validated streaming, plan terms and sources during the wait, minimise-to-pill. The answer cache and a real rate limiter are *not* done. |
+| §5 Phase 3 — deep research | **shipped** (#57). `ASK_RESEARCH=1` or `{"mode":"deep"}`. Six tools including `find_citing_cases` and subject-tag filtering. The adversarial pass in that section is not done. |
+| §6 Phase 4 — legal substance | **not started.** No point-in-time law, no citator, and the corpus priorities in §6.3 are untouched. |
+| §7 Phase 5 — product | **not started.** |
+
+Two things shipped that this roadmap never proposed, both fixing bugs found
+while doing the above:
+
+- **English section extraction.** `extractReasoning`/`extractHolding` matched
+  only `Niðurstaða`/`Dómsorð`, so they returned null for every EFTA Court,
+  CJEU, General Court and ESA document — the well held those judgments in full
+  and could not read their reasoning or operative part. See
+  *icelandic-lemmatisation.md* and the README's evidence section.
+- **A reading pane.** A source or a citation chip now opens the judgment beside
+  the answer instead of navigating away from the conversation.
+
+The live scoring log is *ai-answer-evaluation.md*, which is where the next
+round of work is being judged.
 
 ---
 
@@ -179,6 +215,9 @@ measurable quality.
 
 ### 3.1 Icelandic morphology (do this before embeddings)
 
+> **Shipped in #56.** The analysis below stands; the route taken was B.
+> Implementation notes are in *icelandic-lemmatisation.md*.
+
 The cheapest large win in the entire plan. Two routes:
 
 > **Corrected after implementing this — see `docs/icelandic-lemmatisation.md`.**
@@ -226,6 +265,8 @@ Whichever route: also expand the *query* side. The planner should emit the
 lemma, and `termToQuery` should search the lemma vector with it.
 
 ### 3.2 Hybrid search — add the vector list to the fusion
+
+> **Not started.** Still accurate as written.
 
 Add pgvector to the Postgres 16 in `docker-compose.yml` (the `pgvector/pgvector`
 image, or the extension on Railway) and:
@@ -277,6 +318,8 @@ lexical path can never use.
 
 ### 3.3 A real reranker
 
+> **Not started.** Still accurate as written.
+
 `src/lib/ask/rerank.ts` exists, is off, and uses a full LLM call to produce an
 ordering — expensive and slow for what it is. Replace it with a cross-encoder
 over the fused top ~100 → top ~30. Cohere Rerank (multilingual) or a
@@ -289,6 +332,8 @@ never add, never remove. That constraint is what makes it safe to switch on by
 default, which is where it should end up.
 
 ### 3.4 Raise the budgets
+
+> **Not started**, and now the cheapest unclaimed win in this file.
 
 Once retrieval is finding the right things, let the answer see them:
 
@@ -311,6 +356,9 @@ visible fall in the `missing-source` feedback kind.
 ---
 
 ## 4. Phase 2 — make the wait visible
+
+> **Shipped in #58**, except the answer cache (§4.3) and the rate limiter
+> (§4.5), which are still as described.
 
 **~1–2 weeks. Do it before phase 3, because it is what buys the budget for it.**
 
@@ -355,6 +403,10 @@ Only after streaming is in place should you raise `ASK_EFFORT_COMPLEX` past
 ---
 
 ## 5. Phase 3 — deep research mode
+
+> **Shipped in #57**, except the adversarial pass at the end of this
+> section. The tool list below is close to what was built; the built set is
+> in `src/lib/ask/tools.ts` and the README's *Deep research* chapter.
 
 **~3–4 weeks. This is what "as good as the big ones" actually means.**
 
@@ -520,19 +572,43 @@ building), and only then effort tuning.
 
 ## 9. What to do first
 
-If only one thing gets done this quarter, it is **phase 0 plus §3.1**: a real
-evaluation set and Icelandic lemmatisation. The first tells you whether
-anything you do works. The second is a few days' work that unlocks a large
-fraction of a corpus you have already paid to ingest.
+*Rewritten now that §3.1, Phase 2 and Phase 3 have shipped. The original
+ordering is in the history of this file.*
 
-The order that compounds best:
+The uncomfortable position this leaves us in: three of the four things that
+were supposed to make the well better are done, and **we still cannot say
+whether it got better.** Phase 0 was meant to come first and did not, so
+*ai-answer-evaluation.md* is a human reading answers one at a time — which is
+how a regression gets found late and a small gain gets missed entirely.
 
-1. **Phase 0** — gold set, metrics, CI. *Nothing else is safe without it.*
-2. **§3.1 lemmatisation** — days, large win, no new infrastructure.
-3. **§4.1–4.2 streaming** — makes the latency budget real.
-4. **§3.2–3.4 hybrid search, reranker, raised budgets** — the main event.
-5. **§5 deep research mode** — what makes it feel like a competitor.
-6. **§6 point-in-time law and the citator** — what makes it *be* one.
+So:
+
+1. **§3.4 raise the budgets.** Hours, not days, and unmeasured. Ten sources,
+   1,200-character evidence windows and five rows per case-number search are
+   all far below what the models take, and cost has been ruled out as a
+   constraint. Do this before anything that needs measuring, because it may
+   move the answers on its own.
+2. **§2 Phase 0 — the gold set.** Now overdue rather than merely first. Until
+   it exists every change after this point is a guess, including whether deep
+   research is actually better than quick.
+3. **§3.3 the reranker, then §3.2 hybrid search.** In that order, reversing
+   the original: the reranker is cheaper, is a smaller change, and reorders
+   what retrieval already finds — and with lemmatisation shipped, retrieval
+   now finds a great deal more than it did when this file was written.
+4. **§6.1 point-in-time law and §6.2 the citator.** What makes it a legal
+   product rather than a good RAG demo, and what no Icelandic competitor has.
+5. **§6.3 the corpus** — lögskýringargögn first.
+
+Two things not in the original list, both surfaced by
+*ai-answer-evaluation.md* and both ahead of everything except item 1:
+
+- **Find out what is actually reaching the model on a real question.** The
+  reviewer's diagnosis on Q1 is that the well reads a summary rather than the
+  judgment. That is a specific, checkable claim about production data and it
+  should be settled with a query, not a redesign.
+- **Record the configuration each answer was produced under.** The evaluation
+  log has no model, commit or settings against its three outputs, so they
+  cannot be compared with each other, let alone with what comes next.
 
 ---
 
