@@ -2846,6 +2846,40 @@ Ingestion used to run as part of the website's pre-deploy step, but a 200-page b
    After that first firing the step is nearly free: an act whose codex version still matches the index's is skipped without being fetched, so an unchanged Lagasafn release costs one request. The citations step only rescans judgments whose text changed, so a firing that brought in nothing new does almost nothing. The exception is deliberate: when `lagasafn` ingests an act the database has never held, it clears the citation watermark, so the citations step in the same firing re-links the whole corpus against it. Without that, a late-arriving act would never be linked to anything — the judgments' text has not changed, so they would never be rescanned.
 5. No manual redeploys needed after this. Progress is visible at `/admin/ingestion` on the website.
 
+#### The BÍN dictionary loads itself
+
+The first step in the chain is `bin-dictionary`, and it is there because the
+failure it prevents is silent. `db:deploy` creates the lemma table, the vectors
+and the triggers; it does **not** load the ~34 MB dictionary, because a deploy
+should not. Between deploying and remembering to run `npm run db:load-bin`,
+`lemma_vector` is populated with the surface forms instead of the lemmas and
+Icelandic inflection matching quietly does nothing. Nothing errors, and nothing
+in the logs says so.
+
+So the ingest loads it when it is missing and does nothing when it is not:
+
+```
+npm run db:load-bin -- --if-empty --rebuild-max "$BIN_REBUILD_ROWS"
+```
+
+Three things it gets right, each of which is a way it could have been wrong:
+
+- **It runs first.** The trigger lemmatises each row as it is stored, so a
+  dictionary arriving halfway through a run leaves everything ingested before
+  it wrong.
+- **It invalidates rather than fills.** Rows stored before the dictionary
+  existed do not have a *missing* vector, they have an incorrect one, and
+  `WHERE lemma_vector IS NULL` would never find them. The load nulls both
+  tables and rebuilds from there.
+- **The rebuild is bounded and resumable.** `BIN_REBUILD_ROWS` (20,000) rows
+  per firing, provisions before judgments — the law is the half worth having
+  correct first — and whatever is left stays null for the next firing. A first
+  load cannot eat its slot.
+
+Measured on a local corpus: the first firing takes 65 s to load 3,698,046
+surface forms plus its share of the rebuild; every firing after it is 0.8 s.
+Run it alone with `INGEST_ADAPTERS=bin-dictionary`.
+
 The schedule has moved with how much is left to ingest. It fired every 2 hours during the original backfill, dropped to weekly once the Icelandic archive was complete, and is now **every 3 hours** — the úrskurðarnefndir archive (~23,700 rulings) and the Icelandic gap sweep are still working through their cursors, and those rolling passes only advance when the service fires. Eight firings a day is 56× the weekly throughput on the backfills: the incremental passes are near-free when nothing is new, so the extra firings go almost entirely to the archives that are still filling.
 
 Headroom is the thing to keep an eye on at this cadence. A worst-case run where every bounded pass fills up — 1,200 priority-board rulings, 900 other board rulings, 600 gap pages, 600 Ombudsman cases, 500 + 300 retries, at the 1.5 s polite delay — is about 2 hours 15 minutes against a 3-hour slot. Railway skips a firing whose predecessor is still running, so an overrun costs a slot rather than stacking runs, but a run that regularly comes close is the signal to lower a per-pass budget rather than to raise the frequency again. Run durations are on `/admin/ingestion`.
@@ -2963,6 +2997,7 @@ not to fire more often.
 
 | Variable | Default | What it bounds |
 |---|---|---|
+| `BIN_REBUILD_ROWS` | `20000` | Lemma vectors rebuilt per firing after BÍN is first loaded. Provisions before judgments; the rest carries to the next firing. |
 | `ICELANDIC_INGEST_MODE` | `recent` | `recent` \| `backfill` \| `retry`. |
 | `ICELANDIC_MAX_PAGES` | `40` | List pages the incremental pass walks. |
 | `ICELANDIC_GAP_PAGES` | `600` | Pages the rolling gap sweep walks; `0` for no limit (~4,300). |

@@ -70,6 +70,11 @@ npm run db:load-bin -- --rebuild    # build vectors for the existing corpus
 `db:deploy` runs the first of those. The load is deliberately not part of it: it
 is a 377 MB download and a one-off, and a deploy should not repeat it.
 
+On a deployment none of this is manual: the scheduled ingest runs a
+`bin-dictionary` step first in its chain, which loads the dictionary if it is
+missing, invalidates the vectors built before it existed, and rebuilds them
+`BIN_REBUILD_ROWS` at a time across firings. See *Running it* in README.
+
 Measured on the full file: **63 seconds**, 7,425,971 rows collapsing to
 **3,698,046 surface forms**, of which 108,936 (2.9%) are ambiguous.
 

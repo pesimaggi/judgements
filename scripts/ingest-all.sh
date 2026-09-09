@@ -29,6 +29,7 @@
 #   INGEST_ADAPTERS="icelandic-gaps"          # one-off, finish the archive
 #   INGEST_ADAPTERS="icelandic-retry"         # just re-attempt known gaps
 #   INGEST_ADAPTERS="logretta ulfljotur"      # just the new sources
+#   INGEST_ADAPTERS="bin-dictionary"          # only load/top up the BÍN dictionary
 #   INGEST_ADAPTERS="eur-lex-catalogue"       # only the EU act catalogue
 #   INGEST_ADAPTERS="eur-lex"                 # only the EU acts' text
 #   INGEST_ADAPTERS="cjeu-listing"            # only find which CJEU judgments exist
@@ -43,6 +44,11 @@
 # inline `VAR=x cmd` overrides the service variable and cannot be changed from
 # the dashboard.
 #
+#   BIN_REBUILD_ROWS        default 20000 — lemma vectors rebuilt per firing after
+#                                           the BÍN dictionary is first loaded.
+#                                           Provisions are done before judgments,
+#                                           and the rest carries to the next run,
+#                                           so a first load cannot eat its slot
 #   ICELANDIC_INGEST_MODE   default "recent"
 #   ICELANDIC_MAX_PAGES     default 40
 #   ICELANDIC_GAP_PAGES     default 600   — list pages the rolling gap sweep
@@ -138,7 +144,7 @@ set -u
 # hand, which is why Endurupptökudómur sat at 2 of 102 cases: the sweep that
 # would have found the other 100 was opt-in and nobody opted in. A source that
 # only closes its gaps when prompted does not close them.
-DEFAULT_ADAPTERS="stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal yfirskattanefnd yfirskattanefnd-retry stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-joint-committee eftasurv eftasurv-retry lagasafn eur-lex-catalogue eur-lex eur-lex-retry eur-lex-eea cjeu-listing cjeu citations"
+DEFAULT_ADAPTERS="bin-dictionary stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal yfirskattanefnd yfirskattanefnd-retry stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-joint-committee eftasurv eftasurv-retry lagasafn eur-lex-catalogue eur-lex eur-lex-retry eur-lex-eea cjeu-listing cjeu citations"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"
@@ -152,6 +158,20 @@ for adapter in $ADAPTERS; do
   echo "=================================================================="
 
   case "$adapter" in
+    bin-dictionary)
+      # BÍN, loaded once and then topped up.
+      #
+      # db:deploy creates the table, the vectors and the triggers; it does not
+      # load the ~34 MB dictionary, because a deploy should not. So without
+      # this the column exists, is populated with the surface forms rather than
+      # the lemmas, and Icelandic inflection matching silently does nothing —
+      # a failure with no error, which is the kind worth automating away.
+      #
+      # First in the chain on purpose: the trigger lemmatises each row as it is
+      # stored, so anything ingested before the dictionary exists has to be
+      # rebuilt afterwards. Cheap once loaded — one count.
+      npm run db:load-bin -- --if-empty --rebuild-max "${BIN_REBUILD_ROWS:-20000}"
+      ;;
     icelandic-courts)
       INGEST_MODE="${ICELANDIC_INGEST_MODE:-recent}" \
       INGEST_MAX_PAGES="${ICELANDIC_MAX_PAGES:-40}" \
