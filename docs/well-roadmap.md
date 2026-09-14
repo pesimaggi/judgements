@@ -674,6 +674,31 @@ and uselessly, which is the failure mode this whole file exists to remove.
 With both fixed, the same row now yields 1,856 characters of reasoning and the
 operative part in full.
 
+**The second half of Q1 is still unanswered, and now for a known reason.**
+"Er búið að dæma í málinu hjá Hæstarétti Íslands?" has an answer in the corpus:
+**Hæstiréttur 24/2023**, 28 February 2024, which recounts the advisory opinion
+and cites "máli nr. E-5/21" by name. Neither quick nor deep mode finds it.
+
+Reproduced against the live index rather than read off the code. The provider
+ORs three conditions for a case-number query — exact `case_number ILIKE`,
+trigram `case_number %`, and full-text — and ranks the result by `ts_rank` over
+the text vector alone, so an exact case-number match gets no privilege. Asked
+for "E-5/21" across every source, production returns **441** rows whose first
+twenty are E-5/00, E-5/23, E-5/13 and the rest of the Court's fifth cases;
+exclude the EFTA Court and the first eight are Héraðsdómur's E-5/2017,
+E-5/2008, E-5/2013 and the General Court's T-525/21. The well fetches five.
+
+So the fix is not a larger page size — 24/2023 is not at position 6 either. It
+is a ranking that puts an exact case-number match above a trigram near-miss,
+and it belongs with the search evaluation in *search-evaluation.md* rather than
+bolted on here. The comment in `retrieve.ts` that said the provider "only falls
+back to trigrams when that finds nothing" has been corrected; it never did.
+
+Worth noting for whoever takes it: Hæstiréttur anonymises its parties, so
+24/2023 is "A gegn íslenska ríkinu". Searching by the party's name — the
+obvious move, and the one both A1 and A3 recommend to the reader — cannot find
+it. The case number is the only handle.
+
 **What this does not settle.** A1–A3 have no recorded model, commit or
 configuration, so it cannot be shown which defects each one met. A4 below is
 the first entry that records them.

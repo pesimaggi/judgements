@@ -64,6 +64,13 @@ Both are fixed; §9a of *well-roadmap.md* carries the measurements. A5 should be
 run against a deployment carrying those fixes, and is the first output that can
 be compared like for like.
 
+**The second half of the question is still open.** "Er búið að dæma í málinu
+hjá Hæstarétti Íslands?" has an answer in the corpus — Hæstiréttur 24/2023,
+28 February 2024, which cites "máli nr. E-5/21" by name — and retrieval does
+not surface it, in quick mode or deep. That is a ranking defect, reproduced and
+written up in §9a, and it is not fixed here. A5 will still be wrong about the
+Icelandic proceedings.
+
 **A1–A3 are datable by inference, not by record.** `isRegisterOnly` fires on a
 1,551-character record and would have labelled it; none of A1–A3 carries such a
 label, which places all three before that check shipped in #58. Recorded as an

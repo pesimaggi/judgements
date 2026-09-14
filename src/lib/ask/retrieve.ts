@@ -630,8 +630,18 @@ async function searchDecisions(
     });
 
   for (const q of plan.decisionQueries) {
-    // Exactly as typed: the provider matches a case number against the column
-    // and only falls back to trigrams when that finds nothing.
+    // Exactly as typed: the provider matches a case number against the column,
+    // exactly and by trigram, and matches the query against the text.
+    //
+    // Those are OR'd together rather than tried in turn — see
+    // src/lib/search/postgres.ts — so a case number pulls in every near miss
+    // alongside the case itself, and five rows is not many to hold both. Asked
+    // for "E-5/21" across every source, production returns 441 rows whose first
+    // twenty are E-5/00, E-5/23, E-5/13 and the rest of the EFTA Court's fifth
+    // cases. Hæstiréttur 24/2023, which recounts the advisory opinion in E-5/21
+    // by name and is the answer to half the question, is not among them. That
+    // is open; it needs a ranking that privileges an exact case-number match,
+    // not a larger page size.
     planned.push({ label: `case:${q}`, weight: QUERY_WEIGHTS.decision, run: search(q, 5) });
   }
   for (const phrase of plan.phrases) {
