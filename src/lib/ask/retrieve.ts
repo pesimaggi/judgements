@@ -363,12 +363,12 @@ export async function composeRetrieval<T extends RankCandidate & { payload: Cand
 
     // A journal article's text never leaves the server; the search snippet is
     // all this app ever shows of one, here as everywhere else.
-    const registerEntry = isRegisterOnly(hit.source, stored);
+    const registerEntry = isRegisterOnly(hit.source, stored?.text, stored?.hasDecisionText);
     if (registerEntry) registerOnly.push(label);
 
     const ev = buildDecisionEvidence(
       {
-        fullText: scholarship ? null : stored,
+        fullText: scholarship ? null : stored?.text,
         snippet: hit.snippet,
         summary: scholarship ? null : hit.summary,
         terms: [...plan.phrases, ...plan.concepts],
@@ -630,8 +630,18 @@ async function searchDecisions(
     });
 
   for (const q of plan.decisionQueries) {
-    // Exactly as typed: the provider matches a case number against the column
-    // and only falls back to trigrams when that finds nothing.
+    // Exactly as typed: the provider matches a case number against the column,
+    // exactly and by trigram, and matches the query against the text.
+    //
+    // Those are OR'd together rather than tried in turn — see
+    // src/lib/search/postgres.ts — so a case number pulls in every near miss
+    // alongside the case itself, and five rows is not many to hold both. Asked
+    // for "E-5/21" across every source, production returns 441 rows whose first
+    // twenty are E-5/00, E-5/23, E-5/13 and the rest of the EFTA Court's fifth
+    // cases. Hæstiréttur 24/2023, which recounts the advisory opinion in E-5/21
+    // by name and is the answer to half the question, is not among them. That
+    // is open; it needs a ranking that privileges an exact case-number match,
+    // not a larger page size.
     planned.push({ label: `case:${q}`, weight: QUERY_WEIGHTS.decision, run: search(q, 5) });
   }
   for (const phrase of plan.phrases) {
@@ -754,26 +764,36 @@ async function fetchProvisionBodies(
  * enough for the head to have missed them. Fetching both ends of six documents
  * is affordable; fetching six complete Óbyggðanefnd rulings is not.
  */
-async function fetchDocumentBodies(ids: string[]): Promise<Map<string, string>> {
+interface DocumentBody {
+  text: string;
+  /** See isRegisterOnly — whether this row carries the decision, as recorded. */
+  hasDecisionText: boolean | null;
+}
+
+async function fetchDocumentBodies(ids: string[]): Promise<Map<string, DocumentBody>> {
   if (ids.length === 0) return new Map();
   try {
     const rows = await prisma.$queryRaw<
-      { id: string; head: string; tail: string; len: number }[]
+      { id: string; head: string; tail: string; len: number; has_decision_text: boolean | null }[]
     >`
       SELECT id,
              left(full_text, ${DOC_HEAD_CHARS}::int)  AS head,
              right(full_text, ${DOC_TAIL_CHARS}::int) AS tail,
-             length(full_text)                         AS len
+             length(full_text)                         AS len,
+             has_decision_text
         FROM "Document"
        WHERE id = ANY(${ids}::text[])
     `;
     return new Map(
       rows.map((r) => [
         r.id,
-        // Joined with a blank line and an ellipsis so the section extractor
-        // does not run one end into the other and read a heading across the
-        // join. A document short enough to fit is returned whole.
-        r.len > DOC_HEAD_CHARS ? `${r.head}\n\n[…]\n\n${r.tail}` : r.head,
+        {
+          // Joined with a blank line and an ellipsis so the section extractor
+          // does not run one end into the other and read a heading across the
+          // join. A document short enough to fit is returned whole.
+          text: r.len > DOC_HEAD_CHARS ? `${r.head}\n\n[…]\n\n${r.tail}` : r.head,
+          hasDecisionText: r.has_decision_text,
+        },
       ])
     );
   } catch (e) {

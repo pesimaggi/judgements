@@ -24,7 +24,7 @@ description of today.
 | §3.1 Icelandic morphology | **shipped** (#56). Route B, BÍN, 3.7M surface forms. Route A turned out to be impossible on managed Postgres — see the correction in that section. Written up in *icelandic-lemmatisation.md*. |
 | §3.2 Hybrid / vector search | **not started.** No pgvector, no embeddings anywhere in the repo. |
 | §3.3 A real reranker | **not started.** `ASK_RERANK_WITH_MODEL` is still off and still the expensive LLM version; no cross-encoder. |
-| §3.4 Raise the budgets | **not started.** Still `maxCandidates` 30, `maxSources` 10, evidence 1,200 chars, provisions 2,400, and case-number searches fetching 5 rows. |
+| §3.4 Raise the budgets | **not started, with one exception.** Still `maxCandidates` 30, `maxSources` 10, evidence 1,200 chars, provisions 2,400, and case-number searches fetching 5 rows. The holding budget went from 800 to 2,400 — not as a budget raise but as a bug fix; see §9a. |
 | §4 Phase 2 — make the wait visible | **shipped** (#58). SSE, per-line validated streaming, plan terms and sources during the wait, minimise-to-pill. The answer cache and a real rate limiter are *not* done. |
 | §5 Phase 3 — deep research | **shipped** (#57). `ASK_RESEARCH=1` or `{"mode":"deep"}`. Six tools including `find_citing_cases` and subject-tag filtering. The adversarial pass in that section is not done. |
 | §6 Phase 4 — legal substance | **not started.** No point-in-time law, no citator, and the corpus priorities in §6.3 are untouched. |
@@ -602,13 +602,106 @@ So:
 Two things not in the original list, both surfaced by
 *ai-answer-evaluation.md* and both ahead of everything except item 1:
 
-- **Find out what is actually reaching the model on a real question.** The
-  reviewer's diagnosis on Q1 is that the well reads a summary rather than the
-  judgment. That is a specific, checkable claim about production data and it
-  should be settled with a query, not a redesign.
+- **~~Find out what is actually reaching the model on a real question.~~**
+  *Settled — see §9a.* The reviewer's diagnosis was that the well reads a
+  summary rather than the judgment. The corpus held the judgment; an evidence
+  budget below the median size of an operative part was cutting it back to its
+  preamble before the model ever saw it.
 - **Record the configuration each answer was produced under.** The evaluation
   log has no model, commit or settings against its three outputs, so they
   cannot be compared with each other, let alone with what comes next.
+
+---
+
+## 9a. What reached the model on Q1
+
+Settled against production on 14 September 2026, by reading the corpus through
+the app's own API rather than by reasoning about the adapter. Recorded here
+because two plausible diagnoses were wrong, and both of them had been written
+down as established.
+
+**The corpus holds the judgment.** The stored row for E-5/21 is 29,149
+characters and carries the Court's advisory opinion in full, operative part
+included. Across all 431 EFTA rows the median is 28,750 characters and 378 are
+over 10,000. The corpus was last rebuilt on 4 September 2026 — every row
+carries that `updatedAt` — so whatever A1–A3 were shown, it was not this.
+
+**What is short, and why.** 44 rows fall under 4,000 characters. 30 of them are
+cases whose decision the Court has not published in English — pending cases,
+and cases decided jointly, whose judgment is on a page this adapter could not
+parse until now. 4 more have a decision PDF that holds no extractable text:
+E-3/94, E-4/06, E-6/20 and E-20/16 are scans, and `pdfText` returns newlines
+for them. Nothing short of OCR changes that, and they are now recorded as
+settled rather than retried.
+
+The remaining 10 are complete decisions that are simply short — an Order of the
+President discontinuing proceedings runs to 1,600 characters and is the whole
+of what the Court decided. `isRegisterOnly` was calling every one of them a
+case register. That is what replaced the length proxy with
+`Document.hasDecisionText`.
+
+**The bug was the evidence budget, and it was live.** Asked Q1 again on 14
+September, production — holding the full judgment, with `extractHolding`
+working — still answered *"dómsorðið segir aðeins að dómstóllinn gefi ráðgefandi
+álit og síðan er efnið fellt út"*. That is A3's complaint word for word, a year
+of work later, and it is not a corpus problem at all.
+
+`DEFAULT_EVIDENCE_BUDGET.holding` was **800** characters. An operative part is
+a preamble sentence — "THE COURT in answer to the question referred to it by
+Reykjavík District Court gives the following Advisory Opinion:" — followed by
+one long paragraph that is the entire ruling. `truncateByParagraph` drops whole
+paragraphs, correctly, so a budget that fits the first and not the second keeps
+the half that says nothing. E-5/21's operative part reached the model as 121
+characters: that preamble, and `[…]`.
+
+This was not an edge case. The median EFTA operative part is **868**
+characters, so the budget sat below the median size of the thing it was
+budgeting. 232 of the 397 decisions were being cut and 47 were reduced to under
+300 characters. At 2,400 none is reduced that way and 90% are not cut at all.
+
+The reviewer read this exactly right from the outside — "it does not actually
+read the judgement but only some summary of it". They were describing a
+truncation, and the truncation was ours.
+
+**A second, independent gap in the same answer.** `extractReasoning` returned
+null for E-5/21, because this judgment heads its reasoning "III Answer of the
+Court" and the vocabulary knew only "Findings of the Court". Over the 397
+decisions, the reasoning section was missing from 110, and 56 of those used
+that heading. So the model had neither the reasoning nor the ruling — only a
+keyword window it is forbidden to state a holding from. It abstained, correctly
+and uselessly, which is the failure mode this whole file exists to remove.
+
+With both fixed, the same row now yields 1,856 characters of reasoning and the
+operative part in full.
+
+**The second half of Q1 is still unanswered, and now for a known reason.**
+"Er búið að dæma í málinu hjá Hæstarétti Íslands?" has an answer in the corpus:
+**Hæstiréttur 24/2023**, 28 February 2024, which recounts the advisory opinion
+and cites "máli nr. E-5/21" by name. Neither quick nor deep mode finds it.
+
+Reproduced against the live index rather than read off the code. The provider
+ORs three conditions for a case-number query — exact `case_number ILIKE`,
+trigram `case_number %`, and full-text — and ranks the result by `ts_rank` over
+the text vector alone, so an exact case-number match gets no privilege. Asked
+for "E-5/21" across every source, production returns **441** rows whose first
+twenty are E-5/00, E-5/23, E-5/13 and the rest of the Court's fifth cases;
+exclude the EFTA Court and the first eight are Héraðsdómur's E-5/2017,
+E-5/2008, E-5/2013 and the General Court's T-525/21. The well fetches five.
+
+So the fix is not a larger page size — 24/2023 is not at position 6 either. It
+is a ranking that puts an exact case-number match above a trigram near-miss,
+and it belongs with the search evaluation in *search-evaluation.md* rather than
+bolted on here. The comment in `retrieve.ts` that said the provider "only falls
+back to trigrams when that finds nothing" has been corrected; it never did.
+
+Worth noting for whoever takes it: Hæstiréttur anonymises its parties, so
+24/2023 is "A gegn íslenska ríkinu". Searching by the party's name — the
+obvious move, and the one both A1 and A3 recommend to the reader — cannot find
+it. The case number is the only handle.
+
+**What this does not settle.** A1–A3 have no recorded model, commit or
+configuration, so it cannot be shown which defects each one met. A4 below is
+the first entry that records them.
 
 ---
 

@@ -40,6 +40,21 @@ model Document {
   /// incremental — see src/ingestion/citations.ts.
   citationScanHash String? @map("citation_scan_hash")
 
+  /// Whether `fullText` carries the decision itself, or only the register
+  /// entry describing it — the case's parties, subject and list of published
+  /// documents, with the decision left behind as a link.
+  ///
+  /// True when the adapter appended the decision text, false when it looked
+  /// and there was none to append, null when it did not look. Null is
+  /// therefore both "ingested before this column existed" and "ingested with
+  /// document fetching switched off", which are the same thing for every
+  /// reader: unknown, ask the text.
+  ///
+  /// It exists because that question was being answered by measuring the
+  /// text. See isRegisterOnly in src/lib/ask/evidence.ts for what the proxy
+  /// cost, and src/ingestion/adapters/efta-court.ts for what sets this.
+  hasDecisionText Boolean? @map("has_decision_text")
+
   provisionLinks CaseProvisionLink[]
   actLinks       CaseActLink[]
 

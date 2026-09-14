@@ -511,6 +511,7 @@ export async function saveDocument(doc: NormalizedDocument): Promise<"indexed" |
     fullText,
     textHash,
     isSample: doc.isSample ?? false,
+    hasDecisionText: doc.hasDecisionText ?? null,
   };
 
   const saved = existing
