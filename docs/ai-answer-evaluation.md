@@ -75,3 +75,21 @@ Icelandic proceedings.
 1,551-character record and would have labelled it; none of A1–A3 carries such a
 label, which places all three before that check shipped in #58. Recorded as an
 inference because the runs themselves were not recorded.
+
+
+## Q2 — Temporary employment contracts
+
+Hvaða reglur gilda um umsögn tímabundnaráðningarsamninga? Má segja þeim upp? Hvaða skilyrði eru fyrir því að þeim sé hægt að segja upp? Eru til dómar um uppsögn tímabundnaráðningarsamninga á almennum vinnumarkaði? En opinberum?
+
+### Evaluation table
+
+Full outputs and reviewer comments are reproduced directly in the table, without summaries or collapsed sections.
+
+| Question | Run | Full AI output | Comment | Rating (0–10) |
+| --- | --- | --- | --- | --- |
+
+### Evaluation context
+
+| Field | Value |
+| --- | --- |
+
