@@ -84,7 +84,14 @@ const HEADING_WORDS = [
   // so a bare "Costs", "Grounds" or "Conclusion" would match those words
   // wherever a sentence happens to begin with them and cut the section short
   // there — which is the failure being fixed, reintroduced from the other side.
-  "Findings of the Court", "Consideration of the questions referred",
+  //
+  // "Answer of the Court" is the EFTA Court's other name for the same section
+  // and is not a synonym this list could be spared: measured over the 397 EFTA
+  // decisions in the corpus that carry their text, the reasoning section was
+  // missing from 110, and 56 of those were written under this heading rather
+  // than "Findings of the Court".
+  "Findings of the Court", "Answer of the Court",
+  "Consideration of the questions referred",
   "The Court['’]s assessment", "Grounds of the judgment", "Legal context",
   // The comma is part of the phrase, not punctuation after it: the CJEU and
   // the EFTA Court both write "On those grounds, the Court hereby rules:" and
@@ -643,9 +650,18 @@ export function truncateByParagraph(paragraphs: string[], maxChars: number): str
   return kept.join("\n\n").trim();
 }
 
-/** "Niðurstaða", and the words courts and boards use for the same section. */
+/**
+ * "Niðurstaða", and the words courts and boards use for the same section.
+ *
+ * "Answer of the Court" is the EFTA Court's own heading in an advisory
+ * opinion, and it is not interchangeable with "Findings of the Court": the
+ * Court uses one or the other depending on the decade and the formation.
+ * Measured over the 397 EFTA decisions in the corpus that carry their text,
+ * this section was missing from 110 of them, and 56 of those 110 were written
+ * under this heading — so more than half the gap was one phrase.
+ */
 export const REASONING_HEADING_RE =
-  /^(?:(?:[IVXL]{1,6}|\d{1,3})[.)]?\s+)?(?:Niðurstaða|Niðurstöður|Forsendur|Forsendur og niðurstaða|Álit|Niðurstaða nefndarinnar|Findings of the Court|Consideration of the questions referred|The Court['’]s assessment|Grounds of the judgment)/i;
+  /^(?:(?:[IVXL]{1,6}|\d{1,3})[.)]?\s+)?(?:Niðurstaða|Niðurstöður|Forsendur|Forsendur og niðurstaða|Álit|Niðurstaða nefndarinnar|Findings of the Court|Answer of the Court|Consideration of the questions referred|The Court['’]s assessment|Grounds of the judgment)/i;
 
 /** "Dómsorð", "Úrskurðarorð" — the operative part, what was actually ordered. */
 export const HOLDING_HEADING_RE =

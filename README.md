@@ -289,11 +289,32 @@ Court's own summary, and the documents as links — which is a complete,
 searchable case register but not judgment text. With it, the English decision
 PDF is downloaded per case and its text appended, giving true full-text search.
 
-**This deployment runs with it on**: the flag is set explicitly in
-`railway.ingest.json`, so the choice is recorded where it is made rather than
-buried in a default. EFTA case law is public and the corpus is ~460 documents,
-fetched once and then only when the Court republishes one. If you fork this,
-that is your decision to make again, not one to inherit.
+**This deployment runs with it on**, with the Court's agreement: the flag is
+set explicitly in `railway.ingest.json`, so the choice is recorded where it is
+made rather than buried in a default. EFTA case law is public and the corpus is
+~460 documents, fetched once and then only when the Court republishes one. If
+you fork this, that is your decision to make again, not one to inherit — and
+the agreement is this deployment's, not the repository's.
+
+**Turning it on does not reach back.** A case is re-fetched only when the
+sitemap says its page changed, and a case decided in 2022 never changes again —
+so a row stored before the flag went on would keep its register entry for ever.
+The adapter therefore records what it found on the row itself, in
+`Document.hasDecisionText`: true when the decision was appended, false when it
+looked and there was nothing to append, and null when it did not look. A row
+with null is unfinished rather than current, so the sitemap skip does not apply
+to it and the next run backfills it — once, not on every run, which is all
+`INGEST_FULL=1` can offer. The same column is what the well reads to tell a
+case register from a judgment; see the evidence section.
+
+**A heading is not always one case number.** The Court decides cases jointly
+("Joined Cases E-3/13 and E-20/13"), issues costs orders ("E-9/04 COSTS"),
+interpretations ("E-2/12 INT") and revisions ("E-6/94r"), and 30 of the 461
+pages in the sitemap are headed one of those ways. Those pages are where the
+decision in a joined case actually lives — E-15/15, E-16/15 and E-3/13 each
+publish nothing on their own page — so a parser that insisted on a lone
+`E-n/yy` was not merely skipping 30 pages, it was leaving their judgments out
+of the corpus altogether while storing the cases as register entries.
 
 ```
 INGEST_PROBE=1 npm run ingest -- --adapter=efta-court   # what the site serves now
@@ -1834,7 +1855,21 @@ check. Each decision now arrives as four labelled parts:
 The sections come from `lib/judgment-text.ts`, which already knew how to find
 them for the document page. Never the whole judgment: Óbyggðanefnd's rulings
 run to several hundred pages, so only the head and tail of a long document are
-read back, and each part has its own character budget.
+read back, and each part has its own character budget — 1,200 characters of
+context around the matched passage, 1,500 for the summary, 2,000 for the
+reasoning, 2,400 for the holding.
+
+**The holding's budget is the one that had to be measured rather than chosen.**
+It was 800, and an operative part is not prose that shortens gracefully: it is
+a preamble sentence — "THE COURT in answer to the question referred to it by
+Reykjavík District Court gives the following Advisory Opinion:" — and then one
+long paragraph that is the entire ruling. Truncation drops whole paragraphs,
+correctly, so a budget that fits the first and not the second keeps the half
+that says nothing. The median EFTA operative part is 868 characters, so the
+budget sat below the median size of the thing it was budgeting: 232 of 397
+decisions were cut and 47 were reduced to under 300 characters. That is why the
+well kept reporting that the sources did not show what a case held while
+holding it. At 2,400 none is reduced that way and 90% are not cut at all.
 
 **The headings are recognised in both languages.** They were Icelandic-only for
 longer than they should have been, and the consequence was invisible in exactly
@@ -1846,8 +1881,8 @@ correctly, per the rule above — told that a case may be cited as holding
 something only from its reasoning or its operative part. It duly reported that
 the sources did not show the outcome. They did. So the vocabulary now also
 carries `Findings of the Court`, `Consideration of the questions referred`,
-`The Court's assessment`, `Grounds of the judgment`, `Operative part` and
-`On those grounds` — the last with its comma, because the CJEU writes
+`The Court's assessment`, `Grounds of the judgment`, `Answer of the Court`,
+`Operative part` and `On those grounds` — the last with its comma, because the CJEU writes
 "On those grounds, the Court hereby rules:" and the heading matcher would
 otherwise stop at the punctuation and miss every EU operative part.
 
@@ -1856,6 +1891,11 @@ a bare `Costs`, `Grounds` or `Conclusion` would match wherever an ordinary
 sentence begins with that word and end the section there — which is the same
 failure from the other direction.
 
+`Answer of the Court` came later and from measurement: of the 397 EFTA
+decisions in the corpus that carry their text, the reasoning section was
+missing from 110, and 56 of those were written under that heading rather than
+`Findings of the Court`. The Court uses both. One phrase closed half the gap.
+
 **Where a decision is not held in full**, the source block says so. An EFTA
 Court record whose decision PDF could not be fetched is the case register
 rather than the judgment (see *EFTA Court* above), and it reads like a short
@@ -1863,6 +1903,15 @@ judgment — a "Summary" heading with prose under it — so the well would quote
 as though it were the decision. It is now labelled as what it is, and the
 answer is required to say that the decision text is not among these sources and
 send the reader to the Court.
+
+That label is read off `Document.hasDecisionText`, which the adapter writes
+when it stores the row. It used to be inferred from the text's length — under
+4,000 characters meant a register entry — and that proxy was wrong in both
+directions on real data. Ten of the corpus's EFTA rows are complete decisions
+that fall under the line: an Order of the President discontinuing proceedings
+runs to 1,600 characters and is the whole of what the Court decided. Each was
+being labelled as a judgment this database does not hold, while holding it. The
+length rule survives only for rows stored before that column existed.
 
 **Truncation is structural, never by character count.** This is the part with
 the sharpest edge in the whole feature. A provision is a rule plus its

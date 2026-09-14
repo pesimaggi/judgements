@@ -101,6 +101,36 @@ describe("buildDecisionEvidence", () => {
     assert.equal(evidence.reasoning, null);
   });
 
+  test("an operative part is never cut back to its preamble", () => {
+    // The shape that made this a bug rather than a budget: a short preamble
+    // that says nothing, then one long paragraph that is the whole ruling.
+    // truncateByParagraph drops whole paragraphs, so a budget between the two
+    // keeps the throat-clearing and throws away the answer — and the well then
+    // reports, accurately, that the sources do not show what the case held.
+    const ruling =
+      "Articles 6 and 21(2) and (3) of Regulation (EC) No 883/2004 on the coordination of social security systems " +
+      "must be interpreted as requiring that the amount of a benefit granted to a migrant worker who had only had " +
+      "income in another EEA State is calculated by taking into account the income of a person who has comparable " +
+      "experience and qualifications and who is similarly employed in the EEA State in which that benefit is sought. ".repeat(3);
+    const judgment = [
+      "JUDGMENT OF THE COURT 29 July 2022",
+      "",
+      "IV Costs",
+      "",
+      "Costs incurred in submitting observations to the Court are not recoverable.",
+      "",
+      "On those grounds,",
+      "",
+      "THE COURT in answer to the question referred to it by Reykjavík District Court gives the following Advisory Opinion:",
+      "",
+      ruling,
+    ].join("\n");
+
+    const holding = buildDecisionEvidence({ fullText: judgment, snippet: "" }).holding ?? "";
+    assert.match(holding, /gives the following Advisory Opinion/, "the preamble should still be there");
+    assert.match(holding, /comparable experience and qualifications/, "the ruling is the point of the section");
+  });
+
   test("a document with no sections at all yields no false ones", () => {
     const evidence = buildDecisionEvidence({ fullText: "Stutt skjal án fyrirsagna.", snippet: "" });
     assert.equal(evidence.summary, null);
@@ -220,5 +250,31 @@ describe("register-only records", () => {
   test("an empty or absent text is not mistaken for a register entry", () => {
     assert.equal(isRegisterOnly("eftacourt", ""), true);
     assert.equal(isRegisterOnly("haestirettur", null), false);
+  });
+
+  test("what the row records beats what its length suggests", () => {
+    // Both directions of the old length proxy, as they actually occur. An
+    // Order of the President discontinuing proceedings is the whole of what
+    // the Court decided and runs to well under the 4,000-character line: ten
+    // of the corpus's EFTA rows are that shape, and every one of them was
+    // being reported as a decision this database does not hold.
+    const shortOrder = `${REGISTER}\n\nOrder of the President\nORDER OF THE PRESIDENT 7 October 2008 (Withdrawal of a request for an Advisory Opinion). The case is removed from the Register.`;
+    assert.ok(shortOrder.length < 4_000, "fixture must fall under the length rule");
+    assert.equal(isRegisterOnly("eftacourt", shortOrder, true), false);
+
+    // And a long register entry — a case with years of procedural diary — is
+    // still a register entry, whatever it measures.
+    const longRegister = `${REGISTER}\n${"01/02/2022 Written observations received.\n".repeat(200)}`;
+    assert.ok(longRegister.length > 4_000, "fixture must clear the length rule");
+    assert.equal(isRegisterOnly("eftacourt", longRegister, false), true);
+  });
+
+  test("a row stored before the column existed falls back to its length", () => {
+    // Null is "nobody looked", which is what every row ingested before
+    // Document.hasDecisionText says. There is nothing to read but the text.
+    assert.equal(isRegisterOnly("eftacourt", REGISTER, null), true);
+    assert.equal(isRegisterOnly("eftacourt", REGISTER, undefined), true);
+    const withJudgment = `${REGISTER}\n\nJudgment\n${"On those grounds the Court held. ".repeat(200)}`;
+    assert.equal(isRegisterOnly("eftacourt", withJudgment, null), false);
   });
 });

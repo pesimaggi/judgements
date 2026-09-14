@@ -357,6 +357,37 @@ describe("the EU and EEA courts, which write in English", () => {
     assert.match(holding, /Article 15\(1\)/);
   });
 
+  // The EFTA Court heads its reasoning "Answer of the Court" as often as
+  // "Findings of the Court", and its judgments reach us as PDF text in which a
+  // heading is swallowed by the paragraph beneath it. Both are true of the real
+  // E-5/21, whose shape this fixture keeps; the fixtures above have neither.
+  const EFTA_INLINE = [
+    "5/21 Judgment",
+    "JUDGMENT OF THE COURT 29 July 2022 *",
+    "In Case E-5/21,",
+    "Judgment I Legal background EEA law 1 Article 28(1) of the EEA Agreement reads:",
+    "II Facts and procedure 15 Ms Einarsdóttir pursued postgraduate studies in Denmark.",
+    "III Answer of the Court 22 By the first part of its question, the referring court asks whether Article 6 of the Regulation obliges an EEA State to calculate reference income on the basis of aggregate wages across the European Economic Area.",
+    "36 In the light of the above, the answer to the question referred must be that Articles 6 and 21(2) and (3) of the Regulation do not oblige the competent institution of an EEA State to calculate the amount of a benefit on the basis of income received in another EEA State.",
+    "IV Costs 37 Since these proceedings are a step in the proceedings pending before the national court, any decision on costs is a matter for that court.",
+    "On those grounds, THE COURT in answer to the question referred to it by Reykjavík District Court gives the following Advisory Opinion:",
+    "Articles 6 and 21(2) and (3) of Regulation (EC) No 883/2004 must be calculated by taking into account the income of a person who has comparable experience and qualifications.",
+  ].join("\n");
+
+  test("an advisory opinion headed \"Answer of the Court\" yields its reasoning", () => {
+    const reasoning = extractReasoning(EFTA_INLINE);
+    assert.ok(reasoning, "no reasoning extracted");
+    assert.match(reasoning, /the answer to the question referred must be/);
+    // The reasoning must stop before the operative part, as for the fixtures
+    // above: the answer prompt shows the two under different labels.
+    assert.doesNotMatch(reasoning, /gives the following Advisory Opinion/);
+    assert.doesNotMatch(reasoning, /comparable experience and qualifications/);
+
+    const holding = extractHolding(EFTA_INLINE);
+    assert.ok(holding, "no operative part extracted");
+    assert.match(holding, /comparable experience and qualifications/);
+  });
+
   test("the generic words around them are NOT treated as headings", () => {
     // RAW_HEADING_RE is case-insensitive, so a bare "Costs", "Grounds" or
     // "Conclusion" in HEADING_WORDS would match wherever a sentence begins

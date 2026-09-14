@@ -43,11 +43,30 @@ export interface EvidenceBudget {
   holding: number;
 }
 
+/**
+ * `holding` is the one of these that cannot be set by eye, and was.
+ *
+ * An operative part is not prose that degrades gracefully when shortened. It
+ * is a preamble sentence — "THE COURT in answer to the question referred to it
+ * by Reykjavík District Court gives the following Advisory Opinion:" — and
+ * then one long paragraph that is the whole ruling. `truncateByParagraph`
+ * drops whole paragraphs, correctly, so a budget that fits the preamble and
+ * not the ruling keeps the half that says nothing and discards the half that
+ * is the answer.
+ *
+ * At 800 that is not an edge case. Measured over the 397 EFTA decisions in the
+ * corpus that carry their text, the median operative part is 868 characters —
+ * the budget was below the median size of the thing it was budgeting. 232 of
+ * the 397 were being cut, and 47 of those were reduced to under 300 characters:
+ * the preamble and an ellipsis. E-5/21 was one of them, which is why the well
+ * kept reporting that the sources did not show the outcome while holding the
+ * outcome. At 2,400 none is reduced that way and 90% are not cut at all.
+ */
 export const DEFAULT_EVIDENCE_BUDGET: EvidenceBudget = {
   window: 1200,
   summary: 1500,
   reasoning: 2000,
-  holding: 800,
+  holding: 2400,
 };
 
 export interface DecisionEvidence {
@@ -242,15 +261,31 @@ export function provisionEvidence(
  * the outcome. Told what it is holding, it can say the useful thing instead:
  * that the decision text is not in this database and where to read it.
  *
- * Separated by length, which is a clean divide rather than a fine judgement: a
- * register entry runs to a couple of thousand characters, and the same record
- * with the decision appended runs to tens of thousands. When the flag is
- * switched on and the corpus re-ingested, this simply stops firing.
+ * Answered from `Document.hasDecisionText`, which the adapter records when it
+ * stores the row: it is the one place that knows whether a decision was
+ * appended, and it knows it as a fact rather than a symptom.
+ *
+ * It used to be answered by measuring the text — under 4,000 characters meant
+ * a register entry — and that proxy was wrong in both directions. Of the 431
+ * EFTA rows in the corpus, 10 are complete decisions that fall under the line:
+ * an Order of the President discontinuing proceedings runs to 1,600 characters
+ * and is the whole of what the Court decided. Those were being labelled as
+ * having no decision text while holding it. In the other direction, a register
+ * entry for a case with a long procedural diary can climb toward the line from
+ * below.
+ *
+ * The length rule is kept only for rows stored before that column existed,
+ * where there is nothing else to go on.
  */
 const REGISTER_ONLY_MAX_CHARS = 4_000;
 
-export function isRegisterOnly(sourceKey: string, fullText: string | null | undefined): boolean {
+export function isRegisterOnly(
+  sourceKey: string,
+  fullText: string | null | undefined,
+  hasDecisionText?: boolean | null
+): boolean {
   if (sourceKey !== "eftacourt") return false;
+  if (hasDecisionText != null) return !hasDecisionText;
   return (fullText?.trim().length ?? 0) < REGISTER_ONLY_MAX_CHARS;
 }
 

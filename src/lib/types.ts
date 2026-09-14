@@ -17,6 +17,13 @@ export interface NormalizedDocument {
   htmlUrl?: string;
   fullText: string;
   isSample?: boolean;
+  /**
+   * Whether `fullText` includes the decision itself or only the source's
+   * register entry for it. Left undefined by an adapter that does not make
+   * the distinction — every source that stores the document it ingests, which
+   * is most of them. See Document.hasDecisionText in prisma/schema.prisma.
+   */
+  hasDecisionText?: boolean | null;
 }
 
 export interface SearchRequest {
