@@ -87,6 +87,18 @@ Full outputs and reviewer comments are reproduced directly in the table, without
 
 | Question | Run | Full AI output | Comment | Rating (0–10) |
 | --- | --- | --- | --- | --- |
+| Q2 | A1 | á, til eru dómar um tímabundnar ráðningar bæði á almennum vinnumarkaði og hjá hinu opinbera. Gögnin hér sýna þó ekki heildartexta þeirra laga sem gilda og gefa því ekki nægilegt grundvöll til að setja fram tæmandi reglur um heimildir til uppsagnar fyrir lok ráðningartíma eða skilyrði slíkrar uppsagnar.23
+
+Ákvæðin sem gilda
+Leitin bendir sérstaklega á lög um tímabundna ráðningu starfsmanna, lög nr. 139/2003, og lög um réttindi og skyldur starfsmanna ríkisins, lög nr. 70/1996.23
+Þar sem aðeins heiti laganna og fjöldi ákvæða kemur fram í heimildunum, en ekki sjálfur texti ákvæðanna, verður ekki ráðið af þessum gögnum nákvæmlega hvaða skilyrði gilda um gerð tímabundins samnings, endurnýjun hans eða uppsögn áður en samningstíma lýkur.23
+Dómarnir gefa helst upplýsingar um aðgreininguna milli þess að tímabundinn samningur renni út og þess að honum sé sagt upp. Í þeim gögnum sem hér liggja fyrir kemur ekki fram almenn regla um að tímabundnum samningi megi ávallt segja upp með uppsagnarfresti eða að slíkt sé ávallt óheimilt. (óstaðfest: engin heimild úr safninu styður þessa setningu)
+Hvað dómar sýna
+Á almennum vinnumarkaði var í Hæstarétti 345/2014 fjallað um sjómann sem hafði verið ráðinn með ellefu tímabundnum samningum. Hæstiréttur taldi hvorki að hann hefði öðlast rétt til launa í uppsagnarfresti við lok ráðningarinnar né að ítrekaðar ráðningar brytu gegn lögum nr. 139/2003; atvinnurekandinn var sýknaður.4
+Í Hæstarétti 149/2008 var skriflegur samningur ekki fyrir hendi. Af framkvæmd ráðningarsambandsins var ráðið að sjómaðurinn hefði verið ráðinn til tiltekinna veiðitímabila en ekki ótímabundið, og kröfu um laun í uppsagnarfresti var hafnað.8
+Hjá hinu opinbera fjallaði Hæstiréttur 127/2007 um árlegar tímabundnar ráðningar kennara í sérstakt deildarstjórastarf. Tímabundna ráðningin felldi ekki úr gildi ótímabundna skipun hennar í kennarastöðu, en Reykjavíkurborg var sýknuð af kröfu um biðlaun vegna þess sérstaka starfs.9
+Héraðsdómur Reykjavíkur E-4966/2021 fjallaði um hvort ótímabundinn samningur hefði stofnast eftir að starfsmaður hélt áfram störfum að loknum tímabundnum samningi og hvort honum hefði þá verið sagt upp með lögmætum hætti. Útdrátturinn sýnir ágreiningsefnið en ekki endanlega niðurstöðu.1
+Í áliti umboðsmanns í máli 88/2025 var kvartað yfir uppsögn tímabundins samnings nema við Háskóla Íslands. Umboðsmaður fjallaði ekki efnislega um lögmæti uppsagnarinnar þar sem kæruleið innan stjórnkerfis háskólans hafði ekki verið tæmd.6 | Not good | |
 
 ### Evaluation context
 
