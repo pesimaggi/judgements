@@ -88,7 +88,6 @@ Full outputs and reviewer comments are reproduced directly in the table, without
 | Question | Run | Full AI output | Comment | Rating (0–10) |
 | --- | --- | --- | --- | --- |
 | Q2 | A1 | á, til eru dómar um tímabundnar ráðningar bæði á almennum vinnumarkaði og hjá hinu opinbera. Gögnin hér sýna þó ekki heildartexta þeirra laga sem gilda og gefa því ekki nægilegt grundvöll til að setja fram tæmandi reglur um heimildir til uppsagnar fyrir lok ráðningartíma eða skilyrði slíkrar uppsagnar.23
-
 Ákvæðin sem gilda
 Leitin bendir sérstaklega á lög um tímabundna ráðningu starfsmanna, lög nr. 139/2003, og lög um réttindi og skyldur starfsmanna ríkisins, lög nr. 70/1996.23
 Þar sem aðeins heiti laganna og fjöldi ákvæða kemur fram í heimildunum, en ekki sjálfur texti ákvæðanna, verður ekki ráðið af þessum gögnum nákvæmlega hvaða skilyrði gilda um gerð tímabundins samnings, endurnýjun hans eða uppsögn áður en samningstíma lýkur.23
