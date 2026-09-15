@@ -1,14 +1,20 @@
 # Reglugerðir, lögskýringargögn, and repealed acts — a research spike
 
-Three proposals, in the order they should be built. Nothing here has shipped.
-Measured on **2026-09-15** against `api.reglugerd.is`, `www.reglugerd.is` and
-`www.althingi.is`; the probes are listed in *Re-running the measurements* at
-the end so the numbers can be checked rather than believed.
+Three proposals, in the order they should be built. Measured on **2026-09-15**
+against `api.reglugerd.is`, `www.reglugerd.is` and `www.althingi.is`; the
+probes are listed in *Re-running the measurements* at the end so the numbers
+can be checked rather than believed.
+
+**One piece of this has shipped: §2.1, the Alþingi linkage.** `Act.ferillUrl`,
+`Act.billUrl` and `Provision.footnotes` are stored, the act reader shows them,
+and the Lagasafn adapter carries a `PARSE_VERSION` so the backfill happens on
+a scheduled run rather than by hand. Nothing else here has been built — no
+regulation is ingested, no þingskjal is fetched, no repealed act is stored.
 
 | | What | Recommendation |
 |---|---|---|
 | **§1** | Icelandic regulations (reglugerðir) from reglugerd.is | Build it. Reuse `Act` with `docType: "regulation"`. Two real blockers, both addressable. |
-| **§2** | Althingi preparatory works (lögskýringargögn) | Build the *linkage* now — it is nearly free and we are throwing it away today. Hold the ingest until one access question is answered. |
+| **§2** | Althingi preparatory works (lögskýringargögn) | Linkage **shipped** (§2.1, §2.5 step 1). The ingest itself is held until one access question is answered. |
 | **§3** | Acts no longer in force | Not yet, and not in full. There is a cheap 10% of it that solves the real problem; §3.4. |
 
 ---
@@ -197,9 +203,14 @@ from silently losing a regulation.
 
 ## 2. Lögskýringargögn from Alþingi
 
-### 2.1 We already have the linkage and we are discarding it
+### 2.1 We already have the linkage and we were discarding it
 
-This is the headline, and it changes what this project is.
+**Shipped.** This section is kept in the past tense it was written in, because
+the argument is why the columns exist. What it proposed is now in
+`src/lib/lagasafn.ts`, `Act.ferillUrl` / `Act.billUrl` / `Provision.footnotes`,
+and the act reader.
+
+This was the headline, and it changes what this project is.
 
 Every Lagasafn act page — the page `src/ingestion/adapters/lagasafn.ts`
 downloads today, for every act, on every run — carries this immediately under
@@ -236,10 +247,27 @@ Provision (130. gr. laga nr. 91/1991)
 ```
 
 **Do this part now**, independently of any decision about ingesting Althingi.
-Storing `Provision.amendmentFootnotes` and `Act.billUrl` / `Act.ferillUrl` costs
-one migration and a few lines in an adapter that already has the data in hand,
-and it is the expensive half of the feature. The documents can be fetched later;
-the links cannot be reconstructed later without re-crawling all ~900 acts.
+Storing the footnotes and the two links costs one migration and a few lines in
+an adapter that already has the data in hand, and it is the expensive half of
+the feature. The documents can be fetched later; the links cannot be
+reconstructed later without re-crawling all ~900 acts.
+
+Two things the build found that the research did not:
+
+- **The footnotes are not only amendments.** Lagasafn footnotes the regulations
+  *set under* an article in the same place — "Rgl. 492/2001, sbr. rgl.
+  278/2010" under 15. gr. laga nr. 38/2001. So the column is `footnotes`, not
+  `amendmentFootnotes`, and anything reading them has to look at what the note
+  says. It also means §1's "reglugerðir settar samkvæmt þessum lögum" has a
+  second source, per-article, that does not depend on reglugerd.is at all.
+- **The cheap skip had to be dealt with first.** The in-force index pins 903 of
+  ~905 acts to one codex version, and the adapter skips such an act *without
+  fetching it*. Storing a new field would have reached only the acts amended
+  afterwards. Hence `Act.parseVersion` and the adapter's `PARSE_VERSION`: an
+  act behind the current parse is re-fetched whatever its codex version says,
+  so a bump is the backfill. Any later widening of this parse — and §1 will
+  want one — now costs one constant instead of a manual `LAGASAFN_FORCE=1` run
+  somebody has to remember.
 
 ### 2.2 Blocker: `www.althingi.is/altext/**` returns 403 from here
 
@@ -334,10 +362,10 @@ Two things this must get right:
 
 ### 2.5 Suggested phasing
 
-1. **Now, unblocked:** persist `Provision.amendmentFootnotes`, `Act.billUrl`,
-   `Act.ferillUrl` from the Lagasafn parse. Show "Ferill málsins á Alþingi" as
-   an outbound link on the act reader. Zero new fetches, immediate user value,
-   and it banks the linkage.
+1. ~~**Now, unblocked:** persist the footnotes and the two links from the
+   Lagasafn parse, and show them on the act reader.~~ **Shipped.** Zero new
+   fetches; the one cost is a single ~900-act re-fetch when `PARSE_VERSION`
+   rolls, which the run announces before it starts.
 2. Settle the 403 from production (§2.2).
 3. Ingest the ~900 original bills; link act → bill; render on the act reader.
 4. Parse *"athugasemdir við einstakar greinar"* into per-article sections; link

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { actCitation, actDisplayTitle, actPath, parseActRef } from "@/lib/acts";
+import { parseFerillUrl } from "@/lib/lagasafn";
 
 export const dynamic = "force-dynamic";
 
@@ -83,6 +84,19 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
       path: actPath(act),
       currentVersionUrl: act.currentVersionUrl,
       codexVersion: act.codexVersion,
+      // The act's own page on the parliamentary record, and the bill it was
+      // passed from. Icelandic acts only, and null on the acts that predate
+      // the record — the reader renders neither link unless it has one.
+      ferillUrl: act.ferillUrl,
+      billUrl: act.billUrl,
+      /**
+       * The þing and mál numbers out of the ferill link, so the reader can
+       * name the case ("115. löggjafarþing, mál 71") instead of offering a
+       * bare link. Parsed here rather than in the page: the parser lives in
+       * the Lagasafn module, which pulls in cheerio, and that has no business
+       * in a client bundle.
+       */
+      ferill: act.ferillUrl ? parseFerillUrl(act.ferillUrl) : null,
       aliases: act.aliases,
       actCaseCount,
       // EU acts. Null or empty throughout on the Icelandic side, which is
@@ -111,6 +125,10 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
       heading: p.heading,
       anchor: p.anchor,
       isRepealed: p.isRepealed,
+      // `?? []` because the column is nullable in Postgres — Prisma declares
+      // scalar lists non-null in TypeScript but does not enforce it in the
+      // schema, and the reader calls .length on this.
+      footnotes: p.footnotes ?? [],
       paragraphs: p.paragraphs.map((par) => ({ number: par.number, anchor: par.anchor, text: par.text })),
       caseCount: countBy.get(p.id) ?? 0,
     })),

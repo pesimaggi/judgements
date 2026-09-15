@@ -66,7 +66,21 @@ export interface ParsedProvision {
   paragraphs: ParsedParagraph[];
   fullText: string;
   isRepealed: boolean;
-  /** Amendment footnotes trailing the provision, e.g. "1) L. 74/2022, 2. gr.". */
+  /**
+   * The footnotes Lagasafn prints under the provision, one entry per numbered
+   * note, marker included: `["1) L. 159/2008, 1. gr.", "2) L. 8/2015, 9. gr."]`.
+   *
+   * They arrive as a single glued run of text — every note for a provision
+   * sits in one `<i><small>` element — and are split here, because a caller
+   * that wants "which act last amended this article" cannot get it out of a
+   * blob holding four notes.
+   *
+   * Not only amendments, despite the name they are usually given. Lagasafn
+   * also footnotes the regulations *set under* an article, as "Rgl. 492/2001,
+   * sbr. rgl. 278/2010" under 15. gr. laga nr. 38/2001 — which is why this is
+   * `footnotes` rather than `amendmentFootnotes`. Anything reading them has to
+   * look at what the note says, not assume.
+   */
   footnotes: string[];
 }
 
@@ -83,6 +97,22 @@ export interface ParsedAct {
   title: string;
   /** Lagasafn codex version the page was served from, e.g. "157b". */
   codexVersion: string | null;
+  /**
+   * "Ferill málsins á Alþingi" — the act's own page on the parliamentary
+   * record, linked from the Lagasafn page itself. Null for the handful of acts
+   * that predate the record (Kristinréttur Árna, and the older tilskipanir).
+   */
+  ferillUrl: string | null;
+  /**
+   * "Frumvarp til laga" — the bill the act was passed from. HTML for anything
+   * recent, a scanned PDF under /altext/pdf/ for the older þing.
+   *
+   * This is the link that makes preparatory works tractable. Matching acts to
+   * þingmál by number and title is a guess; this is an anchor tag Alþingi
+   * publishes on the act's own page, and it costs nothing because we download
+   * that page anyway.
+   */
+  billUrl: string | null;
   chapters: ParsedChapter[];
   provisions: ParsedProvision[];
 }
@@ -107,6 +137,54 @@ export function normalizeLawText(s: string): string {
 /** Lagasafn brackets passages inserted by amendment; the brackets are editorial. */
 function stripAmendmentBrackets(s: string): string {
   return s.replace(/[[\]]/g, "");
+}
+
+/**
+ * Splits Lagasafn's glued footnote run into one entry per numbered note.
+ *
+ * Every note under a provision arrives in a single element, so `.text()` gives
+ * "1)L. 159/2008, 1. gr. 2)L. 8/2015, 9. gr." — two notes in one string, and
+ * useless to anything that wants the last amending act. A marker is a number,
+ * a close paren and then the note's own text, which always opens with an
+ * abbreviation in capitals ("L.", "Rgl.", "Augl."); requiring that letter is
+ * what stops a year inside a note from being read as the next marker.
+ */
+export function splitFootnotes(run: string): string[] {
+  const flat = normalizeLawText(run).replace(/\s+/g, " ").trim();
+  if (!flat) return [];
+  const marker = /(\d{1,3})\)\s*/g;
+  const starts: { index: number; number: string; bodyAt: number }[] = [];
+  for (const m of flat.matchAll(marker)) {
+    const bodyAt = m.index! + m[0].length;
+    // A marker introduces a note; anything else is a stray paren inside one.
+    if (!/^\p{Lu}/u.test(flat.slice(bodyAt))) continue;
+    starts.push({ index: m.index!, number: m[1], bodyAt });
+  }
+  // No marker at all: Lagasafn prints the note bare on some older acts. Keep
+  // the text rather than dropping it — it is still the footnote.
+  if (starts.length === 0) return [flat];
+  return starts
+    .map((s, i) => {
+      const end = i + 1 < starts.length ? starts[i + 1].index : flat.length;
+      const body = flat.slice(s.bodyAt, end).trim();
+      return body ? `${s.number}) ${body}` : "";
+    })
+    .filter(Boolean);
+}
+
+/**
+ * The þing and the case number out of a "Ferill málsins á Alþingi" link —
+ * `…/ferill/?ltg=115&mnr=71` is mál 71 of the 115th löggjafarþing.
+ *
+ * Those two numbers are how Alþingi's own XML web service is addressed, so
+ * parsing them here is what lets a later travaux ingest start from the act
+ * rather than from a search.
+ */
+export function parseFerillUrl(url: string): { parliament: number; caseNumber: number } | null {
+  const ltg = /[?&](?:amp;)?ltg=(\d+)/.exec(url);
+  const mnr = /[?&](?:amp;)?mnr=(\d+)/.exec(url);
+  if (!ltg || !mnr) return null;
+  return { parliament: Number(ltg[1]), caseNumber: Number(mnr[1]) };
 }
 
 /** "G7A" → 7 / "a"; "G12" → 12 / null. */
@@ -157,6 +235,24 @@ export function parseLagasafnHtml(html: string): ParsedAct {
   });
 
   const codexVersion = /Útgáfa\s+(\w+)\./.exec(container.text())?.[1] ?? null;
+
+  // The two Alþingi links Lagasafn prints between the act's number line and
+  // its first chapter. Matched on the href rather than on the link text, which
+  // varies with the kind of bill ("Frumvarp til laga", "Frumvarp til
+  // stjórnarskipunarlaga"), and taking the first of each: an act page carries
+  // one of either, and the amendment list below them links to Stjórnartíðindi,
+  // not to /s/.
+  let ferillUrl: string | null = null;
+  let billUrl: string | null = null;
+  container.find("a[href]").each((_, el) => {
+    const href = el.attribs?.href ?? "";
+    if (!ferillUrl && /\/ferill\/\?/.test(href)) ferillUrl = absoluteAlthingiUrl(href);
+    // Þingskjöl are /altext/{þing}/s/{skjal}.html, or /altext/pdf/{þing}/s/
+    // {skjal}.pdf for the older þing, which Alþingi publishes only as scans.
+    if (!billUrl && /\/altext\/(?:pdf\/)?\d+\/s\/\d+\.(?:html|pdf)$/.test(href)) {
+      billUrl = absoluteAlthingiUrl(href);
+    }
+  });
 
   const chapters: ParsedChapter[] = [];
   const provisions: ParsedProvision[] = [];
@@ -256,7 +352,7 @@ export function parseLagasafnHtml(html: string): ParsedAct {
 
       // Amendment footnote line — must not bleed into the paragraph text.
       if (tag === "i" && $el.find("small sup").length > 0) {
-        if (current) current.footnotes.push(normalizeLawText($el.text()));
+        if (current) current.footnotes.push(...splitFootnotes($el.text()));
         continue;
       }
 
@@ -374,7 +470,16 @@ export function parseLagasafnHtml(html: string): ParsedAct {
   // debris, not a provision.
   const kept = provisions.filter((p) => p.displayLabel || p.fullText);
 
-  return { actNumber, year, title, codexVersion, chapters, provisions: kept };
+  return { actNumber, year, title, codexVersion, ferillUrl, billUrl, chapters, provisions: kept };
+}
+
+/**
+ * Lagasafn writes some links absolute and some site-relative on the same page.
+ * Stored links have to be openable from this app, so they are resolved here
+ * rather than left for every caller to guess at.
+ */
+function absoluteAlthingiUrl(href: string): string {
+  return href.startsWith("http") ? href : `https://www.althingi.is${href.startsWith("/") ? "" : "/"}${href}`;
 }
 
 /** The canonical permalink for an act's current version. */

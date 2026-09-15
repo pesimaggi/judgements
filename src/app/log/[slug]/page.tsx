@@ -17,6 +17,8 @@ interface Provision {
   heading: string | null;
   anchor: string;
   isRepealed: boolean;
+  /** Lagasafn's own footnotes, marker included: "1) L. 74/2022, 2. gr.". */
+  footnotes: string[];
   paragraphs: Paragraph[];
   caseCount: number;
 }
@@ -36,6 +38,11 @@ interface Act {
   citation: string;
   currentVersionUrl: string;
   codexVersion: string | null;
+  /** Icelandic acts only; null for the acts older than Alþingi's record. */
+  ferillUrl: string | null;
+  billUrl: string | null;
+  /** Parsed out of ferillUrl by the API — "115. löggjafarþing, mál 71". */
+  ferill: { parliament: number; caseNumber: number } | null;
   aliases: string[];
   actCaseCount: number;
   // EU acts only.
@@ -183,6 +190,37 @@ export default function ActPage({ params }: { params: { slug: string } }) {
           </a>
         </div>
 
+        {/* ---- Where the act came from ------------------------------ */}
+        {(act.ferillUrl || act.billUrl) && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-inkSoft">
+            <span>Lögskýringargögn:</span>
+            {act.billUrl && (
+              <a
+                href={act.billUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent hover:underline"
+              >
+                Frumvarpið og greinargerðin ↗
+              </a>
+            )}
+            {act.ferillUrl && (
+              <a
+                href={act.ferillUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent hover:underline"
+              >
+                Ferill málsins á Alþingi
+                {act.ferill
+                  ? ` (${act.ferill.parliament}. löggjafarþing, mál ${act.ferill.caseNumber})`
+                  : ""}{" "}
+                ↗
+              </a>
+            )}
+          </div>
+        )}
+
         {/* ---- Where this act stands in EEA law ---------------------- */}
         {isEu && (
           <div className="mt-3 rounded border border-line bg-paper px-3 py-2 text-xs text-inkSoft">
@@ -322,6 +360,22 @@ export default function ActPage({ params }: { params: { slug: string } }) {
                             </p>
                           ))}
                         </div>
+                      )}
+
+                      {/*
+                        Lagasafn's own footnotes, as it prints them. Almost
+                        always "which act amended this article, and in which of
+                        its own articles" — the thread from a provision back to
+                        the bill that wrote it — but sometimes the regulations
+                        set under the article instead, so they are shown as
+                        written rather than relabelled as amendments.
+                      */}
+                      {p.footnotes.length > 0 && (
+                        <ul className="mt-3 border-t border-line pt-2 text-[11px] leading-relaxed text-inkSoft">
+                          {p.footnotes.map((note, i) => (
+                            <li key={i}>{note}</li>
+                          ))}
+                        </ul>
                       )}
 
                       {p.caseCount > 0 ? (

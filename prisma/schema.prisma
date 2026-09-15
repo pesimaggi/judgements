@@ -107,6 +107,27 @@ model Act {
   /// roughly-daily Lagasafn updates.
   sourceHash        String   @map("source_hash")
 
+  /// Which release of the Lagasafn parser produced the stored structure.
+  ///
+  /// Not the same question as `sourceHash`, which asks whether *Lagasafn*
+  /// changed. This asks whether *we* changed: the ingest skips an act whose
+  /// codex version it already holds without so much as fetching it, so adding
+  /// a field to the parse would otherwise reach only the handful of acts
+  /// amended afterwards, and the rest would stay blank for ever. A run
+  /// re-fetches anything behind the adapter's current version, so bumping the
+  /// constant is the whole of a backfill. 0 is "ingested before this column
+  /// existed", which is exactly the population that needs re-parsing.
+  parseVersion      Int      @default(0) @map("parse_version")
+
+  /// "Ferill málsins á Alþingi" — the act's page on the parliamentary record,
+  /// taken from the link Lagasafn prints on the act's own page rather than
+  /// matched by number and title. Null for acts older than the record.
+  ferillUrl         String?  @map("ferill_url")
+  /// "Frumvarp til laga" — the þingskjal the act was passed from, from the
+  /// same place. HTML for recent þing, a scanned PDF for the older ones.
+  /// Icelandic acts only; an EU act has no parliamentary bill in this sense.
+  billUrl           String?  @map("bill_url")
+
   // ---- EU acts (jurisdiction = "eu"). Null on the Icelandic side. ----------
 
   /// EUR-Lex's CELEX number, "32016R0679" — the natural key of the EU corpus,
@@ -203,6 +224,25 @@ model Provision {
   /// True when the provision's entire body has been repealed — Lagasafn
   /// prints these as a bare "…" with a footnote.
   isRepealed    Boolean                  @default(false) @map("is_repealed")
+  /// Lagasafn's footnotes for this provision, one per numbered note and with
+  /// the marker kept: ["1) L. 159/2008, 1. gr.", "2) L. 8/2015, 9. gr."].
+  ///
+  /// Mostly amendments — which act, and which article of it, last touched this
+  /// one — which is the chain from a provision to the bill whose commentary
+  /// explains it. Not exclusively: Lagasafn footnotes the regulations set
+  /// under an article here too ("Rgl. 492/2001"). Stored as printed, so a
+  /// reader gets what althingi.is shows and a later job can parse them without
+  /// re-fetching 900 acts. Empty for EU acts, which carry no such notes.
+  ///
+  /// `@default([])` is load-bearing, and the other scalar lists in this schema
+  /// only get away without one because every row that has ever existed was
+  /// written by a client that supplied a value. This column is being added to
+  /// ~30,000 provisions that already exist; without the default Postgres fills
+  /// them with NULL, Prisma Client hands that back as `null` under a
+  /// `string[]` type, and the act reader throws on `.length` for every act
+  /// until the backfill run reaches it — and for every EU act for ever, since
+  /// the EUR-Lex adapter never writes this field at all.
+  footnotes     String[]                 @default([])
   ordering      Int
   /// Materialized search vector, maintained by a trigger created in
   /// prisma/sql/setup-search.sql. Declared as Unsupported so `prisma db push`

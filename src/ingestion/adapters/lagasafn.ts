@@ -38,6 +38,26 @@ const INDEX_URL =
 /** Cursor key for the resume point, in the same table the court sweeps use. */
 const CURSOR_KEY = "lagasafn";
 
+/**
+ * What this adapter extracts from a Lagasafn page, as a number.
+ *
+ * The cheap skip below passes over an act whose codex version we already hold
+ * *without fetching it*, which is what keeps a run against an unchanged
+ * Lagasafn release down to a single request. The cost is that widening the
+ * parse reaches almost nothing: the index pins 903 of ~905 acts to one codex
+ * version, so a new field would land only on acts amended since, and the rest
+ * would stay blank indefinitely.
+ *
+ * So: bump this whenever the parse starts storing something it did not store
+ * before. Acts behind it are re-fetched and re-saved once, and the backfill is
+ * the next scheduled run rather than someone remembering to set
+ * LAGASAFN_FORCE=1.
+ *
+ *   1 — chapters, provisions, paragraphs.
+ *   2 — provision footnotes, and the act's ferill and bill links.
+ */
+const PARSE_VERSION = 2;
+
 export interface ActIndexEntry {
   actNumber: number;
   year: number;
@@ -86,6 +106,15 @@ export function parseActIndex(html: string): ActIndexEntry[] {
   return Array.from(byKey.values());
 }
 
+/**
+ * Fingerprints everything the act's row and its children hold, so that "the
+ * hash is unchanged" means "there is nothing to write" rather than "the
+ * article text is unchanged".
+ *
+ * The footnotes are in here for a reason that looks like a corner case and is
+ * not: a regulation set under an article adds a footnote to a provision whose
+ * own text does not move. Hashing only the text would skip that act for ever.
+ */
 function hashAct(parsed: ParsedAct): string {
   // Separators are written as escapes rather than as raw control
   // characters: typed literally they make this file read as binary to git
@@ -94,10 +123,14 @@ function hashAct(parsed: ParsedAct): string {
   const body = parsed.provisions
     .map(
       (p) =>
-        `${p.anchor}\u0000${p.displayLabel}\u0000${p.heading ?? ""}\u0000${p.fullText}`
+        `${p.anchor}\u0000${p.displayLabel}\u0000${p.heading ?? ""}\u0000${p.fullText}` +
+        `\u0000${p.footnotes.join("\u0002")}`
     )
     .join("\u0001");
-  return createHash("sha256").update(`${parsed.title}\u0001${body}`).digest("hex");
+  const links = `${parsed.ferillUrl ?? ""}\u0000${parsed.billUrl ?? ""}`;
+  return createHash("sha256")
+    .update(`${parsed.title}\u0001${links}\u0001${body}`)
+    .digest("hex");
 }
 
 
@@ -141,7 +174,10 @@ export async function saveAct(
       status: "in_force",
       currentVersionUrl: actUrl(actNumber, year),
       codexVersion: parsed.codexVersion ?? entry.codexVersion,
+      ferillUrl: parsed.ferillUrl,
+      billUrl: parsed.billUrl,
       sourceHash,
+      parseVersion: PARSE_VERSION,
       fetchedAt: new Date(),
     },
     update: {
@@ -149,7 +185,10 @@ export async function saveAct(
       status: "in_force",
       currentVersionUrl: actUrl(actNumber, year),
       codexVersion: parsed.codexVersion ?? entry.codexVersion,
+      ferillUrl: parsed.ferillUrl,
+      billUrl: parsed.billUrl,
       sourceHash,
+      parseVersion: PARSE_VERSION,
       fetchedAt: new Date(),
     },
   });
@@ -186,6 +225,7 @@ export async function saveAct(
       heading: p.heading,
       fullText: p.fullText,
       isRepealed: p.isRepealed,
+      footnotes: p.footnotes,
       ordering: i,
     };
 
@@ -274,10 +314,30 @@ export const lagasafnAdapter: IngestionAdapter = {
           // The Icelandic half of the table only: the EU acts alongside it are
           // tens of thousands of rows this pass has no use for.
           where: { jurisdiction: "is" },
-          select: { actNumber: true, year: true, sourceHash: true, codexVersion: true },
+          select: {
+            actNumber: true,
+            year: true,
+            sourceHash: true,
+            codexVersion: true,
+            parseVersion: true,
+          },
         })
       ).map((a) => [`${a.actNumber}/${a.year}`, a])
     );
+
+    // The one-off cost of a PARSE_VERSION bump, said out loud before it is
+    // paid: a run that would normally make a single request is about to fetch
+    // every act in the index. Silence here would look like the cheap skip
+    // having broken.
+    const behind = Array.from(known.values()).filter(
+      (a) => a.parseVersion !== PARSE_VERSION
+    ).length;
+    if (behind > 0) {
+      ctx.log(
+        `${behind} act(s) stored by an older parse (< v${PARSE_VERSION}) — re-fetching ` +
+          `them once to fill in what it did not extract.`
+      );
+    }
 
     let newActs = 0;
     let processed = 0;
@@ -287,10 +347,17 @@ export const lagasafnAdapter: IngestionAdapter = {
       const key = `${entry.actNumber}/${entry.year}`;
       try {
         const existing = known.get(key);
+        // Stored by an older parse than this adapter now performs, so what is
+        // on the row is incomplete whatever Lagasafn has done since. Neither
+        // skip below may fire: this act has to be re-fetched and re-saved.
+        // See PARSE_VERSION.
+        const stale = !existing || existing.parseVersion !== PARSE_VERSION;
+
         // Cheapest skip: the index says this act still belongs to the codex
         // version we already parsed, so its text cannot have changed.
         if (
           !force &&
+          !stale &&
           existing &&
           entry.codexVersion &&
           existing.codexVersion === entry.codexVersion
@@ -318,7 +385,7 @@ export const lagasafnAdapter: IngestionAdapter = {
         }
 
         const hash = hashAct(parsed);
-        if (!force && existing?.sourceHash === hash) {
+        if (!force && !stale && existing?.sourceHash === hash) {
           // Text unchanged, but the codex version moved on: record that so the
           // cheap skip above applies next time.
           await prisma.act.update({
