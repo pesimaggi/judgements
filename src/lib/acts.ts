@@ -32,16 +32,31 @@ export type ActSort = "title" | "number" | "cases" | "provisions";
 /** How much of the EU library an act query may see. See the header. */
 export type ActScope = "eea" | "eu";
 
-/** Which corpus the catalogue is showing. */
-export type ActJurisdiction = "is" | "eu" | "all";
+/**
+ * Which corpus the catalogue is showing.
+ *
+ * Not the same thing as `Act.jurisdiction`, and that is the point. The table
+ * holds three bodies of law under two jurisdiction values: Icelandic acts and
+ * Icelandic regulations are both jurisdiction "is", and they are not the same
+ * corpus — nobody looking for lög wants reglugerðir mixed in, and "lög nr.
+ * 300/2020" is simply the wrong thing to call reglugerð nr. 300/2020.
+ *
+ *   "is"     — lög. jurisdiction "is", docType "act".
+ *   "is-reg" — reglugerðir. jurisdiction "is", docType "regulation".
+ *   "eu"     — the EU library, whatever the instrument.
+ *   "all"    — no filter.
+ */
+export type ActCorpus = "is" | "is-reg" | "eu" | "all";
+
 
 export function parseActScope(value: string | null | undefined): ActScope {
   return value === "eu" ? "eu" : "eea";
 }
 
-export function parseActJurisdiction(value: string | null | undefined): ActJurisdiction {
-  return value === "eu" || value === "all" ? value : "is";
+export function parseActCorpus(value: string | null | undefined): ActCorpus {
+  return value === "eu" || value === "all" || value === "is-reg" ? value : "is";
 }
+
 
 /**
  * The SQL an act query must add to stay inside a scope, as a condition on the
@@ -63,20 +78,45 @@ export function scopeFilter(scope: ActScope, alias = "a"): Prisma.Sql {
      OR coalesce(cardinality(${table}.eea_incorporated_by), 0) > 0)`;
 }
 
-export function jurisdictionFilter(jurisdiction: ActJurisdiction, alias = "a"): Prisma.Sql {
-  if (jurisdiction === "all") return Prisma.sql`TRUE`;
+/**
+ * The SQL that limits an act query to one corpus.
+ *
+ * This is the one place `doc_type = 'act'` should be written. Before
+ * regulations existed, `jurisdiction = 'is'` meant lög and every act query
+ * said so inline; now it means lög *or* reglugerðir, and an inline condition
+ * left behind is a regulation presented as an act — cited "lög nr. 300/2020",
+ * counted in the act catalogue's totals, and offered by the act type-ahead as
+ * though a judgment citing that number meant it.
+ */
+export function corpusFilter(corpus: ActCorpus, alias = "a"): Prisma.Sql {
   const table = Prisma.raw(alias);
-  return Prisma.sql`${table}.jurisdiction = ${jurisdiction}`;
+  switch (corpus) {
+    case "all":
+      return Prisma.sql`TRUE`;
+    case "eu":
+      return Prisma.sql`${table}.jurisdiction = 'eu'`;
+    case "is-reg":
+      return Prisma.sql`${table}.jurisdiction = 'is' AND ${table}.doc_type = 'regulation'`;
+    case "is":
+    default:
+      return Prisma.sql`${table}.jurisdiction = 'is' AND ${table}.doc_type = 'act'`;
+  }
 }
+
 
 /** How an act is cited, given what the row holds. */
 export function actCitation(act: {
   jurisdiction: string;
+  docType?: string;
   citation: string | null;
   actNumber: number;
   year: number;
 }): string {
   if (act.jurisdiction === "eu") return act.citation ?? `${act.actNumber}/${act.year}`;
+  // An Icelandic regulation is cited by the same number-and-year form as an
+  // act and is not one; calling it "lög nr. 300/2020" would be a statement
+  // about its legal status, not a formatting slip.
+  if (act.docType === "regulation") return `reglugerð nr. ${act.actNumber}/${act.year}`;
   return `lög nr. ${act.actNumber}/${act.year}`;
 }
 
@@ -96,21 +136,55 @@ export function actDisplayTitle(act: { jurisdiction: string; title: string }): s
  * carries a type letter — so one route serves both, and one act reader renders
  * both.
  */
-export function actPath(act: { jurisdiction: string; celex: string | null; actNumber: number; year: number }): string {
+export function actPath(act: {
+  jurisdiction: string;
+  docType?: string;
+  celex: string | null;
+  actNumber: number;
+  year: number;
+}): string {
   if (act.jurisdiction === "eu" && act.celex) return euActPath(act.celex);
+  // Regulations are prefixed because "300-2020" cannot say whether it means
+  // lög nr. 300/2020 or reglugerð nr. 300/2020, and both can exist. The route
+  // stays /log/ for all of them: it has served EU regulations since
+  // /log/32016R0679, so it is the reader for legislation, not a route for lög.
+  if (act.jurisdiction === "is" && act.docType === "regulation") {
+    return `/log/rg-${act.actNumber}-${act.year}`;
+  }
   return `/log/${act.actNumber}-${act.year}`;
 }
 
 /** An act reference as it arrives in a URL, resolved to what to look up. */
 export type ActRef =
-  | { jurisdiction: "is"; actNumber: number; year: number }
+  | { jurisdiction: "is"; docType: "act" | "regulation"; actNumber: number; year: number }
   | { jurisdiction: "eu"; celex: string };
 
-/** Parses "38-2001" and "32016R0679", the two forms /log/{slug} takes. */
+/**
+ * Parses the three forms /log/{slug} takes: "38-2001" for an act,
+ * "rg-300-2020" for a regulation, and "32016R0679" for an EU act.
+ *
+ * The regulation prefix is what keeps the first two apart. A regulation number
+ * runs past 1000 in a busy year, so the act form's three-digit limit is not a
+ * discriminator and could not be made into one.
+ */
 export function parseActRef(slug: string): ActRef | null {
+  const regulation = /^rg-(\d{1,4})-(\d{4})$/.exec(slug);
+  if (regulation) {
+    return {
+      jurisdiction: "is",
+      docType: "regulation",
+      actNumber: Number(regulation[1]),
+      year: Number(regulation[2]),
+    };
+  }
   const icelandic = /^(\d{1,3})-(\d{4})$/.exec(slug);
   if (icelandic) {
-    return { jurisdiction: "is", actNumber: Number(icelandic[1]), year: Number(icelandic[2]) };
+    return {
+      jurisdiction: "is",
+      docType: "act",
+      actNumber: Number(icelandic[1]),
+      year: Number(icelandic[2]),
+    };
   }
   const celex = parseCelex(slug);
   if (celex && !celex.consolidated) return { jurisdiction: "eu", celex: celex.celex };
@@ -120,6 +194,8 @@ export function parseActRef(slug: string): ActRef | null {
 export interface ActListItem {
   id: string;
   jurisdiction: string;
+  /** "act" | "regulation" | "directive" | "decision". */
+  docType: string;
   actNumber: number;
   year: number;
   title: string;
@@ -151,8 +227,12 @@ export interface ActListResult {
     acts: number;
     provisions: number;
     linkedProvisions: number;
-    /** Icelandic acts, EU acts, and the EEA-scoped subset of the EU ones. */
+    /**
+     * Icelandic acts, Icelandic regulations, EU acts, and the EEA-scoped
+     * subset of the EU ones.
+     */
     icelandic: number;
+    regulations: number;
     eu: number;
     euEea: number;
   };
@@ -178,8 +258,8 @@ export async function listActs(opts: {
   sort?: ActSort;
   /** Show only acts that at least one judgment cites. */
   citedOnly?: boolean;
-  /** Which corpus to list. Defaults to the Icelandic acts. */
-  jurisdiction?: ActJurisdiction;
+  /** Which corpus to list. Defaults to lög. */
+  corpus?: ActCorpus;
   /** How much of the EU library the listing may see. Defaults to "eea". */
   scope?: ActScope;
   /** Free text over title, citation and short names. */
@@ -189,7 +269,7 @@ export async function listActs(opts: {
   const pageSize = Math.min(1000, Math.max(1, opts.pageSize ?? 100));
   const offset = (page - 1) * pageSize;
   const sort: ActSort = opts.sort ?? "title";
-  const jurisdiction = opts.jurisdiction ?? "is";
+  const corpus = opts.corpus ?? "is";
   const scope = opts.scope ?? "eea";
 
   // Column names as the CTE below exposes them: the `acts a` alias is scoped
@@ -203,7 +283,7 @@ export async function listActs(opts: {
           ? Prisma.sql`provision_count DESC, title ASC`
           : Prisma.sql`title ASC`;
 
-  const where: Prisma.Sql[] = [jurisdictionFilter(jurisdiction), scopeFilter(scope)];
+  const where: Prisma.Sql[] = [corpusFilter(corpus), scopeFilter(scope)];
   const q = (opts.q ?? "").trim();
   if (q) {
     const like = `%${q}%`;
@@ -231,7 +311,7 @@ export async function listActs(opts: {
 
   const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
     WITH counted AS (
-      SELECT a.id, a.jurisdiction, a.act_number, a.year, a.title, a.aliases,
+      SELECT a.id, a.jurisdiction, a.doc_type, a.act_number, a.year, a.title, a.aliases,
              a.current_version_url, a.citation, a.celex, a.eea_relevant,
              a.eea_incorporated_by, a.status, a.text_status,
              (SELECT count(*)::int FROM provisions p
@@ -273,6 +353,7 @@ export async function listActs(opts: {
       provisions: number;
       linked_provisions: number;
       icelandic: number;
+      regulations: number;
       eu: number;
       eu_eea: number;
     }[]
@@ -280,7 +361,10 @@ export async function listActs(opts: {
     SELECT (SELECT count(*)::int FROM acts) AS acts,
            (SELECT count(*)::int FROM provisions WHERE kind = 'article') AS provisions,
            (SELECT count(DISTINCT provision_id)::int FROM case_provision_links) AS linked_provisions,
-           (SELECT count(*)::int FROM acts WHERE jurisdiction = 'is') AS icelandic,
+           (SELECT count(*)::int FROM acts
+             WHERE jurisdiction = 'is' AND doc_type = 'act') AS icelandic,
+           (SELECT count(*)::int FROM acts
+             WHERE jurisdiction = 'is' AND doc_type = 'regulation') AS regulations,
            (SELECT count(*)::int FROM acts WHERE jurisdiction = 'eu') AS eu,
            (SELECT count(*)::int FROM acts a
              WHERE a.jurisdiction = 'eu'
@@ -292,17 +376,20 @@ export async function listActs(opts: {
     acts: rows.map((r) => ({
       id: r.id,
       jurisdiction: r.jurisdiction,
+      docType: r.doc_type,
       actNumber: r.act_number,
       year: r.year,
       title: actDisplayTitle({ jurisdiction: r.jurisdiction, title: r.title }),
       citation: actCitation({
         jurisdiction: r.jurisdiction,
+        docType: r.doc_type,
         citation: r.citation,
         actNumber: r.act_number,
         year: r.year,
       }),
       path: actPath({
         jurisdiction: r.jurisdiction,
+        docType: r.doc_type,
         celex: r.celex,
         actNumber: r.act_number,
         year: r.year,
@@ -325,6 +412,7 @@ export async function listActs(opts: {
       provisions: Number(totals?.provisions ?? 0),
       linkedProvisions: Number(totals?.linked_provisions ?? 0),
       icelandic: Number(totals?.icelandic ?? 0),
+      regulations: Number(totals?.regulations ?? 0),
       eu: Number(totals?.eu ?? 0),
       euEea: Number(totals?.eu_eea ?? 0),
     },

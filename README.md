@@ -14,6 +14,7 @@ The three Icelandic courts published at [island.is/domar](https://island.is/doma
 - **Full document page** — structured metadata, the judgment typeset as readable prose (headings, paragraphs, numbered clauses, quoted passages) with highlighted hits, search-within-document, copyable citation, official-source link, related cases via case-number citation extraction.
 - **Icelandic acts (lög)** — the in-force text of Icelandic law from [Lagasafn](https://www.althingi.is/lagas/), parsed into chapters (kaflar), provisions (greinar) and paragraphs (málsgreinar), with an act reader at `/log/{actNumber}-{year}`.
 - **Where an act came from** — every act reader links the bill it was passed from and its ferill on Alþingi ("115. löggjafarþing, mál 71"), and every article shows Lagasafn's own footnotes: which act amended it and in which of that act's articles, and the regulations set under it. Both are taken from the links and footnotes Lagasafn prints on the act's own page, not matched by number and title, so they are as reliable as the text above them. This is the trail from a provision to the preparatory works that explain it; the works themselves are not ingested yet — see *docs/regulations-and-travaux.md*.
+- **Icelandic regulations (reglugerðir)** — the consolidated text of regulations in force from [reglugerd.is](https://www.reglugerd.is), parsed into the same chapters, articles and paragraphs as lög and read in the same act reader at `/log/rg-{nr}-{ár}`. Amending regulations are not separate entries: `/current` returns the base regulation with its amendments already folded in, so the register's ~6,500 base regulations are stored and the ~8,000 "breytingu á" titles are not. A regulation is cited *reglugerð nr. 300/2020* and is never presented as lög — see *Reglugerðir* below, including the two things about this source that constrain what the feature can be.
 - **Provision-level case linking** — each provision shows how many decisions cite it ("12 úrlausnir vísa til þessa ákvæðis"), expanding to the citing cases with the sentence the citation was found in, so you can see *why* a case matched before opening it.
 - **EU acts (ESB-gerðir)** — the regulations and directives in force, from EUR-Lex, parsed into the same chapter / article / paragraph structure and read in the same act reader at `/log/{CELEX}` — `/log/32016R0679` is the GDPR. Each act carries whether EUR-Lex marks it *"(Text with EEA relevance)"* and which decisions of the EEA Joint Committee this database holds that name it. See *EU acts (EUR-Lex)* below.
 - **EES / ESB scope toggle** — one control, in the act catalogue and beside the specific-search act box, deciding how much of the EU library any act lookup sees. **EES** (the default) is Icelandic law plus the EU acts that may be part of EEA law — the marked ones and the ones a Joint Committee decision names. **ESB** lifts the limit, which is what you want precisely when an act has *not* been incorporated and you need to establish that. Icelandic law is in both: the toggle never hides lög nr. 91/1991.
@@ -21,10 +22,10 @@ The three Icelandic courts published at [island.is/domar](https://island.is/doma
 - **The law itself, above the judgments** — the main search box searches the act library as well as the case law. Type `vaxtalög`, `38/2001`, `gdpr` or `2016/679` and the act heads the results, with the judgments below it; type `130. gr. laga nr. 91/1991` and the article heads them, with its text. Each card offers the two things worth doing next — read the text, or narrow the judgments below to the ones citing it. An act is only ever shown when the query genuinely *names* one, so a search for a subject (`gæsluvarðhald`) looks exactly as it did before. See *Searching for a law* below.
 - **Specific search** — alongside the keyword search, two live lookups that narrow the results, each accepting several selections that combine as AND: an act/provision box that takes the citation as it is written ("lög um aðbúnað og hollustuhætti" finds the cases about the act; "57. gr. a. laga um aðbúnað og hollustuhætti" narrows to the cases citing that article), and a subject-tag box. Acts match on title, citation number, or the short names judgments actually use — "vaxtalög" finds lög nr. 38/2001.
 - **Administrative case law** — the úrskurðarnefndir, kærunefndir and ministry appeal desks at stjornarradid.is, each board its own tickable source rather than one undifferentiated pile. For immigration, benefits, tenancy, procurement and freedom of information this is where the case law actually is, and a search of the courts alone would miss it. See *Úrskurðarnefndir og ráðuneyti* below.
-- **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`. `Act` holds both jurisdictions: `jurisdiction` and `docType` say which corpus and which instrument, and an EU act adds its CELEX, its citation, its EEA marker and the Joint Committee decisions naming it.
+- **Database schema** (Prisma/PostgreSQL) — `Document`, `Source`, `IngestionRun`, `Act`, `Chapter`, `Provision`, `ProvisionParagraph`, `CaseProvisionLink`, `CaseActLink`. `Act` holds three bodies of law: `jurisdiction` and `docType` together say which, because lög and reglugerðir share a jurisdiction and are not the same corpus. An EU act adds its CELEX, its citation, its EEA marker and the Joint Committee decisions naming it; a reglugerð adds its ministry, its publication and amendment dates, and how far its article divisions can be trusted.
 - **Icelandic lemmatisation** — the search index is built twice: once on the words as written, and once on their lemmas, mapped through [BÍN](https://bin.arnastofnun.is/). Icelandic inflects a noun into as many as sixteen forms, and the `simple` text-search configuration does no stemming, so `ríkisborgararéttur` used to find none of `ríkisborgararéttar`, `ríkisborgararétti` or `ríkisborgararéttinum`. Both vectors are searched; the exact one is unchanged, so nothing that matched before stopped matching. See *docs/icelandic-lemmatisation.md*.
 - **Search** — PostgreSQL full-text search (default, zero extra infrastructure) with a provider abstraction; a Meilisearch provider is included and can be switched on with one env var. Ranking reads a materialized `search_vector` column, so a broad query over thousands of hits stays in the low hundreds of milliseconds.
-- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force Icelandic act; `eur-lex` ingests the EU regulations and directives in force from the Publications Office; `cjeu` ingests the judgments of the Court of Justice and the General Court from the same endpoint; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `eea-joint-committee` ingests the EEA Joint Committee's decisions (their own text, one record each); `eftasurv` ingests the EFTA Surveillance Authority's ~6,725 public documents; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court, both halves of it; `uua` ingests Úrskurðarnefnd umhverfis- og auðlindamála (~3,000 planning and environmental rulings, on its own site); `obyggdanefnd` ingests the þjóðlendu commission's 84 úrskurðir; `neytendamal` ingests Áfrýjunarnefnd neytendamála; `yfirskattanefnd` ingests the tax appeal board's 4,175 úrskurðir back to 1973, ríkisskattanefnd's included; `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
+- **Ingestion adapters** — `icelandic-courts` (island.is's public GraphQL API) runs every 3 hours and pulls only what's new; `lagasafn` ingests every in-force Icelandic act; `reglugerd` ingests the Icelandic regulations in force from reglugerd.is; `eur-lex` ingests the EU regulations and directives in force from the Publications Office; `cjeu` ingests the judgments of the Court of Justice and the General Court from the same endpoint; `citations` links judgments to the provisions they cite; `efta-court` ingests the EFTA Court case register; `eea-joint-committee` ingests the EEA Joint Committee's decisions (their own text, one record each); `eftasurv` ingests the EFTA Surveillance Authority's ~6,725 public documents; `umbodsmadur` ingests the Ombudsman's opinions and letters; `felagsdomur` ingests the labour court, both halves of it; `uua` ingests Úrskurðarnefnd umhverfis- og auðlindamála (~3,000 planning and environmental rulings, on its own site); `obyggdanefnd` ingests the þjóðlendu commission's 84 úrskurðir; `neytendamal` ingests Áfrýjunarnefnd neytendamála; `yfirskattanefnd` ingests the tax appeal board's 4,175 úrskurðir back to 1973, ríkisskattanefnd's included; `stjornarradid` ingests the 40 úrskurðarnefndir and ministry appeal desks (~23,700 rulings, the largest source in the app); `logretta` and `ulfljotur` ingest two peer-reviewed legal journals (see below).
 - **Scholarly commentary** — Tímarit Lögréttu and Vefrit Úlfljóts, searched alongside the case law rather than in a separate silo, so a query about an unsettled point returns both the judgments and the articles arguing about them. Articles are indexed in full but read at the journal that published them: their cards and pages link out rather than reproducing the text here.
 - **The well** — an assistant that answers a question in prose instead of returning a result list. Drop a question in ("Hvernig sæki ég um íslenskan ríkisborgararétt?") and it runs a handful of focused searches over the acts, the provisions and every decision source, ranks what comes back by authority as well as by relevance, and writes an answer in the language you asked in with a numbered citation on every proposition — each one a link to the article or the judgment it rests on. It opens as a split screen: the conversation on one side, the law it found on the other, each source carrying the passage it was selected for — and clicking a source or a citation opens the judgment itself in that half, so the answer and the law it rests on are read side by side without leaving the conversation. The stages stream as they finish — the search terms first, then the law, then the prose a line at a time — and every line is citation-checked *before* it is sent, so an invented citation is never briefly on screen. It answers only from what the search returned; a citation to a source that does not exist is removed rather than renumbered, and a statement of law with nothing behind it is marked as unverified in the answer you read. Off unless an LLM API key is configured; OpenAI and Anthropic are both supported and swap with one variable. See *Asking the well* below.
 - **Seed data** — four sample judgments across the three courts, all clearly flagged `[SAMPLE]` in the UI, so the pipeline can be exercised immediately.
@@ -2625,6 +2626,8 @@ src/
     provision-query.ts           splits "57. gr. a. laga um …" into article + act
     tags.ts                      cached subject-tag vocabulary
     lagasafn.ts                  Lagasafn HTML → chapters/provisions/paragraphs
+    reglugerd.ts                 reglugerd.is HTML → the same, from either of the
+                                 two markup generations the register is published in
     eur-lex.ts                   CELEX identity + EU act HTML → articles (three layouts)
     cjeu.ts                      case CELEX → C-203/15; EUR-Lex's five-field case title
     eea-tag.ts                   the one definition of EES / EES? / no tag
@@ -2658,6 +2661,8 @@ src/
     adapters/
       icelandic-courts.ts        GraphQL + embedded PDF/rich text; scheduled incremental
       lagasafn.ts                in-force Icelandic acts; incremental by codex + parse version
+      reglugerd.ts               Icelandic regulations, from reglugerd.is; base
+                                 regulations only, amendments read for their effects
       efta-court.ts              EFTA Court case register, via cases-sitemap.xml
       eur-lex.ts                 EU regulations and directives in force, from Cellar;
                                  catalogue / text / retry / EEA-links passes, and the
@@ -2775,6 +2780,12 @@ npm run ingest -- --adapter=citations
 | `LAGASAFN_MAX_ACTS` | lagasafn | Acts fetched per run; the rest resume next run |
 | `LAGASAFN_ONLY` | lagasafn | Ingest a single act, e.g. `91/1991` — bypasses the cursor |
 | `LAGASAFN_FORCE=1` | lagasafn | Re-parse and rewrite even when nothing has changed. Rarely needed now: a parser that starts *storing* something new says so by bumping `PARSE_VERSION`, and the next scheduled run re-fetches everything behind it by itself. This is still the way to force a rewrite when the stored shape has not changed — checking a parser fix against the live corpus, say |
+| `REGLUGERD_MAX_PAGES` | reglugerd | Register pages read per run (default 8; 30 entries a page) |
+| `REGLUGERD_MAX_ITEMS` | reglugerd | Regulations fetched per run (default 400) |
+| `REGLUGERD_ONLY` | reglugerd | Ingest a single regulation, e.g. `300/2020` — bypasses the register walk |
+| `REGLUGERD_DELAY_MS` | reglugerd | Minimum gap between requests (default 5000, from reglugerd.is's own `Crawl-delay: 5`) |
+| `REGLUGERD_FORCE=1` | reglugerd | Re-parse and rewrite even when nothing has changed |
+| `REGLUGERD_API` | reglugerd | Override the API base URL |
 | `CITATION_MAX_DOCS` | citations | Judgments scanned per run |
 | `CITATION_BATCH_SIZE` | citations | Judgments held in memory at once (default 50) |
 
@@ -2795,6 +2806,68 @@ Repeat runs are cheap. An act whose stored codex version still matches the index
 That cheapness is also the reason the adapter carries a `PARSE_VERSION`. The index pins 903 of ~905 acts to one codex version, so the skip above fires before the parser runs — and widening the parse would otherwise reach only the handful of acts amended since, leaving the rest blank indefinitely. An act stored by an older parse version is re-fetched and re-saved regardless of its codex version, and the run says how many it is about to do, so bumping the constant *is* the backfill. The cost is one expensive run: ~900 fetches where the steady state is one.
 
 **What the act page gives us besides the law.** Lagasafn prints two links between an act's number line and its first chapter — "Ferill málsins á Alþingi" and "Frumvarp til laga" — and footnotes each article with the act that amended it and the article of that act which did so (`L. 49/2016, 5. gr.`; lög nr. 91/1991 alone carries 236). Both are stored: `Act.ferillUrl` / `Act.billUrl`, and `Provision.footnotes`, one entry per numbered note. They are the chain from a provision to the bill commentary that explains it, and they are anchors Alþingi publishes rather than a match on number and title. The footnotes are not exclusively amendments — the regulations set under an article appear there too (`Rgl. 492/2001`) — so they are shown and stored as printed. Alþingi's own `/altext/` tree is not ingested; see *docs/regulations-and-travaux.md* §2.
+
+### Reglugerðir
+
+`reglugerd` ingests Icelandic regulations into the same table as lög, as
+`jurisdiction: "is", docType: "regulation"`. They are the same shape — a titled
+instrument with numbered articles, cited by number and year — so the act
+reader, provision search and the act catalogue work on them unchanged.
+
+**They are not lög, and `jurisdiction` can no longer say so on its own.**
+Reglugerð nr. 300/2020 and lög nr. 300/2020 can both exist; regulation numbers
+run past 1000 in a busy year and overlap act numbers completely. So every act
+query that means lög must say `doc_type = 'act'`, and `corpusFilter()` in
+`src/lib/acts.ts` is the one place that writes it. The same collision is why
+the citation job now loads its act index with that filter: it is keyed by
+number and year alone, because that is all `laga nr. 91/1991` gives, and a
+regulation admitted under that key would silently become the target of every
+judgment citing the act.
+
+**Two things about this source constrain what the feature can be.**
+
+*The API's robots.txt is `Disallow: /`.* `api.reglugerd.is` says it; the site
+at `www.reglugerd.is` is permissive with `Crawl-delay: 5`. The API is public,
+unauthenticated open data from Stafrænt Ísland and the Disallow is almost
+certainly aimed at search-engine crawlers, but it says what it says — and the
+API is the only way to enumerate the register, because `/reglugerdir/allar/` is
+a search form rather than an index. **Ask island.is to confirm before running a
+full backfill**, and ask whether they would rather serve a bulk dump than
+~6,500 requests. Meanwhile the adapter paces itself to the five-second
+Crawl-delay the same operator publishes, rather than the 1.5 seconds the rest
+of the ingest uses.
+
+*Only about a quarter of regulations carry structured text.* Sampling 48
+across the register on 2026-09-15, 12 came back from the API with `text` and 36
+as a four-field stub. The text for a stub is on its page, but those pages come
+in two generations: newer ones carry the same `article__title` markup the API
+does, and older ones are Word conversions where an article is a centred
+paragraph reading "4. gr." and nothing says so. Both are parsed, and
+`Act.structureSource` records which — `"structured"` or `"heuristic"` — because
+a division inferred from centring is not a division the publisher asserted. The
+act reader says so on the page, and nothing should hang a provision-level
+citation link off a heuristic boundary.
+
+Base regulations only are stored. `/current` returns a base regulation with its
+amendments already folded in, so an amending regulation is read for its
+`effects[]` — which names the base regulation it changes, and is the whole of
+incremental change detection here — and then discarded. That keeps ~8,000
+titles reading "breytingu á" out of search.
+
+A cold start walks the register newest-first from a cursor, `REGLUGERD_MAX_PAGES`
+pages at a time, wrapping at the end; at the default eight pages a run that is
+about 60 runs to first full coverage. Like the Lagasafn adapter it carries a
+`PARSE_VERSION`, so widening the parse backfills itself.
+
+**Not yet built, and worth knowing about:** the *lagastoð* link. Every
+regulation closes by naming the act it is made under — "Reglugerð þessi, sem
+sett er samkvæmt 7. … gr. laga nr. 60/2007 …" — and `src/lib/legal-citations.ts`
+already parses that form. Extracting it would give the act reader a list of the
+regulations made under each act, which is the thing that makes this corpus
+useful rather than a second silo. Judgment → regulation citation links are the
+other half; `LEGISLATION_CITATION_RE` already matches `reglugerð nr. 1165/2016`
+and has had nothing to resolve it to. Both are described in
+*docs/regulations-and-travaux.md* §1.7.
 
 `eur-lex` reads the EU half of the same table. Its catalogue pass is SPARQL against the Publications Office's Cellar endpoint — two queries per calendar year, giving every act of that year in force — and its text pass fetches each act from Cellar by CELEX and parses it into the same chapters, provisions and paragraphs. Provisions are matched on `(actId, anchor)` and updated in place, for exactly the reason the Lagasafn adapter does it: `CaseProvisionLink` cascades from `Provision`. Anchors are EUR-Lex's own (`art_6`), so a provision link deep-links into the official text, and paragraph anchors are synthesised from them (`art_6-p1`) because EUR-Lex anchors articles but not their paragraphs. Unlike the Lagasafn adapter it does *not* clear the citation watermark when it stores new acts: the citation job reads the Icelandic citation grammar, so 17,000 EU acts arriving would trigger a full corpus rescan that could not produce a single link. See *EU acts (EUR-Lex)* above.
 

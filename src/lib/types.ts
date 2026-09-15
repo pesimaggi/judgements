@@ -123,14 +123,23 @@ export interface ActSearchRequest {
 
 export interface ActHit {
   id: string;
-  /** "is" | "eu" — which corpus the act belongs to. */
+  /** "is" | "eu" — which jurisdiction the instrument belongs to. */
   jurisdiction: string;
+  /**
+   * "act" | "regulation" | "directive" | "decision". With `jurisdiction` it
+   * says which corpus this is: an Icelandic reglugerð is "is" + "regulation",
+   * and is neither lög nor an EU act.
+   */
+  docType?: string;
   actNumber: number;
   year: number;
   title: string;
-  /** "lög nr. 91/1991", "Regulation (EU) 2016/679" — as the act is cited. */
+  /**
+   * "lög nr. 91/1991", "reglugerð nr. 300/2020", "Regulation (EU) 2016/679" —
+   * as the instrument is cited.
+   */
   citation: string;
-  /** Route to this act's reader view, e.g. "/log/91-1991", "/log/32016R0679". */
+  /** Route to the reader, e.g. "/log/91-1991", "/log/rg-300-2020". */
   path: string;
   provisionCount: number;
   /** Short names the act is cited by ("vaxtalög", "gdpr"). */

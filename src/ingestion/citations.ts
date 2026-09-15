@@ -57,7 +57,21 @@ async function loadIndexes(ctx: IngestContext): Promise<{
   acts: ActIndex;
   provisions: ProvisionIndex;
 }> {
+  // Lög only, and the filter is load-bearing.
+  //
+  // The index is keyed by number and year alone, because that is all an
+  // Icelandic citation gives: "laga nr. 91/1991". Nothing else in the table
+  // can be allowed in under that key. Reglugerð nr. 91/1991 exists and would
+  // collide outright — regulation numbers run to four digits a year and
+  // overlap act numbers completely — and a Map takes the last row written, so
+  // the collision would be silent and would point every judgment citing the
+  // act at the regulation instead.
+  //
+  // EU acts were already in here for the same reason and had not bitten only
+  // because no Icelandic judgment cites "laga nr. 679/2016". That is luck, not
+  // a design, and this filter ends it too.
   const actRows = await prisma.act.findMany({
+    where: { jurisdiction: "is", docType: "act" },
     select: { id: true, actNumber: true, year: true },
   });
   const acts: ActIndex = new Map(actRows.map((a) => [actKey(a.actNumber, a.year), a.id]));
@@ -65,8 +79,15 @@ async function loadIndexes(ctx: IngestContext): Promise<{
   // Only "article" provisions are resolvable targets. Temporary provisions
   // carry no article number, and annexed treaty text has its own numbering
   // that would otherwise collide with the act's own — see lib/lagasafn.ts.
+  // Restricted to the acts above for the same reason: a provision whose act
+  // is not in `acts` can never be reached, and loading the regulation and EU
+  // corpora here is tens of thousands of rows the scan cannot use.
   const provisionRows = await prisma.provision.findMany({
-    where: { kind: "article", articleNumber: { not: null } },
+    where: {
+      kind: "article",
+      articleNumber: { not: null },
+      act: { jurisdiction: "is", docType: "act" },
+    },
     select: { id: true, actId: true, articleNumber: true, articleLetter: true },
   });
   const provisions: ProvisionIndex = new Map();

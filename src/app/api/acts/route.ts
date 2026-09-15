@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSearchProvider } from "@/lib/search";
-import { listActs, parseActJurisdiction, parseActScope, type ActSort } from "@/lib/acts";
+import { listActs, parseActCorpus, parseActScope, type ActSort } from "@/lib/acts";
 
 // Hits the database on every request; must not be statically prerendered.
 export const dynamic = "force-dynamic";
@@ -17,8 +17,9 @@ const SORTS: ActSort[] = ["title", "number", "cases", "provisions"];
  * corpus-wide totals.
  *
  * Both also take `?scope=eea|eu` — how much of the EU library to look at —
- * and the catalogue takes `?jurisdiction=is|eu|all`, which is the corpus it is
- * listing rather than a filter on it. See src/lib/acts.ts.
+ * and the catalogue takes `?jurisdiction=is|is-reg|eu|all`, which is the
+ * corpus it is listing rather than a filter on it — lög, reglugerðir, or the
+ * EU library. See ActCorpus in src/lib/acts.ts.
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -39,7 +40,12 @@ export async function GET(req: Request) {
       pageSize: Number(searchParams.get("pageSize")) || 100,
       sort: sortParam && SORTS.includes(sortParam) ? sortParam : "title",
       citedOnly: searchParams.get("cited") === "1",
-      jurisdiction: parseActJurisdiction(searchParams.get("jurisdiction")),
+      // Still spelled "jurisdiction" in the query string, because that is
+      // what the catalogue has always sent and a bookmarked /log?jurisdiction=eu
+      // should keep working. What it selects is a corpus — lög, reglugerðir or
+      // the EU library — which jurisdiction alone stopped being able to say
+      // once reglugerðir arrived. See ActCorpus in src/lib/acts.ts.
+      corpus: parseActCorpus(searchParams.get("jurisdiction")),
       scope,
       q,
     });

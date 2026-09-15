@@ -28,7 +28,10 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
         : {
             jurisdiction_docType_actNumber_year: {
               jurisdiction: "is",
-              docType: "act",
+              // From the slug: "38-2001" is an act, "rg-300-2020" a
+              // regulation. Pinning "act" here served a regulation's URL the
+              // act of the same number, silently.
+              docType: ref.docType,
               actNumber: ref.actNumber,
               year: ref.year,
             },
@@ -110,6 +113,24 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
       endOfValidity: act.endOfValidity,
       textCelex: act.textCelex,
       textStatus: act.textStatus,
+      // Icelandic regulations. Null throughout on every other row.
+      ministry: act.ministry,
+      publishedDate: act.publishedDate,
+      lastAmendDate: act.lastAmendDate,
+      // `?? []` for the same reason Provision.footnotes has it: Prisma types a
+      // scalar list as non-null but leaves the column nullable, so a row that
+      // predates the column — or one written while the column existed without
+      // its default — reads back as null under a `string[]` type.
+      amendedBy: act.amendedBy ?? [],
+      subjectChapters: act.subjectChapters ?? [],
+      originalDocUrl: act.originalDocUrl,
+      /**
+       * "structured" or "heuristic" — whether the articles below come from
+       * markup reglugerd.is wrote, or from a guess at where the articles are
+       * in a Word conversion. The reader says so, because a reader who cannot
+       * tell will assume the first.
+       */
+      structureSource: act.structureSource,
     },
     chapters: act.chapters.map((c) => ({
       id: c.id,

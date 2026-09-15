@@ -78,10 +78,18 @@ model Act {
   id                String   @id @default(cuid())
   /// "is" — an Icelandic act from Lagasafn. "eu" — an EU act from EUR-Lex.
   jurisdiction      String   @default("is")
-  /// The instrument: "act" for lög, and "regulation" | "directive" |
-  /// "decision" for the three families of EU act. Part of the identity,
-  /// because an EU regulation and an EU directive can share a number and a
-  /// year — Regulation (EC) No 1/2003 and Directive 2003/1/EC both exist.
+  /// The instrument: "act" for lög, "regulation" for an Icelandic reglugerð
+  /// and for an EU regulation, and "directive" | "decision" for the other two
+  /// families of EU act. Part of the identity, because an EU regulation and an
+  /// EU directive can share a number and a year — Regulation (EC) No 1/2003
+  /// and Directive 2003/1/EC both exist — and because reglugerð nr. 91/1991
+  /// and lög nr. 91/1991 would otherwise be the same row.
+  ///
+  /// `jurisdiction` alone therefore no longer says which corpus a row belongs
+  /// to: an Icelandic reglugerð is jurisdiction "is", docType "regulation",
+  /// and it is not lög. Every query that means lög must say
+  /// `doc_type = 'act'`; corpusFilter() in src/lib/acts.ts is the one place
+  /// that should be writing that condition.
   docType           String   @default("act") @map("doc_type")
   /// "91" in "lög nr. 91/1991"; for an EU act the sequence number in its
   /// CELEX, which with docType and year is unique by construction.
@@ -96,7 +104,9 @@ model Act {
   aliases           String[]
   /// "in_force" — everything ingested from Lagasafn's current index. Repealed
   /// acts have no /nuna/ page; the field exists so they can be represented
-  /// later without a migration.
+  /// later without a migration. Regulations are the one corpus where the
+  /// source states it: reglugerd.is publishes a repealed regulation with a
+  /// `repealed` flag, so "repealed" is a value this column actually holds.
   status            String   @default("in_force")
   /// Canonical permalink to the current version, always /lagas/nuna/…, never
   /// a pinned session version.
@@ -127,6 +137,44 @@ model Act {
   /// same place. HTML for recent þing, a scanned PDF for the older ones.
   /// Icelandic acts only; an EU act has no parliamentary bill in this sense.
   billUrl           String?  @map("bill_url")
+
+  // ---- Icelandic regulations (docType = "regulation", jurisdiction "is") ---
+  // Null on every other row. See src/ingestion/adapters/reglugerd.ts.
+
+  /// The ministry that issued it, as reglugerd.is names it.
+  ministry          String?
+  /// Birting í Stjórnartíðindum — publication, which is what makes it binding.
+  /// `entryIntoForce` below is gildistaka, usually the day after.
+  publishedDate     DateTime? @map("published_date")
+  /// The date of the most recent amending regulation, straight from the
+  /// source. This is the change signal: a consolidated text is re-fetched when
+  /// this moves, and nothing else about the row reveals that it has.
+  lastAmendDate     DateTime? @map("last_amend_date")
+  /// The amending regulations already folded into the stored text, by number
+  /// ("0840/2021"). They are deliberately not acts of their own — more than
+  /// half the register is amending regulations, and storing them would fill
+  /// search with several thousand titles reading "breytingu á".
+  /// `@default([])` for the reason Provision.footnotes carries one: Prisma
+  /// adds a scalar list as a nullable column with no default, so every row
+  /// that already exists would read back as `null` under a `string[]` type.
+  amendedBy         String[]  @default([]) @map("amended_by")
+  /// reglugerd.is's own subject classification, by name ("Náttúruvernd og
+  /// friðun lands"). Its slugs mirror Lagasafn's chapter numbering.
+  subjectChapters   String[]  @default([]) @map("subject_chapters")
+  /// The regulation as Stjórnartíðindi published it, in PDF. The authoritative
+  /// text, against which the consolidated HTML here is a convenience.
+  originalDocUrl    String?   @map("original_doc_url")
+  /// How the article structure was recovered, and therefore how much it can be
+  /// trusted: "structured" — from markup the publisher wrote; "heuristic" —
+  /// from centred paragraphs reading "4. gr." in a Word conversion, which is a
+  /// typesetting choice rather than a published fact.
+  ///
+  /// It exists so that nothing downstream treats the two alike. About three
+  /// quarters of the register is the second kind, and hanging a provision-level
+  /// citation link off a guessed article boundary would be asserting something
+  /// the source never said. Null for lög and EU acts, whose structure is not
+  /// in question.
+  structureSource   String?   @map("structure_source")
 
   // ---- EU acts (jurisdiction = "eu"). Null on the Icelandic side. ----------
 
@@ -173,6 +221,7 @@ model Act {
 
   @@unique([jurisdiction, docType, actNumber, year])
   @@index([status])
+  @@index([jurisdiction, docType])
   @@index([jurisdiction, eeaRelevant])
   @@index([jurisdiction, textStatus])
   @@map("acts")

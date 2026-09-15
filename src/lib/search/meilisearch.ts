@@ -260,13 +260,14 @@ export async function ensureActIndexes(client: MeiliSearch) {
       "actNumber",
       "year",
       "jurisdiction",
+      "docType",
       "eeaRelevant",
       "eeaIncorporated",
     ],
     searchableAttributes: ["title", "officialTitle", "aliases", "citation", "celex"],
   });
   await client.index(PROVISIONS_INDEX).updateSettings({
-    filterableAttributes: ["actId", "articleNumber", "kind", "jurisdiction"],
+    filterableAttributes: ["actId", "articleNumber", "kind", "jurisdiction", "docType"],
     sortableAttributes: ["ordering"],
     searchableAttributes: ["displayLabel", "heading", "fullText", "actTitle"],
   });
@@ -296,6 +297,8 @@ export async function deleteActsFromMeilisearch(actIds: string[]) {
 export async function syncActToMeilisearch(act: {
   id: string;
   jurisdiction?: string;
+  /** "act" | "regulation" | … — decides how the row is cited and linked. */
+  docType?: string;
   actNumber: number;
   year: number;
   title: string;
@@ -320,8 +323,10 @@ export async function syncActToMeilisearch(act: {
   const client = provider.client;
   await ensureActIndexes(client);
   const jurisdiction = act.jurisdiction ?? "is";
+  const docType = act.docType ?? "act";
   const identity = {
     jurisdiction,
+    docType,
     celex: act.celex ?? null,
     actNumber: act.actNumber,
     year: act.year,
@@ -330,6 +335,7 @@ export async function syncActToMeilisearch(act: {
     {
       id: act.id,
       jurisdiction,
+      docType,
       celex: act.celex ?? null,
       actNumber: act.actNumber,
       year: act.year,
@@ -356,6 +362,7 @@ export async function syncActToMeilisearch(act: {
         id: p.id,
         actId: act.id,
         jurisdiction,
+        docType,
         actNumber: act.actNumber,
         year: act.year,
         actTitle: actDisplayTitle({ jurisdiction, title: act.title }),

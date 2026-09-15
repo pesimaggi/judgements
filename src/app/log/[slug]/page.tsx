@@ -55,6 +55,15 @@ interface Act {
   endOfValidity: string | null;
   textCelex: string | null;
   textStatus: string | null;
+  // Icelandic regulations.
+  ministry: string | null;
+  publishedDate: string | null;
+  lastAmendDate: string | null;
+  amendedBy: string[];
+  subjectChapters: string[];
+  originalDocUrl: string | null;
+  /** "structured" | "heuristic" — how much the article divisions can be trusted. */
+  structureSource: string | null;
 }
 
 /**
@@ -67,6 +76,13 @@ interface Act {
  * whatever the reader clicks through to. (Feminine: *ein úrlausn vísar*,
  * *tvær úrlausnir vísa*.)
  */
+/** "2020-04-04T00:00:00.000Z" → "4. apríl 2020", the way a date is written here. */
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("is-IS", { day: "numeric", month: "long", year: "numeric" });
+}
+
 function caseBadgeLabel(n: number): string {
   return n === 1 ? "1 úrlausn vísar til þessa ákvæðis" : `${n} úrlausnir vísa til þessa ákvæðis`;
 }
@@ -131,6 +147,7 @@ export default function ActPage({ params }: { params: { slug: string } }) {
   }, [visible, chapters]);
 
   const isEu = act?.jurisdiction === "eu";
+  const isRegulation = act?.jurisdiction === "is" && act?.docType === "regulation";
 
   // Deliberately not the sum of the per-provision counts: those are distinct
   // judgments *per provision*, so a judgment citing three provisions of this
@@ -186,7 +203,11 @@ export default function ActPage({ params }: { params: { slug: string } }) {
             rel="noreferrer"
             className="text-accent hover:underline"
           >
-            {isEu ? "Official text on EUR-Lex ↗" : "Official text on althingi.is ↗"}
+            {isEu
+              ? "Official text on EUR-Lex ↗"
+              : isRegulation
+                ? "Reglugerðin á reglugerd.is ↗"
+                : "Official text on althingi.is ↗"}
           </a>
         </div>
 
@@ -217,6 +238,56 @@ export default function ActPage({ params }: { params: { slug: string } }) {
                   : ""}{" "}
                 ↗
               </a>
+            )}
+          </div>
+        )}
+
+        {/* ---- What this regulation is, and how well we read it ------ */}
+        {isRegulation && (
+          <div className="mt-3 rounded border border-line bg-paper px-3 py-2 text-xs text-inkSoft">
+            <p>
+              {act.ministry ? <span className="text-ink">{act.ministry}</span> : "Reglugerð"}
+              {act.publishedDate && ` · birt ${formatDate(act.publishedDate)}`}
+              {act.status === "repealed" ? (
+                <span className="ml-1 font-medium text-ink">· fallin úr gildi</span>
+              ) : (
+                act.entryIntoForce && ` · tók gildi ${formatDate(act.entryIntoForce)}`
+              )}
+              {act.amendedBy.length > 0 &&
+                ` · ${act.amendedBy.length} breytingareglugerð${
+                  act.amendedBy.length === 1 ? "" : "ir"
+                } komnar inn í textann`}
+            </p>
+            {act.subjectChapters.length > 0 && (
+              <p className="mt-1">Efnisflokkur: {act.subjectChapters.join(", ")}</p>
+            )}
+            {act.originalDocUrl && (
+              <p className="mt-1">
+                <a
+                  href={act.originalDocUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-accent hover:underline"
+                >
+                  Frumtextinn í Stjórnartíðindum (PDF) ↗
+                </a>
+              </p>
+            )}
+            {/*
+              The one thing a reader cannot see for themselves. About three
+              quarters of the register was converted from Word and carries no
+              markup saying where an article begins; for those the divisions
+              below were worked out from which paragraphs are centred, which is
+              a typesetting choice and not something the publisher asserted.
+              Saying so is the difference between showing a parse and passing
+              one off as the source's own structure.
+            */}
+            {act.structureSource === "heuristic" && (
+              <p className="mt-1">
+                <span className="font-medium text-ink">Greinaskipting er lesin úr uppsetningu.</span>{" "}
+                Þessi reglugerð er birt án merkinga um greinaskil, svo skiptingin hér að neðan er
+                ályktun en ekki uppsetning útgefanda. Textinn sjálfur er óbreyttur.
+              </p>
             )}
           </div>
         )}
@@ -261,6 +332,12 @@ export default function ActPage({ params }: { params: { slug: string } }) {
                   ? ` (${act.celex})`
                   : ""}
               . Always verify against the official source.
+            </>
+          ) : isRegulation ? (
+            <>
+              Unofficial reproduction of the consolidated text as reglugerd.is publishes it. The
+              authoritative text is the one Stjórnartíðindi published. Always verify against the
+              official source.
             </>
           ) : (
             <>
@@ -346,7 +423,11 @@ export default function ActPage({ params }: { params: { slug: string } }) {
                           rel="noreferrer"
                           className="text-[11px] text-inkSoft hover:underline"
                         >
-                          {isEu ? "eur-lex.europa.eu ↗" : "althingi.is ↗"}
+                          {isEu
+                            ? "eur-lex.europa.eu ↗"
+                            : isRegulation
+                              ? "reglugerd.is ↗"
+                              : "althingi.is ↗"}
                         </a>
                       </div>
 

@@ -369,7 +369,7 @@ export async function searchActsPostgres(req: ActSearchRequest): Promise<ActHit[
   )`;
 
   const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
-    SELECT a.id, a.jurisdiction, a.act_number, a.year, a.title, a.citation, a.celex,
+    SELECT a.id, a.jurisdiction, a.doc_type, a.act_number, a.year, a.title, a.citation, a.celex,
            a.eea_relevant, a.eea_incorporated_by, a.aliases, a.natural_number,
            (SELECT count(*)::int FROM provisions p WHERE p.act_id = a.id AND p.kind = 'article') AS provision_count,
            CASE
@@ -402,17 +402,20 @@ export async function searchActsPostgres(req: ActSearchRequest): Promise<ActHit[
   return rows.map((r) => ({
     id: r.id,
     jurisdiction: r.jurisdiction,
+    docType: r.doc_type,
     actNumber: r.act_number,
     year: r.year,
     title: actDisplayTitle({ jurisdiction: r.jurisdiction, title: r.title }),
     citation: actCitation({
       jurisdiction: r.jurisdiction,
+      docType: r.doc_type,
       citation: r.citation,
       actNumber: r.act_number,
       year: r.year,
     }),
     path: actPath({
       jurisdiction: r.jurisdiction,
+      docType: r.doc_type,
       celex: r.celex,
       actNumber: r.act_number,
       year: r.year,

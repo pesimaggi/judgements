@@ -5,15 +5,25 @@ against `api.reglugerd.is`, `www.reglugerd.is` and `www.althingi.is`; the
 probes are listed in *Re-running the measurements* at the end so the numbers
 can be checked rather than believed.
 
-**One piece of this has shipped: §2.1, the Alþingi linkage.** `Act.ferillUrl`,
-`Act.billUrl` and `Provision.footnotes` are stored, the act reader shows them,
-and the Lagasafn adapter carries a `PARSE_VERSION` so the backfill happens on
-a scheduled run rather than by hand. Nothing else here has been built — no
-regulation is ingested, no þingskjal is fetched, no repealed act is stored.
+**Two pieces of this have shipped.**
+
+*§2.1, the Alþingi linkage.* `Act.ferillUrl`, `Act.billUrl` and
+`Provision.footnotes` are stored, the act reader shows them, and the Lagasafn
+adapter carries a `PARSE_VERSION` so the backfill happens on a scheduled run
+rather than by hand.
+
+*§1, the reglugerðir ingest* — steps 1 and 2 of §1.7. The `reglugerd` adapter,
+`docType: "regulation"` on `Act`, the two-generation parser, the
+`/log/rg-{nr}-{ár}` route and a third catalogue tab. Steps 3 and 4 — the
+lagastoð link and judgment→regulation citation resolution — are **not** built.
+What the build changed about the plan is recorded in §1.8.
+
+Nothing else here has been built: no þingskjal is fetched, no repealed act is
+stored.
 
 | | What | Recommendation |
 |---|---|---|
-| **§1** | Icelandic regulations (reglugerðir) from reglugerd.is | Build it. Reuse `Act` with `docType: "regulation"`. Two real blockers, both addressable. |
+| **§1** | Icelandic regulations (reglugerðir) from reglugerd.is | Ingest **shipped** (§1.7 steps 1–2); see §1.8 for what the build changed. The lagastoð and citation links are still to do. |
 | **§2** | Althingi preparatory works (lögskýringargögn) | Linkage **shipped** (§2.1, §2.5 step 1). The ingest itself is held until one access question is answered. |
 | **§3** | Acts no longer in force | Not yet, and not in full. There is a cheap 10% of it that solves the real problem; §3.4. |
 
@@ -198,6 +208,48 @@ from silently losing a regulation.
    "reglugerð Evrópusambandsins nr. 2016/679" is not, and the bare form is
    written both ways. Resolution needs the docType and the corpus to
    disambiguate, and should decline rather than guess.
+
+### 1.8 What the build changed about §1
+
+Five things the research did not see, recorded because they are the kind of
+thing that is expensive to rediscover.
+
+**The site has no crawlable register.** §1.4 assumed the web pages were a
+usable fallback for the whole feature if the API question went unanswered.
+They are not: `/reglugerdir/allar/` is a search form that renders a single
+item, so there is no HTML-only route to *what exists*. The API is the only way
+to enumerate the register, and the robots.txt question in §1.4 therefore cannot
+be designed around — only asked. Individual regulations are still read from the
+site, which is where three quarters of the text is.
+
+**The slug collision was settled the cheap way.** §1.5 proposed a separate
+`/reglugerd/{nr}-{ár}` route. It got `/log/rg-300-2020` instead: `/log/` has
+served EU regulations since `/log/32016R0679`, so it is already the reader for
+legislation rather than a route for lög, and a prefix avoided extracting the
+450-line reader into a shared component for no gain a reader would notice.
+
+**`jurisdiction` stopped being the corpus.** §1.5 said the catalogue would need
+a third tab, which was true and was the small half. The real cost is that
+`jurisdiction = 'is'` used to mean lög and now means lög *or* reglugerðir, and
+that condition was written inline in every act query. It is now written once,
+in `corpusFilter()`. Anything that keeps writing it inline is a regulation
+presented as an act.
+
+**The citation index had a live collision, and a latent one.**
+`citations.ts` builds its act index keyed by number and year alone — which is
+all `laga nr. 91/1991` gives — from *every* row in the table, taking the last
+row written on a clash. Regulations overlap act numbers completely, so this
+would have pointed judgments citing an act at a regulation, silently. EU acts
+were already in that index for the same reason and had not bitten only because
+no Icelandic judgment cites `laga nr. 679/2016`. Both are now filtered out.
+
+**Two parser bugs, both found by one regulation.** Byggingarreglugerð nr.
+112/2012 numbers its 439 articles hierarchically — "1.2.1. gr.", which is not
+article 1 — so they needed stable anchors without integer article numbers, on
+the same reasoning the Lagasafn parser refuses to number annex articles. And
+its definitions article is an `<ol>` of 726 `<li>` with no `<p>` at all, so a
+parser selecting `<p>` dropped the entire article while still reporting
+success. Both are now fixtures.
 
 ---
 

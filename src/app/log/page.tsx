@@ -8,6 +8,7 @@ import { eeaTag } from "@/lib/eea-tag";
 interface ActListItem {
   id: string;
   jurisdiction: string;
+  docType: string;
   actNumber: number;
   year: number;
   title: string;
@@ -24,7 +25,13 @@ interface ActListItem {
 }
 
 type Sort = "title" | "number" | "cases" | "provisions";
-type Corpus = "is" | "eu";
+/**
+ * The three bodies of law the catalogue lists. Not `Act.jurisdiction`: lög and
+ * reglugerðir share a jurisdiction and are not the same corpus. The value is
+ * sent as `?jurisdiction=` because that is the parameter the API has always
+ * taken — see ActCorpus in src/lib/acts.ts.
+ */
+type Corpus = "is" | "is-reg" | "eu";
 
 const SORT_LABELS: { value: Sort; label: string }[] = [
   { value: "title", label: "Heiti (A–Ö)" },
@@ -55,6 +62,7 @@ export default function ActIndexPage() {
     provisions: 0,
     linkedProvisions: 0,
     icelandic: 0,
+    regulations: 0,
     eu: 0,
     euEea: 0,
   });
@@ -108,6 +116,7 @@ export default function ActIndexPage() {
   }, [sort, citedOnly, corpus, scope, page, filter]);
 
   const isEu = corpus === "eu";
+  const isRegulations = corpus === "is-reg";
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-6">
@@ -118,7 +127,24 @@ export default function ActIndexPage() {
       <header className="mt-2">
         <h1 className="font-serif text-2xl font-semibold">{isEu ? "ESB-gerðir" : "Lög"}</h1>
         <p className="mt-1 text-sm text-inkSoft">
-          {isEu ? (
+          {isRegulations ? (
+            <>
+              Reglugerðir í gildi, eins og þær standa með áorðnum breytingum, frá{" "}
+              <a
+                href="https://www.reglugerd.is"
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent hover:underline"
+              >
+                reglugerd.is
+              </a>
+              .{" "}
+              {totals.regulations > 0 && (
+                <>{totals.regulations.toLocaleString("is-IS")} reglugerðir. </>
+              )}
+              Breytingareglugerðir eru ekki sérstakar færslur — þær eru komnar inn í textann.
+            </>
+          ) : isEu ? (
             <>
               EU acts in force — regulations and directives — from{" "}
               <a
@@ -166,6 +192,7 @@ export default function ActIndexPage() {
         <div className="inline-flex overflow-hidden rounded-lg border border-line">
           {([
             { value: "is" as const, label: "Íslensk lög", count: totals.icelandic },
+            { value: "is-reg" as const, label: "Reglugerðir", count: totals.regulations },
             { value: "eu" as const, label: "ESB-gerðir", count: totals.eu },
           ]).map((tab) => (
             <button
