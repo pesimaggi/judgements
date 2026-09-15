@@ -78,10 +78,18 @@ model Act {
   id                String   @id @default(cuid())
   /// "is" — an Icelandic act from Lagasafn. "eu" — an EU act from EUR-Lex.
   jurisdiction      String   @default("is")
-  /// The instrument: "act" for lög, and "regulation" | "directive" |
-  /// "decision" for the three families of EU act. Part of the identity,
-  /// because an EU regulation and an EU directive can share a number and a
-  /// year — Regulation (EC) No 1/2003 and Directive 2003/1/EC both exist.
+  /// The instrument: "act" for lög, "regulation" for an Icelandic reglugerð
+  /// and for an EU regulation, and "directive" | "decision" for the other two
+  /// families of EU act. Part of the identity, because an EU regulation and an
+  /// EU directive can share a number and a year — Regulation (EC) No 1/2003
+  /// and Directive 2003/1/EC both exist — and because reglugerð nr. 91/1991
+  /// and lög nr. 91/1991 would otherwise be the same row.
+  ///
+  /// `jurisdiction` alone therefore no longer says which corpus a row belongs
+  /// to: an Icelandic reglugerð is jurisdiction "is", docType "regulation",
+  /// and it is not lög. Every query that means lög must say
+  /// `doc_type = 'act'`; corpusFilter() in src/lib/acts.ts is the one place
+  /// that should be writing that condition.
   docType           String   @default("act") @map("doc_type")
   /// "91" in "lög nr. 91/1991"; for an EU act the sequence number in its
   /// CELEX, which with docType and year is unique by construction.
@@ -96,7 +104,9 @@ model Act {
   aliases           String[]
   /// "in_force" — everything ingested from Lagasafn's current index. Repealed
   /// acts have no /nuna/ page; the field exists so they can be represented
-  /// later without a migration.
+  /// later without a migration. Regulations are the one corpus where the
+  /// source states it: reglugerd.is publishes a repealed regulation with a
+  /// `repealed` flag, so "repealed" is a value this column actually holds.
   status            String   @default("in_force")
   /// Canonical permalink to the current version, always /lagas/nuna/…, never
   /// a pinned session version.
@@ -106,6 +116,72 @@ model Act {
   /// Hash of the law's normalized body, for skipping unchanged acts on the
   /// roughly-daily Lagasafn updates.
   sourceHash        String   @map("source_hash")
+
+  /// Which release of the Lagasafn parser produced the stored structure.
+  ///
+  /// Not the same question as `sourceHash`, which asks whether *Lagasafn*
+  /// changed. This asks whether *we* changed: the ingest skips an act whose
+  /// codex version it already holds without so much as fetching it, so adding
+  /// a field to the parse would otherwise reach only the handful of acts
+  /// amended afterwards, and the rest would stay blank for ever. A run
+  /// re-fetches anything behind the adapter's current version, so bumping the
+  /// constant is the whole of a backfill. 0 is "ingested before this column
+  /// existed", which is exactly the population that needs re-parsing.
+  parseVersion      Int      @default(0) @map("parse_version")
+
+  /// "Ferill málsins á Alþingi" — the act's page on the parliamentary record,
+  /// taken from the link Lagasafn prints on the act's own page rather than
+  /// matched by number and title. Null for acts older than the record.
+  ferillUrl         String?  @map("ferill_url")
+  /// "Frumvarp til laga" — the þingskjal the act was passed from, from the
+  /// same place. HTML for recent þing, a scanned PDF for the older ones.
+  /// Icelandic acts only; an EU act has no parliamentary bill in this sense.
+  billUrl           String?  @map("bill_url")
+
+  // ---- Icelandic regulations (docType = "regulation", jurisdiction "is") ---
+  // Null on every other row. See src/ingestion/adapters/reglugerd.ts.
+
+  /// The ministry that issued it, as reglugerd.is names it.
+  ministry          String?
+  /// Birting í Stjórnartíðindum — publication, which is what makes it binding.
+  /// `entryIntoForce` below is gildistaka, usually the day after.
+  publishedDate     DateTime? @map("published_date")
+  /// The date of the most recent amending regulation, straight from the
+  /// source. This is the change signal: a consolidated text is re-fetched when
+  /// this moves, and nothing else about the row reveals that it has.
+  lastAmendDate     DateTime? @map("last_amend_date")
+  /// The amending regulations already folded into the stored text, by number
+  /// ("0840/2021"). They are deliberately not acts of their own — more than
+  /// half the register is amending regulations, and storing them would fill
+  /// search with several thousand titles reading "breytingu á".
+  /// `@default([])` for the reason Provision.footnotes carries one: Prisma
+  /// adds a scalar list as a nullable column with no default, so every row
+  /// that already exists would read back as `null` under a `string[]` type.
+  amendedBy         String[]  @default([]) @map("amended_by")
+  /// reglugerd.is's own subject classification, by name ("Náttúruvernd og
+  /// friðun lands"). Its slugs mirror Lagasafn's chapter numbering.
+  subjectChapters   String[]  @default([]) @map("subject_chapters")
+  /// The regulation as Stjórnartíðindi published it, in PDF. The authoritative
+  /// text, against which the consolidated HTML here is a convenience.
+  originalDocUrl    String?   @map("original_doc_url")
+  /// How the article structure was recovered, and therefore how much it can be
+  /// trusted: "structured" — from markup the publisher wrote; "heuristic" —
+  /// from centred paragraphs reading "4. gr." in a Word conversion, which is a
+  /// typesetting choice rather than a published fact.
+  ///
+  /// It exists so that nothing downstream treats the two alike. About three
+  /// quarters of the register is the second kind, and hanging a provision-level
+  /// citation link off a guessed article boundary would be asserting something
+  /// the source never said. Null for lög and EU acts, whose structure is not
+  /// in question.
+  structureSource   String?   @map("structure_source")
+
+  /// The value `sourceHash` had when this regulation was last scanned for its
+  /// lagastoð — the acts it states it is made under. Null means never scanned;
+  /// a mismatch means the text changed since. The same one-column watermark
+  /// `Document.citationScanHash` uses, and for the same reason: it is what
+  /// makes the scan incremental instead of a full re-read of the corpus.
+  lagastodScanHash  String?   @map("lagastod_scan_hash")
 
   // ---- EU acts (jurisdiction = "eu"). Null on the Icelandic side. ----------
 
@@ -149,9 +225,15 @@ model Act {
   chapters   Chapter[]
   provisions Provision[]
   caseLinks  CaseActLink[]
+  /// As a regulation: the acts this regulation states it is made under.
+  statutoryBasis RegulationBasis[] @relation("RegulationOfBasis")
+  /// As an act: the regulations made under it.
+  regulationsUnder RegulationBasis[] @relation("EnablingAct")
 
   @@unique([jurisdiction, docType, actNumber, year])
   @@index([status])
+  @@index([jurisdiction, docType])
+  @@index([lagastodScanHash])
   @@index([jurisdiction, eeaRelevant])
   @@index([jurisdiction, textStatus])
   @@map("acts")
@@ -203,6 +285,25 @@ model Provision {
   /// True when the provision's entire body has been repealed — Lagasafn
   /// prints these as a bare "…" with a footnote.
   isRepealed    Boolean                  @default(false) @map("is_repealed")
+  /// Lagasafn's footnotes for this provision, one per numbered note and with
+  /// the marker kept: ["1) L. 159/2008, 1. gr.", "2) L. 8/2015, 9. gr."].
+  ///
+  /// Mostly amendments — which act, and which article of it, last touched this
+  /// one — which is the chain from a provision to the bill whose commentary
+  /// explains it. Not exclusively: Lagasafn footnotes the regulations set
+  /// under an article here too ("Rgl. 492/2001"). Stored as printed, so a
+  /// reader gets what althingi.is shows and a later job can parse them without
+  /// re-fetching 900 acts. Empty for EU acts, which carry no such notes.
+  ///
+  /// `@default([])` is load-bearing, and the other scalar lists in this schema
+  /// only get away without one because every row that has ever existed was
+  /// written by a client that supplied a value. This column is being added to
+  /// ~30,000 provisions that already exist; without the default Postgres fills
+  /// them with NULL, Prisma Client hands that back as `null` under a
+  /// `string[]` type, and the act reader throws on `.length` for every act
+  /// until the backfill run reaches it — and for every EU act for ever, since
+  /// the EUR-Lex adapter never writes this field at all.
+  footnotes     String[]                 @default([])
   ordering      Int
   /// Materialized search vector, maintained by a trigger created in
   /// prisma/sql/setup-search.sql. Declared as Unsupported so `prisma db push`
@@ -211,10 +312,12 @@ model Provision {
   createdAt     DateTime                 @default(now()) @map("created_at")
   updatedAt     DateTime                 @updatedAt @map("updated_at")
 
-  act        Act                  @relation(fields: [actId], references: [id], onDelete: Cascade)
-  chapter    Chapter?             @relation(fields: [chapterId], references: [id], onDelete: SetNull)
-  paragraphs ProvisionParagraph[]
-  caseLinks  CaseProvisionLink[]
+  act             Act                  @relation(fields: [actId], references: [id], onDelete: Cascade)
+  chapter         Chapter?             @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+  paragraphs      ProvisionParagraph[]
+  caseLinks       CaseProvisionLink[]
+  /// Regulations made under this specific article.
+  regulationBasis RegulationBasis[]
 
   @@unique([actId, anchor])
   @@index([actId, ordering])
@@ -436,4 +539,56 @@ model AskFeedback {
   @@index([kind, createdAt])
   @@index([requestId])
   @@map("ask_feedback")
+}
+
+/// A regulation's lagastoð: the act, and where stated the article of it, that
+/// a regulation says it is made under.
+///
+/// "Reglugerð þessi, sem sett er samkvæmt 7., 15. gr. a, 15. gr. b og 20. gr.
+/// laga nr. 60/2007 um Vatnajökulsþjóðgarð, öðlast þegar gildi." — one such
+/// sentence yields four rows, one per article, all naming the same act.
+///
+/// One table with a nullable `provisionId`, rather than the two that judgment
+/// links use. The split there exists because a bare act citation and an
+/// article citation are found by different extractors and cannot be derived
+/// from one another; here one sentence states both at once, and "which
+/// regulations are made under this act" is then a query over the same rows as
+/// "which are made under this article".
+///
+/// No unique constraint, deliberately: Postgres treats NULLs as distinct, so
+/// one over `provisionId` would not constrain the act-only rows it most needs
+/// to — it would read as a guarantee it could not keep. The scan replaces a
+/// regulation's rows wholesale and de-duplicates before writing, which is
+/// where the guarantee actually lives.
+model RegulationBasis {
+  id           String @id @default(cuid())
+  /// The reglugerð. An Act row with docType "regulation".
+  regulationId String @map("regulation_id")
+  /// The lög it is made under. An Act row with docType "act".
+  actId        String @map("act_id")
+  /// The article named, where one was and it resolves to a provision we hold.
+  /// Null when the clause names the act alone ("sett með heimild í lögum nr.
+  /// 100/1992"), which is a complete statement of basis and not a failure.
+  provisionId  String? @map("provision_id")
+
+  /// "stated" — read from the regulation's own lagastoð clause. The only kind
+  /// there is; named so that an inferred or curated link could be told apart
+  /// from one the regulation asserts about itself.
+  matchType    String @default("stated") @map("match_type")
+  /// The basis as written: "7., 15. gr. a, 20. gr. laga nr. 60/2007".
+  citationText String @map("citation_text")
+  /// The sentence it was found in, so a reader can see why this is claimed.
+  excerpt      String
+  /// Character offset into the regulation's text, for ordering.
+  charOffset   Int    @map("char_offset")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  regulation Act        @relation("RegulationOfBasis", fields: [regulationId], references: [id], onDelete: Cascade)
+  act        Act        @relation("EnablingAct", fields: [actId], references: [id], onDelete: Cascade)
+  provision  Provision? @relation(fields: [provisionId], references: [id], onDelete: SetNull)
+
+  @@index([actId])
+  @@index([provisionId])
+  @@index([regulationId])
+  @@map("regulation_basis")
 }

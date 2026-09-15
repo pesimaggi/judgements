@@ -32,6 +32,42 @@
       "url": "https://publications.europa.eu/resource/celex/32000L0031",
       "captured": "2026-09-02",
       "describes": "The e-Commerce Directive 2000/31/EC — the 'legacy' layout, which Cellar holds as plain HTML with no structure at all: article headings are bare paragraphs, and the recitals above them cite Articles 251, 95 and 46 of the Treaty, which is what the adoption-formula boundary exists to keep out."
+    },
+    {
+      "file": "reglugerd/api-0300-2020.json.gz",
+      "url": "https://api.reglugerd.is/api/v1/regulation/0300-2020/current",
+      "captured": "2026-09-15",
+      "describes": "Reglugerð nr. 300/2020 um Vatnajökulsþjóðgarð, from the API with its consolidated text. Seven chapters, 44 articles, three amending regulations folded in, and the closing 'sett er samkvæmt … laga nr. 60/2007' that the lagastoð link will be built from. The structured markup generation."
+    },
+    {
+      "file": "reglugerd/api-0112-2012.json.gz",
+      "url": "https://api.reglugerd.is/api/v1/regulation/0112-2012/current",
+      "captured": "2026-09-15",
+      "describes": "Byggingarreglugerð nr. 112/2012 — the awkward one, and the reason two parser bugs were caught before release. 439 articles numbered hierarchically ('1.2.1. gr.', which is not article 1), nested HLUTI/KAFLI divisions, and a definitions article whose body is an <ol> of 726 <li> with no <p> at all."
+    },
+    {
+      "file": "reglugerd/api-0840-2021.json.gz",
+      "url": "https://api.reglugerd.is/api/v1/regulation/0840-2021/current",
+      "captured": "2026-09-15",
+      "describes": "An amending regulation. Never stored as a row of its own; its effects[] names the base regulation it changes, which is the whole of this adapter's change detection."
+    },
+    {
+      "file": "reglugerd/html-0950-2026.html.gz",
+      "url": "https://www.reglugerd.is/reglugerdir/allar/nr/0950-2026",
+      "captured": "2026-09-15",
+      "describes": "A page whose regulation the API serves as a stub, but which carries the structured markup anyway — which is why the parser decides the generation by looking at the markup rather than by where the bytes came from or how old the regulation is."
+    },
+    {
+      "file": "reglugerd/html-0359-1993.html.gz",
+      "url": "https://www.reglugerd.is/reglugerdir/allar/nr/0359-1993",
+      "captured": "2026-09-15",
+      "describes": "The Word-converted generation, which is about three quarters of the register: no classes, no anchors, an article being a centred paragraph reading '4. gr.' and its heading the centred italic line above. What Act.structureSource exists to flag."
+    },
+    {
+      "file": "reglugerd/newest-page1.json.gz",
+      "url": "https://api.reglugerd.is/api/v1/regulations/newest?page=1",
+      "captured": "2026-09-15",
+      "describes": "One page of the register: 30 of 14,648 entries across 489 pages, each flagged base or amending. More than half the register is amending."
     }
   ]
 }

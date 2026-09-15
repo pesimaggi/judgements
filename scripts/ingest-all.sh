@@ -30,6 +30,8 @@
 #   INGEST_ADAPTERS="icelandic-retry"         # just re-attempt known gaps
 #   INGEST_ADAPTERS="logretta ulfljotur"      # just the new sources
 #   INGEST_ADAPTERS="bin-dictionary"          # only load/top up the BÍN dictionary
+#   INGEST_ADAPTERS="reglugerd lagastod"      # the regulations, and their lagastoð
+#   INGEST_ADAPTERS="lagastod"                # only re-link regulations to acts
 #   INGEST_ADAPTERS="eur-lex-catalogue"       # only the EU act catalogue
 #   INGEST_ADAPTERS="eur-lex"                 # only the EU acts' text
 #   INGEST_ADAPTERS="cjeu-listing"            # only find which CJEU judgments exist
@@ -132,8 +134,8 @@
 #
 set -u
 
-# Order matters on three counts: citations links judgments to the provisions
-# they cite, so lagasafn must have run first; anything slow should come last, so
+# Order matters on three counts: citations and lagastod both resolve against
+# the act index, so lagasafn must have run first; anything slow should come last, so
 # a deploy that gets cut short has already done the cheap sources; and the
 # priority board comes first, ahead of even the cheap sources, because being
 # first is the whole point of it — a run cut short must not be a run where the
@@ -144,7 +146,20 @@ set -u
 # hand, which is why Endurupptökudómur sat at 2 of 102 cases: the sweep that
 # would have found the other 100 was opt-in and nobody opted in. A source that
 # only closes its gaps when prompted does not close them.
-DEFAULT_ADAPTERS="bin-dictionary stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal yfirskattanefnd yfirskattanefnd-retry stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-joint-committee eftasurv eftasurv-retry lagasafn eur-lex-catalogue eur-lex eur-lex-retry eur-lex-eea cjeu-listing cjeu citations"
+#
+# `reglugerd` is deliberately NOT in this chain. It is the one adapter whose
+# source has an unresolved permission question — api.reglugerd.is/robots.txt is
+# `Disallow: /`, and it is the only way to enumerate the register — so a
+# ~6,500-request backfill must be a decision somebody takes, not something a
+# deploy starts. Run it with INGEST_ADAPTERS="reglugerd lagastod" once island.is
+# has confirmed; see the adapter's header and README "Reglugerðir".
+#
+# `lagastod` is in the chain, because it touches no network at all: it reads
+# regulations already stored and links them to the acts they name. With no
+# regulations it does nothing, so it costs one query until the day the ingest
+# above is switched on. It runs after lagasafn for the same reason citations
+# does — it resolves against the act index, which must exist first.
+DEFAULT_ADAPTERS="bin-dictionary stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal yfirskattanefnd yfirskattanefnd-retry stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-joint-committee eftasurv eftasurv-retry lagasafn eur-lex-catalogue eur-lex eur-lex-retry eur-lex-eea cjeu-listing cjeu citations lagastod"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"

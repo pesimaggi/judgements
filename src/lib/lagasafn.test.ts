@@ -18,6 +18,8 @@ import { join } from "node:path";
 import {
   parseLagasafnHtml,
   parseActSlug,
+  parseFerillUrl,
+  splitFootnotes,
   actPath,
   actUrl,
   normalizeLawText,
@@ -250,5 +252,121 @@ describe("normalizeLawText", () => {
     const decomposed = "þjóð".normalize("NFD");
     assert.notEqual(decomposed, "þjóð");
     assert.equal(normalizeLawText(decomposed), "þjóð");
+  });
+});
+
+/**
+ * The two things a Lagasafn page carries about where an act came from, and
+ * which this app discarded until now: the links to Alþingi, and the footnotes
+ * saying which act amended which article.
+ *
+ * Both are the input to preparatory works. Matching an act to its þingmál by
+ * number and title is guesswork; these are anchors Alþingi publishes on the
+ * act's own page, and the assertions here are that we still find them.
+ */
+describe("the Alþingi trail on a Lagasafn page", () => {
+  const act = fixture("2004081.html.gz");
+
+  test("finds the act's ferill on the parliamentary record", () => {
+    assert.ok(act.ferillUrl, "no ferill link found");
+    assert.match(act.ferillUrl, /althingi\.is\/thingstorf\/.*\/ferill\/\?/);
+    // The two numbers that address Alþingi's own XML service.
+    const ferill = parseFerillUrl(act.ferillUrl);
+    assert.ok(ferill);
+    assert.ok(ferill.parliament > 0 && ferill.caseNumber > 0);
+  });
+
+  test("finds the bill the act was passed from", () => {
+    assert.ok(act.billUrl, "no bill link found");
+    // /altext/{þing}/s/{skjal}.html for recent þing; the older ones are
+    // published only as scans under /altext/pdf/.
+    assert.match(act.billUrl, /althingi\.is\/altext\/(pdf\/)?\d+\/s\/\d+\.(html|pdf)$/);
+  });
+
+  test("links are absolute, so they are openable from this app", () => {
+    for (const url of [act.ferillUrl, act.billUrl]) {
+      assert.match(url ?? "", /^https:\/\//);
+    }
+  });
+
+  test("provisions carry their amendment footnotes, one entry per note", () => {
+    const withNotes = act.provisions.filter((p) => p.footnotes.length > 0);
+    assert.ok(withNotes.length > 10, `only ${withNotes.length} provisions had footnotes`);
+    // The point of splitting: a provision amended twice yields two entries,
+    // not one string holding both. Without this, "which act last touched this
+    // article" cannot be answered from the stored value.
+    const several = act.provisions.find((p) => p.footnotes.length > 1);
+    assert.ok(several, "no provision parsed with more than one footnote");
+    for (const note of several.footnotes) {
+      assert.match(note, /^\d+\) \S/, note);
+    }
+  });
+
+  test("footnotes do not bleed into the provision text", () => {
+    // They sit in the markup after the last paragraph; a parser that let them
+    // through would put "1) L. 74/2022, 2. gr." inside the law itself.
+    for (const p of act.provisions) {
+      assert.ok(!/L\. \d+\/\d{4}, \d+\. gr\.$/.test(p.fullText), p.displayLabel);
+    }
+  });
+});
+
+describe("splitFootnotes", () => {
+  test("splits the glued run Lagasafn serves into one entry per note", () => {
+    assert.deepEqual(splitFootnotes("1)L. 159/2008, 1. gr. 2)L. 8/2015, 9. gr."), [
+      "1) L. 159/2008, 1. gr.",
+      "2) L. 8/2015, 9. gr.",
+    ]);
+  });
+
+  test("keeps notes that are not amendments at all", () => {
+    // Lagasafn footnotes the regulations set under an article here too, which
+    // is why the field is `footnotes` and not `amendmentFootnotes`.
+    const notes = splitFootnotes("1)L. 126/2011, 322. gr. 2)Rgl. 492/2001, sbr. rgl. 278/2010.");
+    assert.equal(notes.length, 2);
+    assert.match(notes[1], /^2\) Rgl\. 492\/2001/);
+  });
+
+  test("a year inside a note is not read as the next marker", () => {
+    // "278/2010," has a digit run and a slash but no close paren, and the
+    // marker test also requires a capital letter to follow.
+    const notes = splitFootnotes("1)Rgl. 492/2001, sbr. rgl. 278/2010, rgl. 369/2010.");
+    assert.equal(notes.length, 1);
+  });
+
+  test("keeps an unmarked note rather than dropping it", () => {
+    assert.deepEqual(splitFootnotes("L. 74/2022, 2. gr."), ["L. 74/2022, 2. gr."]);
+  });
+
+  test("collapses the line breaks Lagasafn wraps long notes with", () => {
+    assert.deepEqual(splitFootnotes("1)Rgl. 492/2001,\n  sbr.\n rgl. 278/2010."), [
+      "1) Rgl. 492/2001, sbr. rgl. 278/2010.",
+    ]);
+  });
+
+  test("is empty for a provision with no notes", () => {
+    assert.deepEqual(splitFootnotes("   "), []);
+  });
+});
+
+describe("parseFerillUrl", () => {
+  test("reads the þing and the case number", () => {
+    assert.deepEqual(
+      parseFerillUrl("https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/ferill/?ltg=115&mnr=71"),
+      { parliament: 115, caseNumber: 71 }
+    );
+  });
+
+  test("survives the HTML-escaped ampersand Lagasafn writes", () => {
+    assert.deepEqual(parseFerillUrl("/ferill/?ltg=115&amp;mnr=71"), {
+      parliament: 115,
+      caseNumber: 71,
+    });
+  });
+
+  test("returns null rather than half an answer", () => {
+    for (const bad of ["", "/ferill/?ltg=115", "https://www.althingi.is/lagas/nuna/1991091.html"]) {
+      assert.equal(parseFerillUrl(bad), null, bad);
+    }
   });
 });

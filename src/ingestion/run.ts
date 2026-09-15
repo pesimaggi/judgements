@@ -34,6 +34,8 @@ import { yfirskattanefndAdapter } from "./adapters/yfirskattanefnd";
 import { logrettaAdapter } from "./adapters/logretta";
 import { ulfljoturAdapter } from "./adapters/ulfljotur";
 import { lagasafnAdapter } from "./adapters/lagasafn";
+import { reglugerdAdapter } from "./adapters/reglugerd";
+import { lagastodAdapter } from "./adapters/lagastod";
 import { eurLexAdapter } from "./adapters/eur-lex";
 import { cjeuAdapter } from "./adapters/cjeu";
 import { citationsAdapter } from "./citations";
@@ -53,6 +55,8 @@ const ADAPTERS: Record<string, IngestionAdapter> = {
   logretta: logrettaAdapter,
   ulfljotur: ulfljoturAdapter,
   lagasafn: lagasafnAdapter,
+  reglugerd: reglugerdAdapter,
+  lagastod: lagastodAdapter,
   "eur-lex": eurLexAdapter,
   cjeu: cjeuAdapter,
   citations: citationsAdapter,
