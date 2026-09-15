@@ -12,19 +12,18 @@ can be checked rather than believed.
 adapter carries a `PARSE_VERSION` so the backfill happens on a scheduled run
 rather than by hand.
 
-*§1, the reglugerðir ingest and the lagastoð link* — steps 1, 2 and 3 of §1.7.
-The `reglugerd` adapter, `docType: "regulation"` on `Act`, the two-generation
-parser, the `/log/rg-{nr}-{ár}` route, a third catalogue tab, and the `lagastod`
-adapter with `RegulationBasis` behind it. Step 4 — judgment→regulation citation
-resolution — is **not** built. What the build changed about the plan is
-recorded in §1.8 and §1.9.
+*All of §1* — every step of §1.7. The `reglugerd` adapter, `docType:
+"regulation"` on `Act`, the two-generation parser, the `/log/rg-{nr}-{ár}`
+route, a third catalogue tab, the `lagastod` adapter with `RegulationBasis`
+behind it, and judgment→regulation citations in the `citations` job. What the
+builds changed about the plan is recorded in §1.8, §1.9 and §1.10.
 
 Nothing else here has been built: no þingskjal is fetched, no repealed act is
 stored.
 
 | | What | Recommendation |
 |---|---|---|
-| **§1** | Icelandic regulations (reglugerðir) from reglugerd.is | Ingest and lagastoð **shipped** (§1.7 steps 1–3); §1.8 and §1.9 record what the builds changed. Judgment→regulation citations are still to do. |
+| **§1** | Icelandic regulations (reglugerðir) from reglugerd.is | **Shipped**, all of it; §1.8–§1.10 record what the builds changed. The register itself is not ingested until the robots.txt question in §1.4 is answered. |
 | **§2** | Althingi preparatory works (lögskýringargögn) | Linkage **shipped** (§2.1, §2.5 step 1). The ingest itself is held until one access question is answered. |
 | **§3** | Acts no longer in force | Not yet, and not in full. There is a cheap 10% of it that solves the real problem; §3.4. |
 
@@ -297,6 +296,54 @@ rather than dropped. Lagasafn publishes no provisions for about a tenth of acts
 in force, and an article repealed since the regulation was made is gone from
 the consolidated text by construction; in both cases the regulation still rests
 on the act.
+
+### 1.10 What the build changed about judgment → regulation citations
+
+§1.7 step 4 flagged the right risk — "reglugerð nr. 1165/2016 is Icelandic but
+reglugerð Evrópusambandsins nr. 2024/2642 is not, and the bare form is written
+both ways" — and then said resolution "should decline rather than guess". What
+it did not anticipate is *where* the evidence to decline lives.
+
+**The marker is usually not on the citation.** Measured over 2,802 regulation
+citations in 167 judgments from the live archive: only 201 carried an EU marker
+within 70 characters. A judgment names the instrument in full once and then
+refers to it bare for the rest of the opinion — one EU pharmaceutical case in
+the sample cites "reglugerð 1768/92" and "reglugerð 1901/2006" dozens of times
+with nothing beside them. So the decisive test is document-level and keyed to
+the *instrument*: if this number and year carry a marker anywhere in this
+judgment, decline every mention of them in it. That is 380 citations, against
+201 for the per-citation test.
+
+**Document-level must not mean document-wide.** The obvious version — "this
+judgment mentions the EU, so distrust its regulation citations" — would have
+suppressed 1,634 citations in the sample, most of them Icelandic regulations in
+judgments that happen to mention the EEA Agreement. Keying on the instrument
+keeps both: a judgment can discuss EU Regulation 1901/2006 and cite reglugerð
+nr. 1009/2015, and only the first is declined.
+
+**Two spellings of one instrument.** The same judgment writes "1768/92" where
+the marker is and "1768/1992" a page later where it is not. Keying the
+suppression on the text as written left the second form linking — and the
+four-digit spelling is the one form that passes every other test.
+
+**A window that reaches too far is a precision bug, not a recall one.** The
+marker window originally ran a fixed 70 characters back, which reached across
+sentence boundaries: "Reglugerð … (EB) nr. 1901/2006 gildir um lyf. Hér á landi
+gildir hins vegar reglugerð nr. 1009/2015" declined the Icelandic citation
+because of its neighbour's marker. The window now stops at the end of the
+previous citation.
+
+**The magic number that was wrong.** An early rule declined any regulation
+numbered above 1500 as implausibly high for Iceland. Checking the register
+rather than trusting the intuition: 2023 reached 1606. The rule was dropped
+entirely — the document-level test catches everything it did, except one
+citation that the existence check catches anyway.
+
+**No schema change at all.** A regulation is an `Act` row with `Provision`
+children, so `CaseProvisionLink` and `CaseActLink` took the new links unchanged,
+and every count, badge and expandable case list already built works on a
+regulation's articles. This is the return on §1.5's decision to reuse the table,
+and it is the one part of that decision that has cost nothing.
 
 ---
 

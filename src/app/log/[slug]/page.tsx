@@ -224,7 +224,7 @@ export default function ActPage({ params }: { params: { slug: string } }) {
           </span>
           <span>
             {act.actCaseCount} {act.actCaseCount === 1 ? "úrlausn vísar" : "úrlausnir vísa"}{" "}
-            {isEu ? "til gerðarinnar" : "til laganna"}
+            {isEu ? "til gerðarinnar" : isRegulation ? "til reglugerðarinnar" : "til laganna"}
             {provisionsWithCases > 0 ? ` · ${provisionsWithCases} greinar með tilvísunum` : ""}
           </span>
           <a

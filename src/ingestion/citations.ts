@@ -37,6 +37,7 @@ import {
   extractProvisionCitations,
   normalizeSpacesPreservingOffsets,
   sentenceAround,
+  extractRegulationCitations,
 } from "@/lib/legal-citations";
 import type { IngestionAdapter, IngestContext, IngestStats } from "./adapter";
 
@@ -53,10 +54,24 @@ type ProvisionIndex = Map<string, Map<string, string>>;
 const actKey = (actNumber: number, year: number) => `${actNumber}/${year}`;
 const articleKey = (n: number, letter: string | null) => `${n}|${letter ?? ""}`;
 
-async function loadIndexes(ctx: IngestContext): Promise<{
+/**
+ * Both corpora, in separate maps.
+ *
+ * Separate because both are keyed "number/year" and the two overlap
+ * completely: reglugerð nr. 91/1991 and lög nr. 91/1991 can both exist. One
+ * map would take whichever row was written last and point every judgment
+ * citing the act at the regulation, silently. What tells them apart in the
+ * text is the word in front of the number, which is what decides *which* map
+ * a citation is looked up in — see scanDocument.
+ */
+export interface CitationIndexes {
   acts: ActIndex;
   provisions: ProvisionIndex;
-}> {
+  regulations: ActIndex;
+  regulationProvisions: ProvisionIndex;
+}
+
+async function loadIndexes(ctx: IngestContext): Promise<CitationIndexes> {
   // Lög only, and the filter is load-bearing.
   //
   // The index is keyed by number and year alone, because that is all an
@@ -100,8 +115,43 @@ async function loadIndexes(ctx: IngestContext): Promise<{
     byArticle.set(articleKey(p.articleNumber!, p.articleLetter), p.id);
   }
 
-  ctx.log(`Indexed ${acts.size} acts and ${provisionRows.length} provisions`);
-  return { acts, provisions };
+  // The regulation half of the same table, in its own maps. Built exactly like
+  // the act half; the comments above apply unchanged, with docType the only
+  // difference. Empty until the reglugerd adapter has run, which costs one
+  // query and makes the regulation pass in scanDocument a no-op.
+  const regulationRows = await prisma.act.findMany({
+    where: { jurisdiction: "is", docType: "regulation" },
+    select: { id: true, actNumber: true, year: true },
+  });
+  const regulations: ActIndex = new Map(
+    regulationRows.map((a) => [actKey(a.actNumber, a.year), a.id])
+  );
+
+  const regulationProvisionRows = regulations.size
+    ? await prisma.provision.findMany({
+        where: {
+          kind: "article",
+          articleNumber: { not: null },
+          act: { jurisdiction: "is", docType: "regulation" },
+        },
+        select: { id: true, actId: true, articleNumber: true, articleLetter: true },
+      })
+    : [];
+  const regulationProvisions: ProvisionIndex = new Map();
+  for (const p of regulationProvisionRows) {
+    let byArticle = regulationProvisions.get(p.actId);
+    if (!byArticle) {
+      byArticle = new Map();
+      regulationProvisions.set(p.actId, byArticle);
+    }
+    byArticle.set(articleKey(p.articleNumber!, p.articleLetter), p.id);
+  }
+
+  ctx.log(
+    `Indexed ${acts.size} acts and ${provisionRows.length} provisions; ` +
+      `${regulations.size} regulations and ${regulationProvisionRows.length} of their articles`
+  );
+  return { acts, provisions, regulations, regulationProvisions };
 }
 
 interface ScanResult {
@@ -119,14 +169,21 @@ interface ScanResult {
   aliases: Map<string, Map<string, number>>;
   /** Citations naming an act we do not hold, for the run's log. */
   unknownActs: Set<string>;
+  /** Regulations cited that this database does not hold, for the run's log. */
+  unknownRegulations: Set<string>;
 }
 
-/** Extracts every link a single judgment's text supports. */
-export function scanDocument(
-  rawText: string,
-  acts: ActIndex,
-  provisions: ProvisionIndex
-): ScanResult {
+/**
+ * Extracts every link a single judgment's text supports — to the articles and
+ * acts it cites, and to the regulations.
+ *
+ * Both corpora land in the same two link tables, because both are Act and
+ * Provision rows: a regulation needed no new table, which is the whole return
+ * on having put it in the same one. What each corpus does *not* share is its
+ * index — see CitationIndexes.
+ */
+export function scanDocument(rawText: string, indexes: CitationIndexes): ScanResult {
+  const { acts, provisions, regulations, regulationProvisions } = indexes;
   // Length-preserving, so every offset below indexes into the caller's own
   // text and the UI can jump straight to the passage.
   const text = normalizeSpacesPreservingOffsets(rawText);
@@ -136,6 +193,7 @@ export function scanDocument(
     actLinks: [],
     aliases: new Map(),
     unknownActs: new Set(),
+    unknownRegulations: new Set(),
   };
 
   const provisionCitations = extractProvisionCitations(text);
@@ -204,17 +262,77 @@ export function scanDocument(
     });
   }
 
+  // ---- Regulations ------------------------------------------------------
+  //
+  // One extractor pass, because an Icelandic regulation citation names its
+  // article in the same breath where it names one at all ("2. mgr. 29. gr.
+  // reglugerðar nr. 830/2011") and only the regulation where it does not. The
+  // act side needs two passes because a bare act reference and an article
+  // reference are matched by different patterns; here one pattern answers
+  // both, and `articleNumber` says which it was.
+  //
+  // No alias harvesting. Act.aliases exists because judgments cite acts by
+  // names their titles do not contain — "vaxtalög" for 38/2001 — and the
+  // regulation equivalents ("byggingarreglugerð") are already in the titles.
+  // Harvesting "reglugerðar" as an alias would put a word that names no
+  // instrument into the act type-ahead.
+  for (const c of extractRegulationCitations(text)) {
+    const key = actKey(c.regulationNumber, c.year);
+    const regulationId = regulations.get(key);
+    if (!regulationId) {
+      result.unknownRegulations.add(key);
+      continue;
+    }
+
+    const provisionId =
+      c.articleNumber !== null
+        ? regulationProvisions.get(regulationId)?.get(articleKey(c.articleNumber, c.articleLetter))
+        : undefined;
+
+    if (provisionId) {
+      const linkKey = `${provisionId}|${c.index}`;
+      if (seen.has(linkKey)) continue;
+      seen.add(linkKey);
+      result.provisionLinks.push({
+        provisionId,
+        matchType: MATCH_EXPLICIT,
+        paragraphNumber: c.paragraphNumber,
+        pointNumber: c.pointNumber,
+        citationText: c.text,
+        excerpt: sentenceAround(text, c.index),
+        charOffset: c.index,
+      });
+      continue;
+    }
+
+    // Either no article was named, or the regulation we hold has no such
+    // article — a citation to a provision repealed since, or to one of the
+    // three quarters of the register whose article divisions could not be read
+    // (Act.structureSource). The regulation is still cited, so the link is
+    // made against it rather than dropped.
+    const linkKey = `${regulationId}|${c.index}`;
+    if (seenActLinks.has(linkKey)) continue;
+    seenActLinks.add(linkKey);
+    result.actLinks.push({
+      actId: regulationId,
+      matchType: MATCH_EXPLICIT,
+      excerpt: sentenceAround(text, c.index),
+      charOffset: c.index,
+    });
+  }
+
   return result;
 }
 
 export const citationsAdapter: IngestionAdapter = {
   key: "citations",
-  name: "Citation extraction (judgments → provisions)",
+  name: "Citation extraction (judgments → acts, regulations and their articles)",
   sourceKeys: [],
 
   async run(ctx: IngestContext): Promise<IngestStats> {
     const stats: IngestStats = { indexed: 0, skipped: 0, errors: 0 };
-    const { acts, provisions } = await loadIndexes(ctx);
+    const indexes = await loadIndexes(ctx);
+    const { acts } = indexes;
     if (acts.size === 0) {
       throw new Error("No acts ingested yet — run --adapter=lagasafn first.");
     }
@@ -227,6 +345,7 @@ export const citationsAdapter: IngestionAdapter = {
       : Prisma.empty;
     const aliasTotals = new Map<string, Map<string, number>>();
     const unknownActs = new Map<string, number>();
+    const unknownRegulations = new Map<string, number>();
     let linksWritten = 0;
     let processed = 0;
 
@@ -248,7 +367,7 @@ export const citationsAdapter: IngestionAdapter = {
 
       for (const doc of batch) {
         try {
-          const scan = scanDocument(doc.full_text, acts, provisions);
+          const scan = scanDocument(doc.full_text, indexes);
 
           for (const [actId, byAlias] of scan.aliases) {
             let totals = aliasTotals.get(actId);
@@ -260,6 +379,9 @@ export const citationsAdapter: IngestionAdapter = {
           }
           for (const key of scan.unknownActs) {
             unknownActs.set(key, (unknownActs.get(key) ?? 0) + 1);
+          }
+          for (const key of scan.unknownRegulations) {
+            unknownRegulations.set(key, (unknownRegulations.get(key) ?? 0) + 1);
           }
 
           // One transaction per judgment: its links are replaced wholesale
@@ -306,6 +428,16 @@ export const citationsAdapter: IngestionAdapter = {
       ctx.log(
         `Cited acts not held (repealed, amending, or not yet ingested): ` +
           `${unknownActs.size} distinct — most cited: ${top.join(", ")}`
+      );
+    }
+    if (unknownRegulations.size) {
+      const top = [...unknownRegulations.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([k, n]) => `${k}×${n}`);
+      ctx.log(
+        `Cited regulations not held (repealed, or the register not yet ingested): ` +
+          `${unknownRegulations.size} distinct — most cited: ${top.join(", ")}`
       );
     }
     ctx.log(`Done: ${stats.indexed} judgments, ${linksWritten} links`);

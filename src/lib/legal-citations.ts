@@ -279,3 +279,177 @@ export function sentenceAround(text: string, index: number, maxChars = 400): str
   }
   return text.slice(start, end).replace(/\s+/g, " ").trim();
 }
+
+/* -------------------------------------------------------------------------
+ * Regulations — reglugerðir
+ *
+ * The same number-and-year shape as an act, and a harder problem: an Icelandic
+ * regulation and an EU one are cited identically once the first mention's
+ * marker is dropped. "reglugerð nr. 1901/2006" is EU Regulation (EC) No
+ * 1901/2006; "reglugerð nr. 1160/2014" is an Icelandic one. Nothing in either
+ * token says which.
+ *
+ * Measured over 2,802 regulation citations in 167 judgments from the live
+ * archive on 2026-09-15, four tests decline 37% of them and between them catch
+ * every EU citation the sample contained:
+ *
+ *   1. An EU marker beside the citation — "(EB)", "(ESB)", "Evrópuþingsins og
+ *      ráðsins", "framkvæmdastjórnarinnar". 201 of them.
+ *   2. A two-digit year — "reglugerð 1768/92". Icelandic citations write the
+ *      year in full. 455 of them.
+ *   3. Year first — "2016/679" is the modern EU order; Icelandic is always
+ *      number first.
+ *   4. The same number and year carrying a marker ANYWHERE in this document.
+ *      This is the one that matters and the one a per-citation rule misses: a
+ *      judgment introduces "reglugerð Evrópuþingsins og ráðsins (EB) nr.
+ *      1901/2006" once and then says "reglugerð 1901/2006" forty times. 380 of
+ *      them, and it subsumes the "number looks too big to be Icelandic" rule
+ *      that was tried first — which was a magic number, and the wrong one:
+ *      Icelandic regulation numbers reached 1606 in 2023.
+ *
+ * What remains is resolved against the regulations this database actually
+ * holds, which is the real safeguard: the Icelandic register will never
+ * contain EU Regulation 1768/92. The tests above matter for the overlap —
+ * where an EU regulation's number and year also name a real Icelandic one.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * The stem, in the declined and compounded forms judgments use:
+ * "reglugerðar", "reglugerðum", "byggingarreglugerð", "breytingareglugerð",
+ * and the abbreviation "rg.".
+ */
+const REGULATION_STEM = String.raw`(?:[\p{L}]*reglugerð[\p{L}]*|rg\.)`;
+
+/**
+ * Up to three words and an optional parenthetical between the stem and the
+ * number — "reglugerð Evrópuþingsins og ráðsins (EB) nr. 1901/2006".
+ *
+ * Matched rather than ignored so that the EU forms are *seen* and declined
+ * deliberately. The run may not contain another regulation stem: without that
+ * guard "reglugerð var sett reglugerð nr. 1016/2005" matched from the first
+ * word, and the stored citation span covered text belonging to neither.
+ */
+const REGULATION_TAIL =
+  String.raw`(?:\s+(?!${CASE_WORD})(?![\p{L}]*reglugerð)[\p{L}]+){0,3}?(?:\s*\([\p{L}\d ]{1,18}\))?`;
+
+/** Markers that make a citation an EU instrument rather than an Icelandic one. */
+const EU_MARKER_RE =
+  /\((?:EB|ESB|EBE|KBE|EEC|EC|EU)\)|Evrópusambandsins|Evrópuþingsins|framkvæmdastjórnar|ráðsins|bandalagsins/iu;
+
+const REGULATION_CITATION_RE = new RegExp(
+  String.raw`${ARTICLE_PREFIX}(?:${ARTICLE}\s*,?\s*(?:sbr\.\s*)?)?` +
+    REGULATION_STEM +
+    REGULATION_TAIL +
+    String.raw`\s*,?\s*(?:nr\.\s*)?(\d{1,4})\s*\/\s*(\d{2,4})`,
+  "giu"
+);
+
+/** A reference to a regulation, and to an article of it where one is named. */
+export interface RegulationCitation {
+  regulationNumber: number;
+  year: number;
+  /** Null when the citation names the regulation without an article. */
+  articleNumber: number | null;
+  articleLetter: string | null;
+  paragraphNumber: number | null;
+  pointNumber: number | null;
+  /** The citation exactly as written. */
+  text: string;
+  index: number;
+  length: number;
+}
+
+/**
+ * Every Icelandic regulation reference in the text, in document order.
+ *
+ * EU regulations are left out rather than returned and flagged: nothing
+ * downstream has anywhere to put one — the EU corpus is keyed by CELEX, not by
+ * this number — so returning them would only invite a caller to resolve them
+ * against the Icelandic register by mistake. See the header for the four tests.
+ */
+export function extractRegulationCitations(text: string): RegulationCitation[] {
+  const matches = [...text.matchAll(REGULATION_CITATION_RE)];
+
+  // Pass one: which instruments does this document ever mark as EU?
+  //
+  // Keyed on the *normalised* year, because a document writes the same EU
+  // regulation both ways: "reglugerð 1768/92" where it carries its marker and
+  // "reglugerð nr. 1768/1992" a page later where it does not. Keying on the
+  // text as written left the four-digit spelling unsuppressed, and it was the
+  // one form that survives every other test.
+  const euKeys = new Set<string>();
+  for (const [i, m] of matches.entries()) {
+    if (euMarked(text, matches, i)) euKeys.add(instrumentKey(m[6], m[7]));
+  }
+
+  const out: RegulationCitation[] = [];
+  for (const m of matches) {
+    const numberText = m[6];
+    const yearText = m[7];
+    // The year written in two digits is an EU convention; Icelandic citations
+    // write it in full.
+    if (yearText.length !== 4) continue;
+    const regulationNumber = Number(numberText);
+    const year = Number(yearText);
+    // A year outside living memory is a typo in the judgment — "reglugerð nr.
+    // 1160/1014" for 1160/2014 — not an instrument anything can resolve.
+    if (year < 1900 || year > 2100) continue;
+    // "2016/679" — year first is the modern EU order.
+    if (isYearLike(regulationNumber) && !isYearLike(year)) continue;
+    if (euKeys.has(instrumentKey(numberText, yearText))) continue;
+    if (euMarked(text, matches, matches.indexOf(m))) continue;
+
+    out.push({
+      regulationNumber,
+      year,
+      pointNumber: m[1] ? Number(m[1]) : null,
+      paragraphNumber: m[3] ? Number(m[3]) : null,
+      articleNumber: m[4] ? Number(m[4]) : null,
+      articleLetter: m[5] ? m[5].toLowerCase() : null,
+      text: m[0].replace(/\s+/g, " ").trim(),
+      index: m.index,
+      length: m[0].length,
+    });
+  }
+  return out;
+}
+
+/** How far before a citation an EU marker may sit and still belong to it. */
+const EU_MARKER_WINDOW = 70;
+
+/**
+ * Whether the citation at `matches[i]` carries an EU marker of its own.
+ *
+ * The marker is usually inside the citation — "reglugerð Evrópuþingsins og
+ * ráðsins (EB) nr. 1901/2006" — but can sit just before it, so a short run of
+ * preceding text counts too. That run stops at the end of the previous
+ * citation, which is the point: without the bound, an Icelandic regulation
+ * cited in the sentence after an EU one was declined because the window
+ * reached back into its neighbour. "Reglugerð … (EB) nr. 1901/2006 gildir um
+ * lyf. Hér á landi gildir hins vegar reglugerð nr. 1009/2015" lost the second
+ * citation to the first one's marker.
+ */
+function euMarked(text: string, matches: RegExpExecArray[], i: number): boolean {
+  const m = matches[i];
+  const previousEnd = i > 0 ? matches[i - 1].index + matches[i - 1][0].length : 0;
+  const from = Math.max(previousEnd, m.index - EU_MARKER_WINDOW, 0);
+  return EU_MARKER_RE.test(text.slice(from, m.index + m[0].length));
+}
+
+/**
+ * A number and a year as one key, with a two-digit year expanded.
+ *
+ * Only ever used to recognise that two citations in a document name the same
+ * instrument. The two-digit form is declined outright a few lines above, so
+ * this never decides what gets linked — only what gets suppressed.
+ */
+function instrumentKey(numberText: string, yearText: string): string {
+  if (yearText.length !== 2) return `${Number(numberText)}/${Number(yearText)}`;
+  const n = Number(yearText);
+  return `${Number(numberText)}/${n <= 30 ? 2000 + n : 1900 + n}`;
+}
+
+/** Plausible as a year in a citation: the EEC exists from 1952. */
+function isYearLike(n: number): boolean {
+  return n >= 1952 && n <= 2100;
+}
