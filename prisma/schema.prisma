@@ -176,6 +176,13 @@ model Act {
   /// in question.
   structureSource   String?   @map("structure_source")
 
+  /// The value `sourceHash` had when this regulation was last scanned for its
+  /// lagastoð — the acts it states it is made under. Null means never scanned;
+  /// a mismatch means the text changed since. The same one-column watermark
+  /// `Document.citationScanHash` uses, and for the same reason: it is what
+  /// makes the scan incremental instead of a full re-read of the corpus.
+  lagastodScanHash  String?   @map("lagastod_scan_hash")
+
   // ---- EU acts (jurisdiction = "eu"). Null on the Icelandic side. ----------
 
   /// EUR-Lex's CELEX number, "32016R0679" — the natural key of the EU corpus,
@@ -218,10 +225,15 @@ model Act {
   chapters   Chapter[]
   provisions Provision[]
   caseLinks  CaseActLink[]
+  /// As a regulation: the acts this regulation states it is made under.
+  statutoryBasis RegulationBasis[] @relation("RegulationOfBasis")
+  /// As an act: the regulations made under it.
+  regulationsUnder RegulationBasis[] @relation("EnablingAct")
 
   @@unique([jurisdiction, docType, actNumber, year])
   @@index([status])
   @@index([jurisdiction, docType])
+  @@index([lagastodScanHash])
   @@index([jurisdiction, eeaRelevant])
   @@index([jurisdiction, textStatus])
   @@map("acts")
@@ -300,10 +312,12 @@ model Provision {
   createdAt     DateTime                 @default(now()) @map("created_at")
   updatedAt     DateTime                 @updatedAt @map("updated_at")
 
-  act        Act                  @relation(fields: [actId], references: [id], onDelete: Cascade)
-  chapter    Chapter?             @relation(fields: [chapterId], references: [id], onDelete: SetNull)
-  paragraphs ProvisionParagraph[]
-  caseLinks  CaseProvisionLink[]
+  act             Act                  @relation(fields: [actId], references: [id], onDelete: Cascade)
+  chapter         Chapter?             @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+  paragraphs      ProvisionParagraph[]
+  caseLinks       CaseProvisionLink[]
+  /// Regulations made under this specific article.
+  regulationBasis RegulationBasis[]
 
   @@unique([actId, anchor])
   @@index([actId, ordering])
@@ -525,4 +539,56 @@ model AskFeedback {
   @@index([kind, createdAt])
   @@index([requestId])
   @@map("ask_feedback")
+}
+
+/// A regulation's lagastoð: the act, and where stated the article of it, that
+/// a regulation says it is made under.
+///
+/// "Reglugerð þessi, sem sett er samkvæmt 7., 15. gr. a, 15. gr. b og 20. gr.
+/// laga nr. 60/2007 um Vatnajökulsþjóðgarð, öðlast þegar gildi." — one such
+/// sentence yields four rows, one per article, all naming the same act.
+///
+/// One table with a nullable `provisionId`, rather than the two that judgment
+/// links use. The split there exists because a bare act citation and an
+/// article citation are found by different extractors and cannot be derived
+/// from one another; here one sentence states both at once, and "which
+/// regulations are made under this act" is then a query over the same rows as
+/// "which are made under this article".
+///
+/// No unique constraint, deliberately: Postgres treats NULLs as distinct, so
+/// one over `provisionId` would not constrain the act-only rows it most needs
+/// to — it would read as a guarantee it could not keep. The scan replaces a
+/// regulation's rows wholesale and de-duplicates before writing, which is
+/// where the guarantee actually lives.
+model RegulationBasis {
+  id           String @id @default(cuid())
+  /// The reglugerð. An Act row with docType "regulation".
+  regulationId String @map("regulation_id")
+  /// The lög it is made under. An Act row with docType "act".
+  actId        String @map("act_id")
+  /// The article named, where one was and it resolves to a provision we hold.
+  /// Null when the clause names the act alone ("sett með heimild í lögum nr.
+  /// 100/1992"), which is a complete statement of basis and not a failure.
+  provisionId  String? @map("provision_id")
+
+  /// "stated" — read from the regulation's own lagastoð clause. The only kind
+  /// there is; named so that an inferred or curated link could be told apart
+  /// from one the regulation asserts about itself.
+  matchType    String @default("stated") @map("match_type")
+  /// The basis as written: "7., 15. gr. a, 20. gr. laga nr. 60/2007".
+  citationText String @map("citation_text")
+  /// The sentence it was found in, so a reader can see why this is claimed.
+  excerpt      String
+  /// Character offset into the regulation's text, for ordering.
+  charOffset   Int    @map("char_offset")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  regulation Act        @relation("RegulationOfBasis", fields: [regulationId], references: [id], onDelete: Cascade)
+  act        Act        @relation("EnablingAct", fields: [actId], references: [id], onDelete: Cascade)
+  provision  Provision? @relation(fields: [provisionId], references: [id], onDelete: SetNull)
+
+  @@index([actId])
+  @@index([provisionId])
+  @@index([regulationId])
+  @@map("regulation_basis")
 }

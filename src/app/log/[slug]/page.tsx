@@ -21,6 +21,32 @@ interface Provision {
   footnotes: string[];
   paragraphs: Paragraph[];
   caseCount: number;
+  /** Regulations made under this specific article. */
+  regulationCount: number;
+}
+
+/** A regulation made under the act being read. */
+interface RegulationUnder {
+  actNumber: number;
+  year: number;
+  title: string;
+  status: string;
+  citation: string;
+  path: string;
+  /** The articles of this act it names, as the act prints them. */
+  articles: { label: string; anchor: string }[];
+  /** True when it names the act without naming an article. */
+  wholeAct: boolean;
+}
+
+/** An act a regulation says it is made under, with the articles it names. */
+interface StatutoryBasis {
+  citation: string;
+  title: string;
+  path: string;
+  articles: { label: string; anchor: string }[];
+  citationText: string;
+  excerpt: string;
 }
 interface Chapter {
   id: string;
@@ -91,6 +117,8 @@ export default function ActPage({ params }: { params: { slug: string } }) {
   const [act, setAct] = useState<Act | null>(null);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [provisions, setProvisions] = useState<Provision[]>([]);
+  const [regulations, setRegulations] = useState<RegulationUnder[]>([]);
+  const [basis, setBasis] = useState<StatutoryBasis[]>([]);
   const [openProvision, setOpenProvision] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [error, setError] = useState("");
@@ -104,6 +132,8 @@ export default function ActPage({ params }: { params: { slug: string } }) {
         setAct(d.act);
         setChapters(d.chapters);
         setProvisions(d.provisions);
+        setRegulations(d.regulations ?? []);
+        setBasis(d.statutoryBasis ?? []);
       })
       .catch(() => setError("Could not load this act."))
       .finally(() => setLoading(false));
@@ -282,6 +312,28 @@ export default function ActPage({ params }: { params: { slug: string } }) {
               Saying so is the difference between showing a parse and passing
               one off as the source's own structure.
             */}
+            {basis.length > 0 && (
+              <p className="mt-1">
+                <span className="text-ink">Sett samkvæmt:</span>{" "}
+                {basis.map((b, i) => (
+                  <span key={b.path}>
+                    {i > 0 && "; "}
+                    {b.articles.map((a, j) => (
+                      <span key={a.anchor}>
+                        {j > 0 && ", "}
+                        <Link href={`${b.path}#${a.anchor}`} className="text-accent hover:underline">
+                          {a.label}
+                        </Link>
+                      </span>
+                    ))}
+                    {b.articles.length > 0 && " "}
+                    <Link href={b.path} className="text-accent hover:underline">
+                      {b.citation}
+                    </Link>
+                  </span>
+                ))}
+              </p>
+            )}
             {act.structureSource === "heuristic" && (
               <p className="mt-1">
                 <span className="font-medium text-ink">Greinaskipting er lesin úr uppsetningu.</span>{" "}
@@ -348,6 +400,56 @@ export default function ActPage({ params }: { params: { slug: string } }) {
           )}
         </p>
       </header>
+
+      {/*
+        ---- Regulations made under this act -------------------------------
+        Grouped by regulation and showing which of this act's articles each
+        one names, because "reglugerð nr. 300/2020, undir 7. gr." is the
+        question a reader of an enabling provision actually has. Taken from
+        each regulation's own lagastoð clause — see src/lib/lagastod.ts — so
+        it is what the regulation asserts about itself, not an inference.
+      */}
+      {regulations.length > 0 && (
+        <section className="mt-4 rounded-lg border border-line bg-white p-5">
+          <h2 className="font-serif text-base font-semibold">
+            {regulations.length === 1
+              ? "Ein reglugerð er sett samkvæmt þessum lögum"
+              : `${regulations.length} reglugerðir eru settar samkvæmt þessum lögum`}
+          </h2>
+          <p className="mt-1 text-[11px] text-inkSoft">
+            Samkvæmt því sem reglugerðirnar sjálfar segja um lagastoð sína.
+          </p>
+          <ul className="mt-3 space-y-2">
+            {regulations.map((r) => (
+              <li key={r.path} className="text-sm">
+                <Link href={r.path} className="text-accent hover:underline">
+                  {r.citation}
+                </Link>{" "}
+                <span className="text-ink">{r.title.replace(/\.$/, "")}</span>
+                {r.status === "repealed" && (
+                  <span className="ml-1 text-xs text-inkSoft">(fallin úr gildi)</span>
+                )}
+                {r.articles.length > 0 && (
+                  <span className="ml-1 text-xs text-inkSoft">
+                    —{" "}
+                    {r.articles.map((a, i) => (
+                      <span key={a.anchor}>
+                        {i > 0 && ", "}
+                        <a href={`#${a.anchor}`} className="hover:underline">
+                          {a.label}
+                        </a>
+                      </span>
+                    ))}
+                  </span>
+                )}
+                {r.articles.length === 0 && r.wholeAct && (
+                  <span className="ml-1 text-xs text-inkSoft">— laganna í heild</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {provisions.length === 0 ? (
         <p className="mt-4 rounded-lg border border-line bg-white p-5 text-sm text-inkSoft">
@@ -457,6 +559,15 @@ export default function ActPage({ params }: { params: { slug: string } }) {
                             <li key={i}>{note}</li>
                           ))}
                         </ul>
+                      )}
+
+                      {p.regulationCount > 0 && (
+                        <p className="mt-3 text-[11px] text-inkSoft">
+                          {p.regulationCount === 1
+                            ? "Ein reglugerð er sett samkvæmt þessu ákvæði"
+                            : `${p.regulationCount} reglugerðir eru settar samkvæmt þessu ákvæði`}{" "}
+                          — sjá listann efst á síðunni.
+                        </p>
                       )}
 
                       {p.caseCount > 0 ? (

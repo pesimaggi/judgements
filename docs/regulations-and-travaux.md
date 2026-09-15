@@ -12,18 +12,19 @@ can be checked rather than believed.
 adapter carries a `PARSE_VERSION` so the backfill happens on a scheduled run
 rather than by hand.
 
-*§1, the reglugerðir ingest* — steps 1 and 2 of §1.7. The `reglugerd` adapter,
-`docType: "regulation"` on `Act`, the two-generation parser, the
-`/log/rg-{nr}-{ár}` route and a third catalogue tab. Steps 3 and 4 — the
-lagastoð link and judgment→regulation citation resolution — are **not** built.
-What the build changed about the plan is recorded in §1.8.
+*§1, the reglugerðir ingest and the lagastoð link* — steps 1, 2 and 3 of §1.7.
+The `reglugerd` adapter, `docType: "regulation"` on `Act`, the two-generation
+parser, the `/log/rg-{nr}-{ár}` route, a third catalogue tab, and the `lagastod`
+adapter with `RegulationBasis` behind it. Step 4 — judgment→regulation citation
+resolution — is **not** built. What the build changed about the plan is
+recorded in §1.8 and §1.9.
 
 Nothing else here has been built: no þingskjal is fetched, no repealed act is
 stored.
 
 | | What | Recommendation |
 |---|---|---|
-| **§1** | Icelandic regulations (reglugerðir) from reglugerd.is | Ingest **shipped** (§1.7 steps 1–2); see §1.8 for what the build changed. The lagastoð and citation links are still to do. |
+| **§1** | Icelandic regulations (reglugerðir) from reglugerd.is | Ingest and lagastoð **shipped** (§1.7 steps 1–3); §1.8 and §1.9 record what the builds changed. Judgment→regulation citations are still to do. |
 | **§2** | Althingi preparatory works (lögskýringargögn) | Linkage **shipped** (§2.1, §2.5 step 1). The ingest itself is held until one access question is answered. |
 | **§3** | Acts no longer in force | Not yet, and not in full. There is a cheap 10% of it that solves the real problem; §3.4. |
 
@@ -250,6 +251,52 @@ the same reasoning the Lagasafn parser refuses to number annex articles. And
 its definitions article is an `<ol>` of 726 `<li>` with no `<p>` at all, so a
 parser selecting `<p>` dropped the entire article while still reporting
 success. Both are now fixtures.
+
+### 1.9 What the build changed about the lagastoð link
+
+§1.7 step 3 was one line — "lagastoð extraction → 'reglugerðir settar samkvæmt
+þessum lögum' on the act reader" — on the strength of §1.5's claim that the
+closing sentence "is already fully parseable by the citation extractor we
+ship". That claim was wrong, in a way worth writing down.
+
+**The general extractor finds a quarter of the answer.**
+`extractProvisionCitations` requires an article and its act to be adjacent,
+which is correct for judgments. A lagastoð clause enumerates: "7., 15. gr. a,
+15. gr. b og 20. gr. laga nr. 60/2007" is four articles sharing one trailing
+"gr." and one act reference, and only the last is adjacent to it. So the
+feature needed its own extractor after all — one that reads the articles as a
+*run* leading up to each act reference, which also happens to be what keeps
+them with the right act when a clause names two.
+
+**Precision, not recall, is the hard half.** Anchoring on an act citation near
+"sett", "stoð" or "heimild" matched three kinds of thing that are not a basis:
+a cross-reference to a requirement, a clause about what a *tariff* is set
+under, and a plain "sbr." citation. What distinguishes the real clause is its
+subject, so the anchor is "Reglugerð þessi" / "Reglugerðin" / "Reglur þessar"
+followed by the verb. A missed lagastoð leaves a regulation looking unmoored;
+a false one asserts an act authorises something it does not.
+
+**Two forms that were not on anyone's list.** Measured over 84 regulations,
+nine of the twelve initially missed used the pre-1990 citation style, where an
+act is named by number and date of assent — "laga nr. 49 17. maí 2005" is lög
+nr. 49/2005. (`legal-citations.ts` does not read that form either, so judgments
+citing it also fail to link; that is a separate and larger job.) The others
+were municipal byelaws, whose verb is "staðfestist" rather than "sett". With
+both handled the extractor finds a basis in 83 of 84.
+
+**Two bugs that only a corpus would find.** An enumerated paragraph qualifier —
+"3. og 4. mgr. 99. gr." — left a phantom article 3 hanging off the act, because
+only the qualifier adjacent to "mgr." was being stripped. And a lettered
+article, "59. gr. a.", is a period after a single letter followed by a space:
+read as a sentence end, it cut the clause off from the act it names and lost
+the citation entirely.
+
+**An unresolvable article does not discard the link.** Where an article names
+no provision we hold, the row is written against the act with a null provision
+rather than dropped. Lagasafn publishes no provisions for about a tenth of acts
+in force, and an article repealed since the regulation was made is gone from
+the consolidated text by construction; in both cases the regulation still rests
+on the act.
 
 ---
 
