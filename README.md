@@ -14,7 +14,7 @@ The three Icelandic courts published at [island.is/domar](https://island.is/doma
 - **Full document page** — structured metadata, the judgment typeset as readable prose (headings, paragraphs, numbered clauses, quoted passages) with highlighted hits, search-within-document, copyable citation, official-source link, related cases via case-number citation extraction.
 - **Icelandic acts (lög)** — the in-force text of Icelandic law from [Lagasafn](https://www.althingi.is/lagas/), parsed into chapters (kaflar), provisions (greinar) and paragraphs (málsgreinar), with an act reader at `/log/{actNumber}-{year}`.
 - **Where an act came from** — every act reader links the bill it was passed from and its ferill on Alþingi ("115. löggjafarþing, mál 71"), and every article shows Lagasafn's own footnotes: which act amended it and in which of that act's articles, and the regulations set under it. Both are taken from the links and footnotes Lagasafn prints on the act's own page, not matched by number and title, so they are as reliable as the text above them. This is the trail from a provision to the preparatory works that explain it; the works themselves are not ingested yet — see *docs/regulations-and-travaux.md*.
-- **Icelandic regulations (reglugerðir)** — the consolidated text of regulations in force from [reglugerd.is](https://www.reglugerd.is), parsed into the same chapters, articles and paragraphs as lög and read in the same act reader at `/log/rg-{nr}-{ár}`. Amending regulations are not separate entries: `/current` returns the base regulation with its amendments already folded in, so the register's ~6,500 base regulations are stored and the ~8,000 "breytingu á" titles are not. A regulation is cited *reglugerð nr. 300/2020* and is never presented as lög — see *Reglugerðir* below, including the two things about this source that constrain what the feature can be.
+- **Icelandic regulations (reglugerðir)** — the consolidated text of regulations in force from [reglugerd.is](https://www.reglugerd.is), parsed into the same chapters, articles and paragraphs as lög and read in the same act reader at `/log/rg-{nr}-{ár}`. Amending regulations are not separate entries: `/current` returns the base regulation with its amendments already folded in, so the register's ~6,500 base regulations are stored and the ~8,000 "breytingu á" titles are not. A regulation is cited *reglugerð nr. 300/2020* and is never presented as lög — see *Reglugerðir* below.
 - **Judgments cite regulations too** — the citation job reads `3. gr. reglugerðar nr. 830/2011` as well as `3. gr. laga nr. 91/1991`, so a regulation's articles carry the same "N úrlausnir vísa til þessa ákvæðis" badge that an act's do, and the catalogue counts them. No new tables: a regulation is an `Act` row, so the existing link tables took it unchanged. The hard part is telling an Icelandic regulation from an EU one, which the bare citation cannot — see *Judgments → regulations* below.
 - **Lagastoð — which act a regulation is made under** — every regulation closes by naming its own statutory basis ("Reglugerð þessi, sem sett er samkvæmt 7., 15. gr. a, 15. gr. b og 20. gr. laga nr. 60/2007 …"), and that sentence is extracted and resolved. The act reader for lög nr. 60/2007 lists the regulations made under it and which of its articles each one names; each article says how many; and a regulation's own page links back to the articles that authorise it. It is what the regulation asserts about itself, not an inference — see *Lagastoð* below.
 - **Provision-level case linking** — each provision shows how many decisions cite it ("12 úrlausnir vísa til þessa ákvæðis"), expanding to the citing cases with the sentence the citation was found in, so you can see *why* a case matched before opening it.
@@ -2833,20 +2833,16 @@ number and year alone, because that is all `laga nr. 91/1991` gives, and a
 regulation admitted under that key would silently become the target of every
 judgment citing the act.
 
-**Two things about this source constrain what the feature can be.**
+**The register is only enumerable through the API.** `/reglugerdir/allar/` on
+the site is a search form that renders one item, so there is no HTML route to
+"what exists"; individual regulations are read from the site wherever the API
+serves a stub instead of text. A cold walk is about 14,600 requests — every
+base regulation plus every amending one, which must be read for its effects
+even though it is never stored — bounded per firing by `REGLUGERD_MAX_PAGES`,
+so full coverage takes a few days of scheduled runs. Worth asking island.is for
+a bulk dump if it is ever re-run from nothing.
 
-*The API's robots.txt is `Disallow: /`.* `api.reglugerd.is` says it; the site
-at `www.reglugerd.is` is permissive with `Crawl-delay: 5`. The API is public,
-unauthenticated open data from Stafrænt Ísland and the Disallow is almost
-certainly aimed at search-engine crawlers, but it says what it says — and the
-API is the only way to enumerate the register, because `/reglugerdir/allar/` is
-a search form rather than an index. **Ask island.is to confirm before running a
-full backfill**, and ask whether they would rather serve a bulk dump than
-~6,500 requests. Meanwhile the adapter paces itself to the five-second
-Crawl-delay the same operator publishes, rather than the 1.5 seconds the rest
-of the ingest uses.
-
-*Only about a quarter of regulations carry structured text.* Sampling 48
+**Only about a quarter of regulations carry structured text.** Sampling 48
 across the register on 2026-09-15, 12 came back from the API with `text` and 36
 as a four-field stub. The text for a stub is on its page, but those pages come
 in two generations: newer ones carry the same `article__title` markup the API

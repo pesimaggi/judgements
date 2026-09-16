@@ -329,8 +329,16 @@ export const lagasafnAdapter: IngestionAdapter = {
     // paid: a run that would normally make a single request is about to fetch
     // every act in the index. Silence here would look like the cheap skip
     // having broken.
-    const behind = Array.from(known.values()).filter(
-      (a) => a.parseVersion !== PARSE_VERSION
+    //
+    // Counted over the acts this run can actually reach, not over everything
+    // stored. The database holds 26 acts that are no longer in the in-force
+    // index — repealed since they were ingested — and the loop below only
+    // walks the index, so those can never be re-parsed. Counting them made the
+    // line read "26 act(s) … re-fetching them once" on every single run, for
+    // ever, which is precisely the cry-wolf log this message exists to avoid.
+    const inIndex = new Set(entries.map((e) => `${e.actNumber}/${e.year}`));
+    const behind = Array.from(known.entries()).filter(
+      ([key, a]) => inIndex.has(key) && a.parseVersion !== PARSE_VERSION
     ).length;
     if (behind > 0) {
       ctx.log(

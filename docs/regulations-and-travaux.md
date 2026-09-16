@@ -103,7 +103,14 @@ sibling saying **how the structure was obtained** — `"api"`, `"html-structured
 linking on a heuristic parse, and so the citation job can refuse to hang a
 `CaseProvisionLink` off an article boundary nobody published.
 
-### 1.4 Blocker two: `api.reglugerd.is/robots.txt` is `Disallow: /`
+### 1.4 Blocker two: the register is only enumerable through the API
+
+**Settled 2026-09-16** — the owner's position is that Icelandic legislative
+material is not governed by the robots.txt this section originally treated as a
+blocker, and the adapter now runs in the scheduled chain at the ordinary ingest
+pace. The rest of this section is kept for the measurement in it.
+
+#### What the original blocker said
 
 ```
 User-agent: *

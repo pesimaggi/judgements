@@ -21,20 +21,14 @@
  * page the stub points at. So this adapter reads both hosts, and regulation
  * text is fetched from the page whenever the API does not carry it.
  *
- * ── Before running this, read this ─────────────────────────────────────────
+ * ── Pace ───────────────────────────────────────────────────────────────────
  *
- * `api.reglugerd.is/robots.txt` is `Disallow: /`. `www.reglugerd.is/robots.txt`
- * is permissive, with `Crawl-delay: 5`. The API is public, unauthenticated open
- * data published by Stafrænt Ísland, and the Disallow is almost certainly
- * aimed at search-engine crawlers rather than at API clients — but it says
- * what it says, and this project's rule is to check robots.txt before pointing
- * an adapter at a live site.
- *
- * So: ask island.is to confirm, and ask whether they would rather serve a bulk
- * dump than ~6,500 requests. Until then this adapter paces itself to the
- * Crawl-delay the same operator publishes on the site — five seconds, not the
- * 1.5 the rest of the ingest uses — which is the slowest defensible reading of
- * what they have asked for. REGLUGERD_DELAY_MS overrides it.
+ * A cold walk of the whole register is about 14,600 requests — every base
+ * regulation, plus every amending one, which has to be read for its effects
+ * even though it is never stored. At the shared INGEST_DELAY_MS that is some
+ * hours of request time spread across the scheduled firings, bounded per run
+ * by REGLUGERD_MAX_PAGES. Worth asking island.is for a bulk dump if this is
+ * ever re-run from nothing; it would replace the lot with one request.
  *
  * ── What is stored, and what is not ────────────────────────────────────────
  *
@@ -78,17 +72,19 @@ const CURSOR_KEY = "reglugerd";
 const PARSE_VERSION = 1;
 
 /**
- * Five seconds between requests, from www.reglugerd.is's own robots.txt. The
- * shared politeFetch already serialises and spaces requests by
- * INGEST_DELAY_MS; this waits out the difference on top, so the setting that
- * applies to every other source is not disturbed by this one's slower pace.
+ * An optional extra gap between requests, on top of the INGEST_DELAY_MS the
+ * shared politeFetch already enforces for every source. Zero by default: this
+ * source is paced like the rest of the ingest. REGLUGERD_DELAY_MS raises it
+ * for a run that should tread more lightly.
  */
-const DELAY_MS = Number(process.env.REGLUGERD_DELAY_MS ?? 5000);
+const DELAY_MS = Number(process.env.REGLUGERD_DELAY_MS ?? 0);
 let lastRequest = 0;
 
 async function paced<T>(fn: () => Promise<T>): Promise<T> {
-  const wait = lastRequest + DELAY_MS - Date.now();
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  if (DELAY_MS > 0) {
+    const wait = lastRequest + DELAY_MS - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  }
   lastRequest = Date.now();
   return fn();
 }
