@@ -147,19 +147,23 @@ set -u
 # would have found the other 100 was opt-in and nobody opted in. A source that
 # only closes its gaps when prompted does not close them.
 #
-# `reglugerd` is deliberately NOT in this chain. It is the one adapter whose
-# source has an unresolved permission question — api.reglugerd.is/robots.txt is
-# `Disallow: /`, and it is the only way to enumerate the register — so a
-# ~6,500-request backfill must be a decision somebody takes, not something a
-# deploy starts. Run it with INGEST_ADAPTERS="reglugerd lagastod" once island.is
-# has confirmed; see the adapter's header and README "Reglugerðir".
+# `reglugerd` joined the chain on 2026-09-16. A cold walk of the register is
+# about 14,600 requests, bounded per firing by REGLUGERD_MAX_PAGES, so full
+# coverage takes a few days of scheduled runs rather than one long one.
 #
-# `lagastod` is in the chain, because it touches no network at all: it reads
-# regulations already stored and links them to the acts they name. With no
-# regulations it does nothing, so it costs one query until the day the ingest
-# above is switched on. It runs after lagasafn for the same reason citations
-# does — it resolves against the act index, which must exist first.
-DEFAULT_ADAPTERS="bin-dictionary stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal yfirskattanefnd yfirskattanefnd-retry stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-joint-committee eftasurv eftasurv-retry lagasafn eur-lex-catalogue eur-lex eur-lex-retry eur-lex-eea cjeu-listing cjeu citations lagastod"
+# It sits after lagasafn and before citations on purpose. Regulations are link
+# targets for both of the jobs that follow: `citations` resolves the
+# regulations judgments cite, and `lagastod` resolves the acts regulations are
+# made under. A regulation arriving after them waits a full firing to be
+# linked to anything.
+#
+# `frumvorp` follows lagasafn because it walks the acts: every Lagasafn act
+# page links the þingskjal the act was passed from, that link is stored on the
+# act, and this adapter fetches what is behind it. It has no listing of its own
+# to walk, so an act with no bill link is simply not work.
+#
+# `lagastod` touches no network at all — it reads regulations already stored.
+DEFAULT_ADAPTERS="bin-dictionary stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal yfirskattanefnd yfirskattanefnd-retry stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-joint-committee eftasurv eftasurv-retry lagasafn eur-lex-catalogue eur-lex eur-lex-retry eur-lex-eea cjeu-listing cjeu reglugerd frumvorp citations lagastod"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"

@@ -26,7 +26,15 @@ export interface SourceDef {
    *   citation job, whose model and UI both say "úrlausnir" — see
    *   src/ingestion/citations.ts.
    */
-  kind: "decision" | "scholarship";
+  /**
+   * "travaux" — a parliamentary document: a bill and its explanatory
+   *   memorandum. Searchable like everything else and read by the well, but
+   *   kept out of the provision citation job for the same reason scholarship
+   *   is: a bill cites acts on every page, and "12 úrlausnir vísa til þessa
+   *   ákvæðis" counts decisions. A bill is not a decision, and it is not
+   *   authority — it is evidence of what the legislature meant.
+   */
+  kind: "decision" | "scholarship" | "travaux";
   /**
    * "live"  — ingested and searchable; offered in the search UI.
    * "pilot" — the adapter is still being built. Registered here so ingestion,
@@ -42,6 +50,7 @@ const EEA_EFTA = "EEA / EFTA";
 const EU_COURTS = "Dómstólar ESB";
 const OVERSIGHT = "Eftirlit og kærunefndir";
 const JOURNALS = "Ritrýnd fræðirit";
+const TRAVAUX = "Lögskýringargögn";
 const ADR = "Úrskurðarnefndir og ráðuneyti";
 
 /**
@@ -335,6 +344,28 @@ export const ALL_SOURCES: SourceDef[] = [
     status: "live",
   },
   {
+    /**
+     * Frumvörp — bills as laid before Alþingi, with their greinargerð.
+     *
+     * Reached from the act, not from a listing: every Lagasafn act page links
+     * the þingskjal it was passed from, and that link is stored on the act
+     * already. So this source has no index of its own to walk and no risk of
+     * drifting out of step with one — an act arrives, its bill follows.
+     *
+     * Read at althingi.is rather than reproduced from anywhere else, and
+     * stored in full because the article-by-article commentary is the whole
+     * point: it is what a court quotes when it construes a provision.
+     */
+    key: "althingi-frumvorp",
+    name: "Frumvörp og greinargerðir (Alþingi)",
+    officialBaseUrl: "https://www.althingi.is/altext/",
+    language: "is",
+    group: TRAVAUX,
+    adapterKey: "frumvorp",
+    kind: "travaux",
+    status: "pilot",
+  },
+  {
     // Vefrit Úlfljóts — the web journal of Úlfljótur, the law students'
     // journal at the University of Iceland, in print since 1947. Articles are
     // published in full on the web, so this source carries whole articles,
@@ -365,6 +396,20 @@ export const SOURCE_KEYS = new Set(ALL_SOURCES.map((s) => s.key));
 export const SCHOLARSHIP_SOURCE_KEYS = ALL_SOURCES.filter((s) => s.kind === "scholarship").map(
   (s) => s.key
 );
+
+/**
+ * Sources the provision citation job must not scan.
+ *
+ * Scholarship and travaux both. A bill quotes and cites the acts it amends on
+ * nearly every page, so linking it would multiply every provision's "úrlausnir
+ * vísa til þessa ákvæðis" count by the number of bills that have ever touched
+ * it — and that badge means decisions. The link that matters for a bill runs
+ * the other way, from the act to the bill it was passed from, and it is
+ * already stored as Act.billUrl.
+ */
+export const NON_DECISION_SOURCE_KEYS = ALL_SOURCES.filter(
+  (s) => s.kind !== "decision"
+).map((s) => s.key);
 
 export function sourceByKey(key: string): SourceDef | undefined {
   return ALL_SOURCES.find((s) => s.key === key);
