@@ -20,7 +20,7 @@
  *              validation that has already run.
  */
 import { getAskModel, askProviderInfo, type AskModel } from "./llm";
-import { askConfig, type AskConfig } from "./config";
+import { askConfig, deepen, type AskConfig } from "./config";
 import { planQuery, heuristicPlan } from "./plan";
 import { retrieve, type Retrieval } from "./retrieve";
 import { deepResearch } from "./research";
@@ -96,7 +96,14 @@ export async function ask(
   history: AskTurn[] = [],
   options: AskOptions = {}
 ): Promise<AskResult> {
-  const config = options.config ?? askConfig();
+  const base = options.config ?? askConfig();
+  // Decided before the plan, because it decides the budgets every stage after
+  // retrieval reads. The evaluation harness's own retrieval wins outright: it
+  // is replaying a recorded run and must not be sent researching.
+  const deep = !options.retrieve && (options.mode ? options.mode === "deep" : base.research);
+  // One substitution, here, and nothing downstream knows there are two tiers.
+  // See lib/ask/config.ts, `deepen`.
+  const config = deep ? deepen(base) : base;
   /**
    * Sends one event, and swallows anything the handler throws.
    *
@@ -119,6 +126,7 @@ export async function ask(
   metrics.provider = provider;
   metrics.model = modelId;
   metrics.planEffort = config.planEffort;
+  metrics.mode = deep ? "deep" : "quick";
 
   try {
     // ---- plan ------------------------------------------------------------
@@ -147,10 +155,6 @@ export async function ask(
     });
 
     // ---- retrieve --------------------------------------------------------
-    // The evaluation harness's own retrieval wins outright: it is replaying a
-    // recorded run and must not be sent researching.
-    const deep = !options.retrieve && (options.mode ? options.mode === "deep" : config.research);
-
     const runRetrieval = options.retrieve
       ? () => options.retrieve!(plan, config)
       : deep
@@ -174,6 +178,8 @@ export async function ask(
               rounds: outcome.rounds,
               exhausted: outcome.exhausted,
               fellBack: outcome.fellBack,
+              finished: outcome.finished,
+              gaps: outcome.gaps.length,
             };
             return outcome.retrieval;
           }
@@ -214,6 +220,7 @@ export async function ask(
       withTimeout(
         answer(plan, retrieval, history, model, {
           config,
+          depth: deep ? "deep" : "quick",
           onUsage: metrics.addUsage,
           onDecision: ({ effort, complexity }) => {
             metrics.effort = effort;

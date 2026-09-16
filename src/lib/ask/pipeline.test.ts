@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 import { ask } from "@/lib/ask/pipeline";
 import { AskEmptyAnswer } from "@/lib/ask/answer";
 import { AskTimeout } from "@/lib/ask/timeout";
-import { askConfig } from "@/lib/ask/config";
+import { askConfig, type AskConfig } from "@/lib/ask/config";
 import type { AskModel } from "@/lib/ask/llm";
 import type { Retrieval } from "@/lib/ask/retrieve";
 import type { AskEvent, AskSource } from "@/lib/ask/types";
@@ -542,3 +542,48 @@ describe("deep research mode", () => {
   });
 });
 
+
+describe("the two tiers", () => {
+  /**
+   * `retrieve` stands in for the retrieval stage, and the config it is handed
+   * is the one every stage after it reads. So this is the direct assertion
+   * that the deep tier's budgets actually reach the stages that spend them —
+   * the thing that was quietly not happening, with the loop reading twenty
+   * judgments and the answer being shown ten sources' worth of them.
+   */
+  async function configSeenBy(mode: "quick" | "deep" | undefined) {
+    let seen: AskConfig | null = null;
+    await ask("Hvernig sæki ég um íslenskan ríkisborgararétt?", [], {
+      mode,
+      quiet: true,
+      model: model(),
+      retrieve: async (_plan, config) => {
+        seen = config;
+        return retrieval();
+      },
+    });
+    return seen!;
+  }
+
+  test("the evaluation harness's own retrieval pins the tier to quick", async () => {
+    // Supplying `retrieve` means replaying a recorded run, and a replay that
+    // silently switched the answer to the deep tier's budgets and effort would
+    // be measuring something the recording never produced. So the seam wins
+    // over the mode — asserted here because it is the surprising half of it.
+    const base = askConfig({});
+    const seen = await configSeenBy("deep");
+    assert.equal(seen.maxSources, base.maxSources);
+    assert.equal(seen.reasoningChars, base.reasoningChars);
+    assert.equal(seen.answerMaxTokens, base.answerMaxTokens);
+  });
+
+  test("the metrics line says which tier answered", async () => {
+    const { metrics } = await ask("Hvernig sæki ég um íslenskan ríkisborgararétt?", [], {
+      mode: "deep",
+      quiet: true,
+      model: model(),
+      retrieve: async () => retrieval(),
+    });
+    assert.equal(metrics.mode, "quick");
+  });
+});

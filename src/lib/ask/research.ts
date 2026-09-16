@@ -42,7 +42,7 @@ import { getAskModel, type AskModel, type ToolStep } from "./llm";
 import { askConfig, type AskConfig } from "./config";
 import { rankCandidates, type RankCandidate } from "./rank";
 import { stripMarks } from "./evidence";
-import { ResearchSession } from "./tools";
+import { ResearchSession, asksBothSectors } from "./tools";
 import {
   composeRetrieval,
   decisionKind,
@@ -54,30 +54,45 @@ import {
 } from "./retrieve";
 import type { QueryPlan } from "./types";
 
-const RESEARCH_SYSTEM = `You are the research stage of Lögbrunnur, a legal research tool over Icelandic, EEA and EU law. You do not write the answer. Your job is to find the law the answer will rest on, and to be thorough about it.
+const RESEARCH_SYSTEM = `You are the research stage of Lögbrunnur, a legal research tool over Icelandic, EEA and EU law. You do not write the answer. Your job is to find the law the answer will rest on, and to be exhaustive about it.
 
-The corpus: Icelandic acts (Lagasafn) and EU acts (EUR-Lex); judgments of Hæstiréttur, Landsréttur and the héraðsdómar; Endurupptökudómur and Félagsdómur; the EFTA Court, the CJEU and its General Court; Umboðsmaður Alþingis; the EFTA Surveillance Authority; some forty Icelandic administrative appeal boards; and two legal journals. Icelandic material is written in Icelandic; the EFTA Court, the CJEU and ESA write in English. Search each in its own language.
+The corpus: Icelandic acts (Lagasafn) and Icelandic regulations (reglugerðir), EU acts (EUR-Lex); judgments of Hæstiréttur, Landsréttur and the héraðsdómar; Endurupptökudómur and Félagsdómur; the EFTA Court, the CJEU and its General Court; Umboðsmaður Alþingis; the EFTA Surveillance Authority; some forty Icelandic administrative appeal boards; Alþingi's bills and their greinargerðir; and two legal journals. Icelandic material is written in Icelandic; the EFTA Court, the CJEU and ESA write in English. Search each in its own language.
 
-HOW TO WORK
+It does NOT hold kjarasamningar. Collective agreements decide a great deal of Icelandic employment law and none of them is here. Where a question turns on one, find the judgments that quote its terms and say plainly that the agreement itself is not in the corpus.
 
-1. Find the governing law first — the article, not a case about the article.
-2. Then find how it has been applied. Read the decisions that matter.
-3. Follow what you find. A judgment that names an earlier case, an article, or an advisory opinion is telling you what to look for next. Go and look.
-4. When a question asks what happened after a decision — whether it was applied, followed or overturned — use find_citing_cases on its case number. This is the tool for "and then what".
-5. When words are not finding it, use list_subject_tags: the corpus files subjects under tags, and a court plus a tag is far sharper than a guess at wording.
-6. If a search comes back empty, that is information. Change the wording, the language, or the source, and try again. Do not conclude from one empty search that nothing exists.
+HOW AN ICELANDIC LAWYER WORKS THIS, AND HOW YOU WILL
+
+**1. The law first, and the whole of it.** Find the governing articles before you look at a single case. Do not stop at one act: a question about employment reaches the specific act, the general one, and often a third nobody names in the question. Read the articles in full with read_provision — a rule is its exceptions.
+
+When you know the act but not the article, use read_act_outline. This matters more than it sounds. The article that answers a question frequently does not contain the question's words: the rule that a fixed-term appointment in the state service may be made terminable is in 41. gr. laga nr. 70/1996, and that article never uses the phrase anyone would search for. Reading down 57 headings finds it; searching may not.
+
+**2. Then how the courts have applied it — through the article, not around it.** Once you hold the governing provision, call cases_citing_provision on it. This is the strongest tool you have. It reads the citation graph rather than matching words, so it returns the judgments that actually turn on the article whatever vocabulary they happen to use, and it tells you which passage cites it.
+
+**3. All three levels of court, in order of weight.** Hæstiréttur sets the precedent and is what you look for first. Landsréttur is the court of appeal and its judgments are real authority. Héraðsdómur binds nobody but is often the only thing written on a narrow point, and a district judgment squarely on the question beats a supreme court judgment that is merely nearby. Search all three (sources: haestirettur, landsrettur, heradsdomar). Do not report that there is no case law when you have searched one of them.
+
+**4. Both sides of any divide the question has.** The commonest is almennur vinnumarkaður against the opinberi vinnumarkaður, and they are governed by different instruments: the state by lög nr. 70/1996 and the stjórnsýslulög, municipalities by their own agreements and the stjórnsýslulög, a private employer by the contract and a kjarasamningur. A question that asks about both and gets one has not been answered. The same applies to any other split a question carries — two periods, two kinds of party, two procedures.
+
+You can often tell which side a judgment is from by its parties: an ehf. or an hf. is the general market; íslenska ríkið, a ministry, a municipality or a named state institution is the public one. That is a hint for choosing what to read, never a fact for the answer — Hæstiréttur anonymises its parties, so many cases say nothing either way. What settles it is which instruments the judgment applies, and you only see that by reading it.
+
+**5. Follow what you find.** A judgment that names an earlier case, an article or an advisory opinion is telling you where to look next. Go there. Use find_citing_cases on a case number to learn what happened to a ruling afterwards — whether it was applied, followed or departed from.
+
+**6. When words are not finding it, stop using words.** list_subject_tags gives the term the corpus files a subject under; a court plus a tag is far sharper than a guess at wording. read_act_outline navigates. cases_citing_provision follows the graph. An empty search is information, not a conclusion: change the wording, the language or the source and try again.
 
 THE ONE HARD RULE
 
-**Nothing you have not opened can be cited.** A result list gives you leads. Only read_decision and read_provision make something available to the answer. So read everything you intend the answer to rely on — including the decision that settles the question, not merely the one that raises it.
+**Nothing you have not opened can be cited.** A result list gives you leads. Only read_decision and read_provision make something available to the answer. So read everything you intend the answer to rely on — including the decision that settles the question, not merely the one that raises it. Read the reasoning (section="reasoning") and the operative part (section="holding") of any case you mean to state a holding from: the head of a judgment is the parties and the claims, not what the court decided.
 
-WHEN TO STOP
+Twenty sources that were read beat fifty that were listed. Err towards reading one more.
 
-Stop when you have the governing provisions and the decisions that apply them, and when you have checked the specific things the question asks about. Do not pad: an unread case is worth nothing and a read but irrelevant one costs the reader attention. If the corpus genuinely does not hold something, stop and say so in one line — being clear about a gap is a useful result.
+HOW TO FINISH
 
-You may call several tools at once, and should whenever the calls do not depend on each other.
+You MUST call research_complete before you stop, and you must not stop until it comes back accepted. It checks your work against what this session actually holds: law read, decisions opened, every limb covered. If it refuses it will say what is missing — go and do that, then call it again.
 
-Finish with two or three sentences on what you found and what you could not. You are not writing the answer.`;
+Where the corpus genuinely holds nothing on a limb, list it in \`gaps\` and research_complete will accept it. A gap stated plainly reaches the reader as a limitation of the search, which is a useful result. What is not acceptable is finishing quietly with a limb unsearched.
+
+You may call several tools at once, and should whenever the calls do not depend on each other. Reading six judgments is one round, not six.
+
+When research_complete is accepted, write two or three sentences on what you found and what you could not, and stop. You are not writing the answer.`;
 
 export interface ResearchOptions extends RetrieveOptions {
   /** Reported per tool call, for the metrics line and for the reader. */
@@ -95,6 +110,10 @@ export interface ResearchOutcome {
   fellBack: boolean;
   /** The loop's own closing note, for the metrics line. Never shown as an answer. */
   note: string;
+  /** True when research_complete was called and accepted. */
+  finished: boolean;
+  /** What the loop said the corpus does not hold. Carried into the answer. */
+  gaps: string[];
 }
 
 /**
@@ -121,6 +140,12 @@ export function researchBrief(plan: QueryPlan): string {
       "This question turns on the law as it stood at an earlier time. The act library holds only current consolidated text, so look for decisions quoting the older wording."
     );
   }
+  if (asksBothSectors(plan.standalone)) {
+    lines.push(
+      "",
+      "This question covers BOTH the general labour market and the public sector. They are governed by different instruments and you must research them as two separate limbs: research_complete will refuse a run that has only done one of them."
+    );
+  }
   lines.push("", `Answer language: ${plan.language === "is" ? "Icelandic" : "English"}.`);
   return lines.join("\n");
 }
@@ -139,7 +164,7 @@ export async function deepResearch(
     );
   }
 
-  const session = new ResearchSession(plan, scope);
+  const session = new ResearchSession(plan, scope, config.researchMinCalls);
   let note = "";
   let rounds = 0;
   let exhausted = false;
@@ -154,6 +179,16 @@ export async function deepResearch(
       maxRounds: config.researchMaxRounds,
       execute: (name, input) => session.run(name, input),
       onStep: options.onStep,
+      // The gate, made binding. A model that stops without calling
+      // research_complete is sent the same objection the tool would have
+      // given it and carries on; `maxRounds` still ends the loop either way.
+      onStop: () => {
+        if (session.finished) return null;
+        const blocked = session.finishBlocked();
+        return blocked
+          ? `You have not called research_complete, and you are not finished. ${blocked}`
+          : "You have not called research_complete. Call it now with what each limb of the question turned up.";
+      },
     });
     note = result.text;
     rounds = result.rounds;
@@ -179,18 +214,43 @@ export async function deepResearch(
       exhausted,
       fellBack: true,
       note,
+      finished: session.finished,
+      gaps: [...session.declaredGaps],
     };
   }
 
   const chosen = select(rankCandidates(candidates, plan), plan, config);
+  const retrieval = await composeRetrieval(chosen, plan, config, candidates.length);
+  // A gap the loop found is a fact about the corpus, and it belongs in the same
+  // channel as the ones retrieval discovers for itself — stated in the answer,
+  // not left for the reader to infer from an absence.
+  if (session.declaredGaps.length) {
+    retrieval.limitations.push(...session.declaredGaps.map(gapLimitation(plan.language)));
+  }
   return {
-    retrieval: await composeRetrieval(chosen, plan, config, candidates.length),
+    retrieval,
     steps: session.calls.length,
     rounds,
     exhausted,
     fellBack: false,
     note,
+    finished: session.finished,
+    gaps: [...session.declaredGaps],
   };
+}
+
+/**
+ * A gap the loop declared, phrased as the limitation the answer must state.
+ *
+ * Kept short and factual. The answer stage is told to state its limitations
+ * where they bear on the question, and a sentence that reads like an apology
+ * gets restated as one.
+ */
+function gapLimitation(language: "is" | "en"): (gap: string) => string {
+  return (gap) =>
+    language === "is"
+      ? `Leitin fann ekkert um eftirfarandi og svarið verður að taka það fram: ${gap}`
+      : `The search found nothing on the following, and the answer must say so: ${gap}`;
 }
 
 /**

@@ -93,4 +93,87 @@ Full outputs and reviewer comments are reproduced directly in the table, without
 
 | Field | Value |
 | --- | --- |
+| Rating status | A1 awaits rating |
+| Actual test dates | Not supplied |
+| Model / configuration / application commit | Not supplied. `ASK_RESEARCH` is set on the production service, so A1 was most likely a deep run — which is the fact that made the diagnosis below necessary |
+| Retrieved source texts and citation URLs | Not supplied; numeric citation markers are preserved as pasted |
+| Verified reference answer | The reviewer supplied one, together with the acts and judgments they expect the well to find. Reproduced below as the target, not as a verified legal conclusion |
+| Diagnostic status | **Confirmed against the code, not against a run.** See below |
 
+### What the reviewer expects to be found
+
+Supplied by the reviewer with the question. Recorded here as the target for A2,
+so that "did it find these" is a check rather than an impression.
+
+**Legislation**
+
+- lög um starfsmenn í hlutastörfum
+- lög nr. 70/1996 um réttindi og skyldur starfsmanna ríkisins, and 41. gr. in
+  particular: *"Heimilt er að ráða starfsmann til starfa tímabundið og er unnt
+  að taka fram í ráðningarsamningi að segja megi slíkum samningi upp af hálfu
+  annars hvors aðila áður en ráðning fellur sjálfkrafa úr gildi við lok
+  samningstíma. Tímabundin ráðning skal þó aldrei vara samfellt lengur en í tvö
+  ár."*
+- lög um kjarasamninga opinberra starfsmanna
+- lög um rétt verkafólks til uppsagnarfrests frá störfum og til launa vegna
+  sjúkdóms- og slysaforfalla
+
+Kjarasamningar themselves are **not in the corpus**, and this question turns on
+them. That is a coverage gap, not a retrieval defect, and the answer should say
+so rather than work around it.
+
+**Judgments**
+
+| Decision | What it is authority for |
+| --- | --- |
+| Héraðsdómur Reykjaness 11. júní 2024, E-2997/2023 — Sandra Sif Baldursdóttir gegn Sjóklæðagerðinni hf. | An agreed termination clause in a fixed-term contract is effective |
+| Hrd. 23. september 2021, 15/2021 — A gegn B ses. | The termination right can come from a kjarasamningur; having it does not make a particular dismissal lawful |
+| Hrd. 13. desember 2012, 256/2012 — Kristján B. Þórarinsson gegn Valitor hf. | A fixed term that has run its course ends without notice, so no notice pay |
+| Landsréttur 1. mars 2019, 310/2018 — Hafliði Páll Guðjónsson gegn íslenska ríkinu | A fixed-term contract can be terminable, but the wording of the probation clause and the statutory procedure decide it |
+
+Two are private-sector, two public, and the reviewer's own method for telling
+them apart — an ehf. or an hf. against íslenska ríkið or a municipality — is now
+`sectorOf` in `src/lib/ask/tools.ts`.
+
+### What A1 established
+
+Added 16 September 2026 by the engineer; the reviewer's comment above is
+untouched.
+
+The reviewer's summary of the whole feature — *"it is all very surface level and
+only seems to run on summaries"* — is accurate, and A1 shows it: it names four
+decisions and an ombudsman opinion, says of one of them only that *"útdrátturinn
+sýnir ágreiningsefnið en ekki endanlega niðurstöðu"*, and reports that the
+sources do not carry the text of the acts. None of the four judgments the
+reviewer expects is among them.
+
+The tempting diagnosis was that deep research was switched off. It was not.
+`ASK_RESEARCH` is set on the production service and the loop had been running.
+What was wrong is written up in *well-roadmap.md* §9b; in short:
+
+- **The answer prompt could not hold a research answer.** *"Around 250-450
+  words"*, *"no tables"*, and a fixed three-section shape. The reviewer's model
+  answer is ~1,400 words with two tables and a public/private split running
+  through it. No retrieval could have produced that through that prompt.
+- **`select` capped what the loop read at the quick path's ten sources.** The
+  loop may open 25 documents; fifteen of them were being ranked, cut, and never
+  shown to the model.
+- **Every judgment arrived at 2,000 characters of reasoning**, four-minute run
+  or ten-second one, because the per-part budgets were constants rather than
+  configuration. Two thousand characters of a thirty-page judgment is the first
+  two paragraphs of the Niðurstaða — which is, quite literally, running on
+  summaries.
+- **The loop had no way to ask the question a lawyer asks second.**
+  `CaseProvisionLink` records which judgments cite which article and was
+  unreachable from the well. For this question that is the whole game: find 41.
+  gr. laga nr. 70/1996, then read the graph out of it. `cases_citing_provision`
+  does that now, and `read_act_outline` finds the article in the first place —
+  41. gr. never uses the phrase anyone would search for.
+- **The loop could stop whenever it liked.** `research_complete` now has to be
+  called and is checked: law read, decisions opened, and both sides of a
+  question that asks about both labour markets. This question is the reason
+  that last check exists.
+
+All of the above is fixed. **None of it is measured.** A2 is the first output
+that can be compared, and it should record its model, effort settings and
+commit — the run itself is the evidence, not the reasoning above.

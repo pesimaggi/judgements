@@ -2022,25 +2022,63 @@ answer the second half, and wrote down the two searches it would have needed:
 It knew exactly what to do next and had no way to do it. A person answered the
 same question in seconds — one search of one court, plus a subject tag.
 
-So `ASK_RESEARCH=1`, or `"mode": "deep"` on a request, replaces the retrieval
-stage with a loop that has the search itself (`src/lib/ask/research.ts`):
+So deep research — the default, and the **Djúpleit** side of the toggle in the
+composer — replaces the retrieval stage with a loop that has the search itself
+(`src/lib/ask/research.ts`). `ASK_RESEARCH=0` makes the site default to quick
+instead; `"mode"` on a request decides one question.
 
 | Tool | The question it asks |
 |---|---|
 | `search_decisions` | judgments and rulings, narrowed by source, **subject tag** and date |
 | `find_citing_cases` | *and then what?* — which decisions cite this case number |
 | `search_provisions` | the articles themselves |
+| `cases_citing_provision` | *how has this rule actually been applied?* — the citation graph, not a word search |
+| `read_act_outline` | an act's articles in order, so it can navigate rather than guess words into it |
 | `read_decision` | open one, or just its `reasoning` or `holding` |
 | `read_provision` | an article in full, exceptions included |
 | `list_subject_tags` | what the corpus files a subject under, before guessing at words |
+| `research_complete` | declare it finished — and be told when it is not |
 
 `find_citing_cases` and the tag filter are there because between them they are
 how a person answered the question above. Tags were supported by the search
 provider and reachable from nowhere in the well.
 
+`cases_citing_provision` and `read_act_outline` are there for the other half of
+how a lawyer works, which the loop could not do at all. `CaseProvisionLink` has
+recorded which judgments cite which article since ingestion — the act reader
+shows it as *"12 úrlausnir vísa til þessa ákvæðis"* — and the well could not ask
+the question. It matters because a judgment applying an article need never use
+the words anyone would search for: find the governing provision, then read the
+graph out of it. The outline is the same problem one step earlier. The rule that
+a fixed-term appointment in the state service may be made terminable is in 41.
+gr. laga nr. 70/1996, and that article never uses the phrase a reader would type;
+reading down fifty-seven headings finds it, and searching may not.
+
 **The rule that keeps it honest: nothing unread can be cited.** A result list
 is a lead. Only `read_decision` and `read_provision` add a source, which is what
 stops a case being cited on the strength of its title.
+
+**And it is not allowed to stop early.** The loop used to end when the model
+stopped asking for tools, which makes *"I have enough"* free and unexamined —
+and deciding early is the cheapest way to finish a hard question. Now finishing
+costs a call to `research_complete`, and that call is checked against what the
+session actually holds: law read, decisions opened, and every limb of the
+question covered. The commonest limb in Icelandic employment law is the split
+between the general labour market and the public sector, which are governed by
+different instruments, so a question that asks about both and has only looked at
+one is refused and told so. A refusal is an ordinary tool result; the model goes
+back to work and the round ceiling still bounds everything.
+
+A gap declared honestly passes. *"There are no Landsréttur judgments on this"*
+goes in `gaps`, reaches the answer as a limitation of the search, and the reader
+is told. What the gate refuses is silence.
+
+**The sector hint is a hint.** `sectorOf` reads public or private off the
+parties — an ehf. or an hf. on one side, íslenska ríkið or a municipality on the
+other. It chooses what is worth reading and answers the coverage check; it is
+never a fact stated in an answer. Hæstiréttur anonymises its parties, so a great
+many cases are "A gegn B" and say nothing either way, and what actually settles
+the sector is which instruments the judgment applies.
 
 **And the loop never writes the answer.** It returns a `Retrieval` — the same
 shape the ordinary path returns — so everything downstream is untouched:
@@ -2048,10 +2086,46 @@ shape the ordinary path returns — so everything downstream is untouched:
 `lib/ask/citations.ts` checks the result exactly as before. The loop decides
 *what law the answer rests on*; it never decides that something is supported.
 
-It is bounded, because a loop is a bill: `ASK_RESEARCH_MAX_ROUNDS` (12) and
-`ASK_TIMEOUT_RESEARCH_MS` (four minutes). Hitting either is not a failure —
+It is bounded, because a loop is a bill: `ASK_RESEARCH_MAX_ROUNDS` (24) and
+`ASK_TIMEOUT_RESEARCH_MS` (seven minutes). Hitting either is not a failure —
 whatever was gathered is composed and answered from. If it read nothing at all,
 the ordinary retrieval runs instead, so deep mode is never *worse* than quick.
+
+#### The deep tier gets budgets of its own
+
+For a long time it did not, and that was the whole of why deep answers read like
+summaries of a search. The loop would read twenty judgments over four minutes,
+and then `select` handed the answer the quick path's ten slots, at the quick
+path's two thousand characters of reasoning per judgment. Most of the research
+was discarded at the door, and the answer prompt underneath it said *"around
+250-450 words"* and *"no tables"* — so even what survived could not be written
+down properly.
+
+`deepen()` in `src/lib/ask/config.ts` is the one seam that fixes it. It swaps in
+the deep numbers once, in the pipeline, and every stage after it reads an
+ordinary `AskConfig` and never learns there are two tiers:
+
+| | Quick | Deep |
+|---|---|---|
+| sources shown | 14 | 28 |
+| reasoning per judgment | 4,000 chars | 6,000 |
+| an article | 12,000 chars | 16,000 |
+| answer ceiling | 16,000 tokens | 32,000 |
+| answer effort | the classifier's choice | that, floored at `high` |
+| citation verifier | off | on |
+
+The deep tier's answer prompt is a different shape too, not merely a longer one:
+each limb of the question under its own heading, the general market and the
+public sector kept apart, conditions listed as conditions, a paragraph or a
+table row per case, and Markdown tables allowed where one reads better than
+prose. Length follows from covering that — a four-limbed question with a dozen
+judgments behind it runs to 1,200–2,000 words and should. The quick tier keeps
+its 250–450 words and its ban on tables, because *"hvað segir 8. gr."* does not
+get better at two thousand words.
+
+The verifier being on is the roadmap's own recommendation finally taken: it was
+off only because it cost a call, and on a four-minute run one more call is
+nothing.
 
 A supplied `retrieve` always wins over deep mode, so the evaluation harness
 replays recorded runs rather than going researching; there is a test for that.
@@ -2074,6 +2148,7 @@ as they finish:
 |---|---|---|
 | `plan` | a second or two in | the corpus terms the search will run on |
 | `sources` | when ranking has chosen them | the law, standing open in the other pane |
+| `step` | per tool call, deep mode only | *"Leitar að málum sem vísa til — E-5/21"* |
 | `line` | as the answer is written | the prose, a line at a time |
 | `answer` | at the end | the finished response, superseding the above |
 

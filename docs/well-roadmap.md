@@ -121,12 +121,20 @@ and uselessly.
 
 `src/lib/ask/config.ts`:
 
+*Superseded by §3.4 and §9b; the numbers below are what they were when this was
+written, kept because the reasoning under them is still the reasoning.*
+
 | Knob | Default | What it means |
 |---|---|---|
 | `maxSources` | 10 | ten numbered sources, total |
 | `evidenceWindow` | 1200 chars | ~180 words around a matched passage |
 | `provisionChars` | 2400 chars | an article, truncated at a paragraph boundary |
 | `answerMaxTokens` | 8000 | reasoning included |
+
+What this table missed, and §9b found: the per-part budgets under
+`evidenceWindow` — the court's summary, its Niðurstaða, its Dómsorð — were not
+knobs at all, and the reasoning one is the most consequential number in the
+feature.
 
 The whole prompt is somewhere around 15–25k tokens. The models in
 `src/lib/ask/llm.ts` take 1M. The comment in `evidence.ts` is right that
@@ -333,21 +341,33 @@ default, which is where it should end up.
 
 ### 3.4 Raise the budgets
 
-> **Not started**, and now the cheapest unclaimed win in this file.
+> **Shipped.** Done as two tiers rather than one set of numbers, because the
+> quick path has no use for any of it. See §9b for what the measurement turned
+> out to be, which was not what this section assumed.
 
-Once retrieval is finding the right things, let the answer see them:
+The defaults now:
 
-```
-ASK_MAX_CANDIDATES  30   → 120   (the clamp already allows it)
-ASK_MAX_SOURCES     10   → 30    (raise the clamp ceiling too)
-ASK_EVIDENCE_CHARS  1200 → 4000
-ASK_PROVISION_CHARS 2400 → 12000 (i.e. whole articles, no truncation)
-ASK_ANSWER_MAX_TOKENS 8000 → 32000
-```
+| | Quick | Deep |
+|---|---|---|
+| `ASK_MAX_CANDIDATES` | 60 | 60 |
+| `ASK_MAX_SOURCES` | 14 | 28 |
+| `ASK_EVIDENCE_CHARS` | 2,400 | 3,000 |
+| `ASK_SUMMARY_CHARS` | 2,000 | 2,500 |
+| `ASK_REASONING_CHARS` | 4,000 | 6,000 |
+| `ASK_HOLDING_CHARS` | 2,400 | 3,000 |
+| `ASK_PROVISION_CHARS` | 12,000 | 16,000 |
+| `ASK_ANSWER_MAX_TOKENS` | 16,000 | 32,000 |
 
-And make the provision truncation rule *conditional*: below ~8k characters,
-send the whole article and drop the truncation warning entirely. The warning
-exists because the cut is dangerous; the cut is now usually unnecessary.
+The three per-part budgets are new as *variables*. They existed as fixed
+constants in `evidence.ts`, and only `window` could be set — which is how the
+reasoning budget came to be the same 2,000 characters on a four-minute research
+run as on a ten-second one. `deepen()` in `config.ts` substitutes the deep
+column once, in the pipeline; nothing downstream knows there are two tiers.
+
+The conditional truncation rule is still worth doing and is **not done**: at
+12,000 characters most articles are whole, but the warning is still emitted
+whenever `truncateByParagraph` drops anything, so a reader occasionally sees a
+caveat about an article that was barely cut.
 
 **Expected outcome of phase 1**, measured on the gold set:
 governing-provision-in-top-5 from wherever it lands today to 85%+, and a
@@ -407,6 +427,13 @@ Only after streaming is in place should you raise `ASK_EFFORT_COMPLEX` past
 > **Shipped in #57**, except the adversarial pass at the end of this
 > section. The tool list below is close to what was built; the built set is
 > in `src/lib/ask/tools.ts` and the README's *Deep research* chapter.
+>
+> `read_act_outline` and `decisions_citing_provision` — the two rows below that
+> #57 did not build — shipped later, as `read_act_outline` and
+> `cases_citing_provision`. `decisions_citing_decision` is still approximated by
+> `find_citing_cases`, a full-text search for the case number, and still wants
+> the citation graph in §6.2. Turning `ASK_VERIFY_CITATIONS` on for this tier,
+> recommended below, is also done: `deepen()` sets it.
 
 **~3–4 weeks. This is what "as good as the big ones" actually means.**
 
@@ -583,21 +610,29 @@ how a regression gets found late and a small gain gets missed entirely.
 
 So:
 
-1. **§3.4 raise the budgets.** Hours, not days, and unmeasured. Ten sources,
-   1,200-character evidence windows and five rows per case-number search are
-   all far below what the models take, and cost has been ruled out as a
-   constraint. Do this before anything that needs measuring, because it may
-   move the answers on its own.
-2. **§2 Phase 0 — the gold set.** Now overdue rather than merely first. Until
-   it exists every change after this point is a guess, including whether deep
-   research is actually better than quick.
-3. **§3.3 the reranker, then §3.2 hybrid search.** In that order, reversing
+1. **~~§3.4 raise the budgets.~~** *Done — see §3.4 and §9b.* It was not only
+   the budgets: the answer prompt's 250-450 word cap and its ban on tables were
+   a larger cause of thin answers than retrieval was, and `select` was
+   discarding most of what the research loop read. All three are fixed.
+2. **§2 Phase 0 — the gold set.** Now overdue rather than merely first, and
+   more urgent than it was: §9b changed a great deal on reasoning alone and
+   nothing in this repository can yet tell whether it helped. Until it exists
+   every change after this point is a guess, including whether deep research is
+   actually better than quick.
+3. **The exact case-number ranking defect from §9a.** Promoted, because
+   `find_citing_cases` is built on the same search and the loop is now
+   instructed to reach for it. A tool that cannot find the case it was given
+   the number of is worse than no tool.
+4. **§3.3 the reranker, then §3.2 hybrid search.** In that order, reversing
    the original: the reranker is cheaper, is a smaller change, and reorders
    what retrieval already finds — and with lemmatisation shipped, retrieval
    now finds a great deal more than it did when this file was written.
-4. **§6.1 point-in-time law and §6.2 the citator.** What makes it a legal
+5. **§6.1 point-in-time law and §6.2 the citator.** What makes it a legal
    product rather than a good RAG demo, and what no Icelandic competitor has.
-5. **§6.3 the corpus** — lögskýringargögn first.
+6. **§6.3 the corpus** — kjarasamningar and lögskýringargögn first. The
+   collective agreements are now the most conspicuous hole: Icelandic
+   employment law is substantially made of them, the well holds none, and the
+   best it can do is find the judgments that quote their terms and say so.
 
 Two things not in the original list, both surfaced by
 *ai-answer-evaluation.md* and both ahead of everything except item 1:
@@ -702,6 +737,74 @@ it. The case number is the only handle.
 **What this does not settle.** A1–A3 have no recorded model, commit or
 configuration, so it cannot be shown which defects each one met. A4 below is
 the first entry that records them.
+
+---
+
+## 9b. Why Q2 read like a summary, with deep research switched on
+
+Settled on 16 September 2026, against the code rather than against a run.
+Recorded separately from §9a because it is a different failure with the same
+symptom, and because the obvious diagnosis — "deep research must be off" — was
+wrong. `ASK_RESEARCH` is set on the production service. The loop had been
+running all along.
+
+Three things were throwing its work away, in order of how much they cost.
+
+**The answer prompt could not hold a research answer.** It said *"around
+250-450 words"*, *"no tables"*, and gave a fixed three-section shape: a direct
+answer, one heading for the provisions, one heading for the decisions. The
+reviewer's own model answer to Q2 is roughly 1,400 words, has two tables of
+cases, and separates the general labour market from the public sector
+throughout. There was no configuration of retrieval that could have produced it
+through that prompt. This is the single largest cause and it was in the one
+file nobody was looking at, because the complaint was about retrieval.
+
+**`select` capped the loop's reads at the quick path's `maxSources`.** The loop
+may open 25 documents; `config.maxSources` was 10 for both tiers, so fifteen of
+them were ranked, cut, and never reached the model. The loop's own selection —
+it opened these one at a time having seen what else was on offer — is the
+strongest relevance signal in the system, and most of it was being discarded at
+the door.
+
+**Every judgment arrived at the quick tier's budgets.** `DEFAULT_EVIDENCE_BUDGET`
+was a constant and only `window` was settable, so `reasoning` was 2,000
+characters whether the question took ten seconds or four minutes. Two thousand
+characters of a thirty-page judgment is the first two paragraphs of the
+Niðurstaða. An answer written from that can name a case and cannot say what it
+turned on — which is exactly what "it only seems to run on summaries" describes,
+and this time the summary really was ours.
+
+### What was missing from the loop itself
+
+Two tools, both backed by code that already existed, and both named in §5's
+table as things to build:
+
+- **`cases_citing_provision`.** `CaseProvisionLink` has recorded which judgments
+  cite which article since ingestion and the well could not ask. For Q2 this is
+  the whole game: find 41. gr. laga nr. 70/1996, then read the graph out of it.
+  A judgment applying that article need never use the words "tímabundinn
+  ráðningarsamningur".
+- **`read_act_outline`.** The article that answers a question frequently does
+  not contain the question's vocabulary, and 41. gr. is that case exactly.
+
+And one behaviour: **the loop could stop whenever it liked.** It ended when the
+model stopped asking for tools, which makes "I have enough" free. `research_complete`
+now costs a call and is checked — law read, decisions opened, every limb
+covered, including the public/private split that Q2 turns on. A declared gap
+passes; silence does not.
+
+### What this does not settle
+
+Nothing here has been measured against a run. The gold set (§2) still does not
+exist, so the claim is that these were defects, not that fixing them moved a
+number. Q2 A2 is the first output that can be compared, and it should be run
+with the configuration recorded.
+
+The Q1 ranking defect in §9a is untouched: an exact case-number match still gets
+no privilege over a trigram near-miss, so Hæstiréttur 24/2023 is still not found
+by searching for "E-5/21". `find_citing_cases` depends on that same ranking, so
+this is now blocking a tool the loop is told to reach for, and it has moved up
+the list accordingly.
 
 ---
 

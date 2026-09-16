@@ -107,3 +107,47 @@ describe("parseAnswer", () => {
     assert.deepEqual(parseAnswer("\n\n  \n"), []);
   });
 });
+
+describe("tables", () => {
+  test("a header, a rule and rows become one table block", () => {
+    const blocks = parseAnswer(
+      [
+        "| Dómur | Niðurstaða |",
+        "| --- | --- |",
+        "| Hrd. 15/2021 | Uppsagnarheimild viðurkennd [2] |",
+        "| Lrd. 310/2018 | Uppsögn ólögmæt [5] |",
+      ].join("\n")
+    );
+    assert.equal(blocks.length, 1);
+    const table = blocks[0];
+    assert.equal(table.kind, "table");
+    if (table.kind !== "table") return;
+    assert.deepEqual(table.header?.[0], [{ kind: "text", text: "Dómur" }]);
+    assert.equal(table.rows.length, 2);
+    // The citation inside a cell is a citation, not four characters of text:
+    // this is the whole reason the answer is parsed rather than rendered raw.
+    assert.deepEqual(table.rows[0][1].at(-1), { kind: "citation", n: 2 });
+  });
+
+  test("a table written without a separator rule is still a table", () => {
+    const blocks = parseAnswer("| a | b |\n| c | d |");
+    assert.equal(blocks[0].kind, "table");
+    if (blocks[0].kind !== "table") return;
+    assert.equal(blocks[0].header, null);
+    assert.equal(blocks[0].rows.length, 2);
+  });
+
+  test("a single pipe-wrapped line is a paragraph, not a one-row table", () => {
+    assert.equal(parseAnswer("| ekki tafla |")[0].kind, "paragraph");
+  });
+
+  test("prose on either side of a table is not swallowed by it", () => {
+    const blocks = parseAnswer(
+      ["Á undan.", "| a | b |", "| c | d |", "Á eftir."].join("\n")
+    );
+    assert.deepEqual(
+      blocks.map((b) => b.kind),
+      ["paragraph", "table", "paragraph"]
+    );
+  });
+});

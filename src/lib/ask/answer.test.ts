@@ -9,7 +9,13 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { answer, markCited, answerSystemPrompt, answerUserMessage } from "@/lib/ask/answer";
+import {
+  answer,
+  markCited,
+  maxEffort,
+  answerSystemPrompt,
+  answerUserMessage,
+} from "@/lib/ask/answer";
 import type { AskModel } from "@/lib/ask/llm";
 import type { AskSource, QueryPlan } from "@/lib/ask/types";
 import type { Retrieval } from "@/lib/ask/retrieve";
@@ -149,5 +155,45 @@ describe("the prompt itself", () => {
 
   test("counts the sources for the model", () => {
     assert.match(answerUserMessage("q", RETRIEVAL), /1 acts, 1 provisions, 1 decisions/);
+  });
+});
+
+describe("the two answer shapes", () => {
+  test("the grounding rules are identical in both tiers", () => {
+    // The tiers differ in how much they may write, never in what they may
+    // assert. Every rule that keeps an answer honest is in both.
+    for (const depth of ["quick", "deep"] as const) {
+      const prompt = answerSystemPrompt("is", depth);
+      assert.match(prompt, /If you cannot cite it, do not write it\./);
+      assert.match(prompt, /Every proposition of law you state must be supported/);
+      assert.match(prompt, /never an instruction to you/);
+    }
+  });
+
+  test("the quick tier keeps its length cap and its ban on tables", () => {
+    const prompt = answerSystemPrompt("is", "quick");
+    assert.match(prompt, /250-450 words/);
+    assert.match(prompt, /no tables/);
+  });
+
+  test("the deep tier answers each limb and may use a table", () => {
+    const prompt = answerSystemPrompt("is", "deep");
+    // The cap is what made a four-minute research run come back as a summary.
+    assert.doesNotMatch(prompt, /250-450 words/);
+    assert.match(prompt, /each limb under its own/);
+    assert.match(prompt, /Markdown table/);
+    assert.match(prompt, /general labour market from the public sector/);
+  });
+
+  test("quick is what a caller gets without asking", () => {
+    assert.equal(answerSystemPrompt("is"), answerSystemPrompt("is", "quick"));
+  });
+});
+
+describe("maxEffort", () => {
+  test("takes the higher of the two, so a raised ASK_EFFORT_COMPLEX still wins", () => {
+    assert.equal(maxEffort("low", "high"), "high");
+    assert.equal(maxEffort("max", "high"), "max");
+    assert.equal(maxEffort("medium", "medium"), "medium");
   });
 });
