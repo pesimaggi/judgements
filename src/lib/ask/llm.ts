@@ -158,6 +158,18 @@ export interface RunToolsRequest {
    * nothing else. A research loop with no ceiling is a bill with no ceiling.
    */
   maxRounds: number;
+  /**
+   * Asked when the model stops calling tools: is it actually done?
+   *
+   * Returning null accepts that — the loop ends, as it always did. Returning a
+   * string sends that string back as one more user turn and carries on, which
+   * is how the research loop refuses a premature finish (see
+   * `ResearchSession.finishBlocked`). `maxRounds` still bounds the result, so
+   * a hook that never accepts costs rounds and cannot hang the request.
+   *
+   * Optional; without it this is exactly the loop it was before.
+   */
+  onStop?: () => string | null;
 }
 
 export interface RunToolsResult {
@@ -412,7 +424,16 @@ class AnthropicAskModel implements AskModel {
       const calls = response.content.filter(
         (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use"
       );
-      if (calls.length === 0) return { text: text.trim(), rounds, exhausted: false };
+      if (calls.length === 0) {
+        const objection = req.onStop?.() ?? null;
+        if (!objection) return { text: text.trim(), rounds, exhausted: false };
+        messages.push({ role: "assistant", content: response.content });
+        messages.push({ role: "user", content: objection });
+        // The closing prose belonged to a finish that was refused; whatever it
+        // writes when it really finishes is what the caller should see.
+        text = "";
+        continue;
+      }
 
       messages.push({ role: "assistant", content: response.content });
 
@@ -581,7 +602,14 @@ class OpenAIAskModel implements AskModel {
       if (message?.content) text += message.content;
 
       const calls = message?.tool_calls ?? [];
-      if (calls.length === 0) return { text: text.trim(), rounds, exhausted: false };
+      if (calls.length === 0) {
+        const objection = req.onStop?.() ?? null;
+        if (!objection) return { text: text.trim(), rounds, exhausted: false };
+        if (message) messages.push(message as Msg);
+        messages.push({ role: "user", content: objection });
+        text = "";
+        continue;
+      }
 
       messages.push(message as Msg);
       const results = await Promise.all(

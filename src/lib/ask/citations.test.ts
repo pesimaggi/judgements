@@ -248,3 +248,24 @@ describe("isQualified", () => {
     assert.equal(isQualified("An ordinary sentence."), false);
   });
 });
+
+describe("qualifying a table row", () => {
+  test("the marker goes inside the last cell, not after the row", () => {
+    const sources: AskSource[] = [
+      { n: 1, kind: "provision", title: "1. gr.", subtitle: "Lög nr. 1/2000", path: "/log/1-2000", tier: "supreme", score: 1, cited: false },
+    ];
+    const row = "| Hrd. 15/2021 | Starfsmanni er heimilt að segja upp |";
+    const { answer } = validateCitations(row, sources, "is");
+    // Appended after the closing pipe the warning is neither in the table nor
+    // out of it, and the row renders with it lost. See qualifyLine.
+    assert.ok(answer.endsWith("|"), `row lost its shape: ${answer}`);
+    assert.match(answer, /óstaðfest/);
+  });
+
+  test("the rule under a header is left alone", () => {
+    const sources: AskSource[] = [
+      { n: 1, kind: "provision", title: "1. gr.", subtitle: "Lög nr. 1/2000", path: "/log/1-2000", tier: "supreme", score: 1, cited: false },
+    ];
+    assert.equal(validateCitations("| --- | --- |", sources, "is").answer, "| --- | --- |");
+  });
+});

@@ -46,7 +46,7 @@ import {
   provisionEvidence,
   sanitizeEvidence,
   stripMarks,
-  DEFAULT_EVIDENCE_BUDGET,
+  type EvidenceBudget,
 } from "./evidence";
 import { askConfig, type AskConfig } from "./config";
 import { rerankWithModel } from "./rerank";
@@ -267,6 +267,24 @@ export async function retrieve(
  * the fencing and the sanitising. A second copy of this would drift, and the
  * drift would be invisible until an answer rested on it.
  */
+/**
+ * The four per-decision budgets, from the config rather than from a constant.
+ *
+ * All four used to be fixed, and only `window` was settable. That is how the
+ * deep tier ended up reading twenty judgments and then showing the model two
+ * paragraphs of each: the loop's work was fine and the door it had to come
+ * through was the same size as the quick path's. See lib/ask/config.ts,
+ * `deepen`.
+ */
+export function evidenceBudget(config: AskConfig): EvidenceBudget {
+  return {
+    window: config.evidenceWindow,
+    summary: config.summaryChars,
+    reasoning: config.reasoningChars,
+    holding: config.holdingChars,
+  };
+}
+
 export async function composeRetrieval<T extends RankCandidate & { payload: CandidatePayload }>(
   chosen: { candidate: T; score: number; tier: AskAuthorityTier }[],
   plan: QueryPlan,
@@ -373,7 +391,7 @@ export async function composeRetrieval<T extends RankCandidate & { payload: Cand
         summary: scholarship ? null : hit.summary,
         terms: [...plan.phrases, ...plan.concepts],
       },
-      { ...DEFAULT_EVIDENCE_BUDGET, window: config.evidenceWindow }
+      evidenceBudget(config)
     );
 
     sources.push({

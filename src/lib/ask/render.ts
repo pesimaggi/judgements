@@ -1,11 +1,11 @@
 /**
  * The answer, parsed into the handful of shapes the well renders.
  *
- * Deliberately not a Markdown parser. The model is told to use exactly three
- * things — "## " headings, "- " bullets and "**bold**" — and this reads
- * exactly those three, plus the citation markers, which are the part that
- * actually matters: "[3]" has to become a link to source 3, not the four
- * characters the model typed.
+ * Deliberately not a Markdown parser. The model is told to use exactly four
+ * things — "## " headings, "- " bullets, "**bold**" and, on the deep tier,
+ * pipe tables — and this reads exactly those four, plus the citation markers,
+ * which are the part that actually matters: "[3]" has to become a link to
+ * source 3, not the four characters the model typed.
  *
  * A parser that accepts only what was asked for also fails safely. Anything
  * else the model writes comes out as the plain text it is, rather than as
@@ -20,7 +20,13 @@ export type InlineSpan =
 export type AnswerBlock =
   | { kind: "heading"; spans: InlineSpan[] }
   | { kind: "paragraph"; spans: InlineSpan[] }
-  | { kind: "list"; items: InlineSpan[][] };
+  | { kind: "list"; items: InlineSpan[][] }
+  /**
+   * A Markdown table, which the deep tier may use where one reads better than
+   * prose — a set of cases against what each decides, a rule against its
+   * exceptions. `header` is null for a table written without one.
+   */
+  | { kind: "table"; header: InlineSpan[][] | null; rows: InlineSpan[][][] };
 
 /**
  * Citations as the model is told to write them, "[3]", and as it sometimes
@@ -29,6 +35,21 @@ export type AnswerBlock =
  */
 const CITATION_RE = /\[(\d{1,2}(?:\s*[,;]\s*\d{1,2})*)\]/g;
 const BOLD_RE = /\*\*(.+?)\*\*/g;
+
+/** A table row: at least one pipe, and nothing but a row on the line. */
+const TABLE_ROW = /^\|.*\|$/;
+/** The "| --- | :--: |" line that separates a header from its rows. */
+const TABLE_RULE = /^\|(?:\s*:?-{1,}:?\s*\|)+$/;
+
+/** The cells of one row, with the outer pipes dropped. */
+export function tableCells(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
 
 /**
  * Marks which of `sources` the answer text cites.
@@ -93,10 +114,35 @@ function pushText(spans: InlineSpan[], text: string): void {
 export function parseAnswer(answer: string): AnswerBlock[] {
   const blocks: AnswerBlock[] = [];
   let list: InlineSpan[][] | null = null;
+  /** Raw table rows, still text, until the run of them ends. */
+  let table: string[] | null = null;
 
   const closeList = () => {
     if (list && list.length) blocks.push({ kind: "list", items: list });
     list = null;
+  };
+  /**
+   * Ends a run of table rows.
+   *
+   * A run of one row is not a table — it is a line that happens to start and
+   * end with a pipe — so it comes out as the paragraph it reads as. Anything
+   * longer is a table whether or not it carried a separator rule.
+   */
+  const closeTable = () => {
+    if (!table) return;
+    const lines = table;
+    table = null;
+    if (lines.length < 2) {
+      for (const line of lines) blocks.push({ kind: "paragraph", spans: parseInline(line) });
+      return;
+    }
+    const ruled = TABLE_RULE.test(lines[1]);
+    const header = ruled ? tableCells(lines[0]).map(parseInline) : null;
+    const body = (ruled ? lines.slice(2) : lines)
+      .filter((l) => !TABLE_RULE.test(l))
+      .map((l) => tableCells(l).map(parseInline));
+    if (body.length === 0 && !header) return;
+    blocks.push({ kind: "table", header, rows: body });
   };
 
   for (const rawLine of answer.split("\n")) {
@@ -104,8 +150,16 @@ export function parseAnswer(answer: string): AnswerBlock[] {
 
     if (line === "") {
       closeList();
+      closeTable();
       continue;
     }
+    if (TABLE_ROW.test(line)) {
+      closeList();
+      table ??= [];
+      table.push(line);
+      continue;
+    }
+    closeTable();
     if (line.startsWith("## ")) {
       closeList();
       blocks.push({ kind: "heading", spans: parseInline(line.slice(3).trim()) });
@@ -128,6 +182,7 @@ export function parseAnswer(answer: string): AnswerBlock[] {
     }
   }
   closeList();
+  closeTable();
 
   return blocks;
 }

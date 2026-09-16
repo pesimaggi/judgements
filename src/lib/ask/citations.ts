@@ -94,6 +94,28 @@ export function authorityIdentifiers(text: string): string[] {
   return Array.from(found);
 }
 
+/** The "| --- | --- |" rule under a table's header row. See lib/ask/render.ts. */
+const TABLE_RULE = /^\|(?:\s*:?-{1,}:?\s*\|)+$/;
+/** A table row, which is a block like any other but must stay a row. */
+const TABLE_ROW = /^\|.*\|$/;
+
+/**
+ * Appends the qualifier where it will still read as part of the line.
+ *
+ * On ordinary prose that is the end of the line. On a table row it is inside
+ * the last cell: put after the closing pipe it is neither in the table nor out
+ * of it, and the row renders with the warning lost. The deep tier writes
+ * tables of cases, so this is the difference between a qualified row and a
+ * broken one.
+ */
+export function qualifyLine(line: string, language: "is" | "en"): string {
+  const marker = unsupportedMarker(language);
+  const text = line.replace(/\s+$/, "");
+  if (!TABLE_ROW.test(text.trim())) return `${text}${marker}`;
+  const at = text.lastIndexOf("|");
+  return `${text.slice(0, at)}${marker} ${text.slice(at)}`;
+}
+
 /**
  * The answer's non-empty lines: a heading, a paragraph, or one bullet each.
  * The model is told to write in exactly those three shapes (see
@@ -185,8 +207,10 @@ export function validateCitations(
     lineStart += line.length + 1;
     const trimmed = line.trim();
 
-    // Headings carry no propositions, and marking one would be noise.
-    if (trimmed.startsWith("## ") || !trimmed) {
+    // Headings carry no propositions, and marking one would be noise. The rule
+    // under a table header is punctuation; a qualifier on it would render as a
+    // broken row and say nothing.
+    if (trimmed.startsWith("## ") || !trimmed || TABLE_RULE.test(trimmed)) {
       out.push(line);
       continue;
     }
@@ -202,7 +226,7 @@ export function validateCitations(
       for (const claim of claims) {
         issues.push({ kind: "uncited-claim", claim: claim.trim(), action: "qualified" });
       }
-      out.push(`${line.replace(/\s+$/, "")}${unsupportedMarker(language)}`);
+      out.push(qualifyLine(line, language));
       continue;
     }
 

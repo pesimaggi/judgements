@@ -9,7 +9,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { askConfig, flag } from "@/lib/ask/config";
+import { askConfig, deepen, flag } from "@/lib/ask/config";
 
 describe("backward compatibility with ASK_EFFORT", () => {
   test("with nothing set at all, the defaults are the cheap ones", () => {
@@ -78,8 +78,8 @@ describe("flag", () => {
 describe("counts and ceilings", () => {
   test("candidates and sources take their documented defaults", () => {
     const config = askConfig({});
-    assert.equal(config.maxCandidates, 30);
-    assert.equal(config.maxSources, 10);
+    assert.equal(config.maxCandidates, 60);
+    assert.equal(config.maxSources, 14);
   });
 
   test("they are read from the environment when set", () => {
@@ -89,16 +89,31 @@ describe("counts and ceilings", () => {
   });
 
   test("a typo in a dashboard cannot become a corpus scan", () => {
-    assert.equal(askConfig({ ASK_MAX_CANDIDATES: "100000" }).maxCandidates, 120);
+    assert.equal(askConfig({ ASK_MAX_CANDIDATES: "100000" }).maxCandidates, 240);
     assert.equal(askConfig({ ASK_MAX_SOURCES: "0" }).maxSources, 3);
-    assert.equal(askConfig({ ASK_MAX_CANDIDATES: "banana" }).maxCandidates, 30);
+    assert.equal(askConfig({ ASK_MAX_CANDIDATES: "banana" }).maxCandidates, 60);
   });
 
-  test("the token ceilings leave room for reasoning without leaving room for a runaway", () => {
+  test("the token ceilings leave room for the answer each tier actually writes", () => {
     const config = askConfig({});
-    // ~450 words of answer is around 700 tokens; the rest is thinking.
-    assert.ok(config.answerMaxTokens >= 6000 && config.answerMaxTokens <= 12000);
+    // The quick tier writes ~450 words, around 700 tokens; the rest is
+    // thinking. The deep tier writes a multi-limb answer with tables in it and
+    // needs several times that before any reasoning is paid for.
+    assert.ok(config.answerMaxTokens >= 12_000 && config.answerMaxTokens <= 24_000);
+    assert.ok(config.deep.answerMaxTokens > config.answerMaxTokens);
     assert.ok(config.planMaxTokens <= config.answerMaxTokens);
+  });
+
+  test("every per-decision evidence budget is settable and clamped", () => {
+    const config = askConfig({});
+    // The four labelled parts of a judgment. All four used to be fixed
+    // constants, and the reasoning budget being one of them is why deep
+    // answers read as if they had been written off summaries.
+    assert.ok(config.summaryChars > 0);
+    assert.ok(config.reasoningChars >= config.summaryChars);
+    assert.ok(config.holdingChars > 0);
+    assert.equal(askConfig({ ASK_REASONING_CHARS: "999999" }).reasoningChars, 40_000);
+    assert.equal(askConfig({ ASK_REASONING_CHARS: "banana" }).reasoningChars, 4000);
   });
 
   test("every stage has a wall-clock budget", () => {
@@ -106,5 +121,37 @@ describe("counts and ceilings", () => {
     for (const stage of ["plan", "retrieve", "answer", "verify", "rerank"] as const) {
       assert.ok(timeouts[stage] > 0, `${stage} has no timeout`);
     }
+  });
+});
+
+describe("deepen", () => {
+  test("substitutes the deep tier's budgets and leaves the rest alone", () => {
+    const base = askConfig({});
+    const deep = deepen(base);
+
+    // The whole point: the deep tier reads far more per source and shows far
+    // more of them. A loop that opens twenty judgments and is then given the
+    // quick path's ten slots has had most of its work discarded at the door.
+    assert.ok(deep.maxSources > base.maxSources);
+    assert.ok(deep.reasoningChars > base.reasoningChars);
+    assert.ok(deep.provisionChars >= base.provisionChars);
+    assert.ok(deep.answerMaxTokens > base.answerMaxTokens);
+
+    // Nothing else moves; the planner and the retrieval fan are the same.
+    assert.equal(deep.planEffort, base.planEffort);
+    assert.equal(deep.maxCandidates, base.maxCandidates);
+    assert.equal(deep.researchMaxRounds, base.researchMaxRounds);
+  });
+
+  test("turns the citation verifier on, which on a four-minute run is one more call", () => {
+    assert.equal(askConfig({}).verifyCitations, false);
+    assert.equal(deepen(askConfig({})).verifyCitations, true);
+    // Still a deployment's call to make.
+    assert.equal(deepen(askConfig({ ASK_DEEP_VERIFY_CITATIONS: "0" })).verifyCitations, false);
+  });
+
+  test("deep research is the default, and still one variable away from off", () => {
+    assert.equal(askConfig({}).research, true);
+    assert.equal(askConfig({ ASK_RESEARCH: "0" }).research, false);
   });
 });

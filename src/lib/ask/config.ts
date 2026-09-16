@@ -58,6 +58,19 @@ export interface AskConfig {
   maxSources: number;
   /** Characters of surrounding text around a matched passage. */
   evidenceWindow: number;
+  /** Characters of the court's own útdráttur. */
+  summaryChars: number;
+  /**
+   * Characters of a judgment's Niðurstaða.
+   *
+   * The most consequential of these four. A judgment's reasoning is where it
+   * says *why*, and a budget that fits two paragraphs of it produces an answer
+   * that can name a case and cannot say what it turned on — which reads,
+   * accurately, as an answer written off summaries.
+   */
+  reasoningChars: number;
+  /** Characters of the Dómsorð. See DEFAULT_EVIDENCE_BUDGET on why 800 was wrong. */
+  holdingChars: number;
   /** Characters of a provision's text, cut at a paragraph boundary. */
   provisionChars: number;
   /** Ceiling on the answer call, reasoning tokens included. */
@@ -74,6 +87,34 @@ export interface AskConfig {
   researchMaxRounds: number;
   /** Ceiling on each research call. */
   researchMaxTokens: number;
+  /**
+   * Calls the loop must make before it is allowed to say it is finished.
+   *
+   * A loop that searches twice and stops has not researched; it has guessed
+   * with extra steps. See `ResearchSession.finishBlocked`.
+   */
+  researchMinCalls: number;
+  /**
+   * How the deep tier differs from the quick one.
+   *
+   * Applied by `deepen()`, which the pipeline calls when the research loop
+   * runs. Everything downstream — ranking, composition, the answer prompt, the
+   * verifier — then reads an ordinary `AskConfig` and needs no knowledge that
+   * there are two tiers at all.
+   */
+  deep: {
+    maxSources: number;
+    evidenceWindow: number;
+    summaryChars: number;
+    reasoningChars: number;
+    holdingChars: number;
+    provisionChars: number;
+    answerEffort: AskEffort;
+    answerMaxTokens: number;
+    /** The verifier, which on a four-minute run is one more call and worth it. */
+    verifyCitations: boolean;
+    verifyEffort: AskEffort;
+  };
   /** Per-stage wall-clock budgets, in milliseconds. */
   timeouts: {
     plan: number;
@@ -88,15 +129,17 @@ export interface AskConfig {
 /**
  * Token ceilings.
  *
- * The old values were 8,000 for a plan of six short strings and 16,000 for an
- * answer of 450 words. Both are far more than either stage can use: the answer
- * is ~700 tokens of prose, and the rest of the ceiling exists only for
- * reasoning tokens. These leave generous room for thinking — roughly 5,000
- * reasoning tokens on the answer at "medium" — without leaving room for a
- * runaway that bills for a minute and returns nothing.
+ * The plan is six short strings and 3,000 is generous for it. The answer is
+ * the one that had to move: 8,000 was sized for "around 250-450 words", and
+ * the quick tier still writes that. The deep tier does not — a question with
+ * four limbs in it (what is the rule, may it be terminated, on what
+ * conditions, and what have the courts done about it on each side of the
+ * public/private line) is several thousand words of prose before any
+ * reasoning tokens are spent.
  */
 const DEFAULT_PLAN_TOKENS = 3000;
-const DEFAULT_ANSWER_TOKENS = 8000;
+const DEFAULT_ANSWER_TOKENS = 16_000;
+const DEFAULT_DEEP_ANSWER_TOKENS = 32_000;
 const DEFAULT_VERIFY_TOKENS = 4000;
 
 export function askConfig(env: AskEnv = process.env): AskConfig {
@@ -112,24 +155,76 @@ export function askConfig(env: AskEnv = process.env): AskConfig {
     verifyEffort: effort(env.ASK_VERIFY_EFFORT, "low"),
     verifyCitations: flag(env.ASK_VERIFY_CITATIONS),
     rerankWithModel: flag(env.ASK_RERANK_WITH_MODEL),
-    maxCandidates: count(env.ASK_MAX_CANDIDATES, 30, 5, 120),
-    maxSources: count(env.ASK_MAX_SOURCES, 10, 3, 30),
-    evidenceWindow: count(env.ASK_EVIDENCE_CHARS, 1200, 200, 6000),
-    provisionChars: count(env.ASK_PROVISION_CHARS, 2400, 400, 12000),
-    answerMaxTokens: count(env.ASK_ANSWER_MAX_TOKENS, DEFAULT_ANSWER_TOKENS, 1500, 32000),
+    maxCandidates: count(env.ASK_MAX_CANDIDATES, 60, 5, 240),
+    maxSources: count(env.ASK_MAX_SOURCES, 14, 3, 80),
+    evidenceWindow: count(env.ASK_EVIDENCE_CHARS, 2400, 200, 20_000),
+    summaryChars: count(env.ASK_SUMMARY_CHARS, 2000, 200, 20_000),
+    reasoningChars: count(env.ASK_REASONING_CHARS, 4000, 200, 40_000),
+    holdingChars: count(env.ASK_HOLDING_CHARS, 2400, 200, 20_000),
+    provisionChars: count(env.ASK_PROVISION_CHARS, 12_000, 400, 60_000),
+    answerMaxTokens: count(env.ASK_ANSWER_MAX_TOKENS, DEFAULT_ANSWER_TOKENS, 1500, 64_000),
     planMaxTokens: count(env.ASK_PLAN_MAX_TOKENS, DEFAULT_PLAN_TOKENS, 500, 32000),
     verifyMaxTokens: count(env.ASK_VERIFY_MAX_TOKENS, DEFAULT_VERIFY_TOKENS, 500, 32000),
-    research: flag(env.ASK_RESEARCH),
+    // Deep research is what this tool is for, so it is what it does unless a
+    // deployment says otherwise. The quick path remains one toggle away in the
+    // well, and one variable away on a dashboard.
+    research: flag(env.ASK_RESEARCH, true),
     researchEffort: effort(env.ASK_RESEARCH_EFFORT, legacy ?? "high"),
-    researchMaxRounds: count(env.ASK_RESEARCH_MAX_ROUNDS, 12, 1, 40),
-    researchMaxTokens: count(env.ASK_RESEARCH_MAX_TOKENS, 16_000, 2000, 64_000),
+    researchMaxRounds: count(env.ASK_RESEARCH_MAX_ROUNDS, 24, 1, 60),
+    researchMaxTokens: count(env.ASK_RESEARCH_MAX_TOKENS, 24_000, 2000, 64_000),
+    researchMinCalls: count(env.ASK_RESEARCH_MIN_CALLS, 6, 0, 40),
+    deep: {
+      maxSources: count(env.ASK_DEEP_MAX_SOURCES, 28, 3, 80),
+      evidenceWindow: count(env.ASK_DEEP_EVIDENCE_CHARS, 3000, 200, 20_000),
+      summaryChars: count(env.ASK_DEEP_SUMMARY_CHARS, 2500, 200, 20_000),
+      reasoningChars: count(env.ASK_DEEP_REASONING_CHARS, 6000, 200, 40_000),
+      holdingChars: count(env.ASK_DEEP_HOLDING_CHARS, 3000, 200, 20_000),
+      provisionChars: count(env.ASK_DEEP_PROVISION_CHARS, 16_000, 400, 60_000),
+      answerEffort: effort(env.ASK_DEEP_ANSWER_EFFORT, "high"),
+      answerMaxTokens: count(
+        env.ASK_DEEP_ANSWER_MAX_TOKENS,
+        DEFAULT_DEEP_ANSWER_TOKENS,
+        1500,
+        64_000
+      ),
+      verifyCitations: flag(env.ASK_DEEP_VERIFY_CITATIONS, true),
+      verifyEffort: effort(env.ASK_DEEP_VERIFY_EFFORT, "medium"),
+    },
     timeouts: {
-      research: count(env.ASK_TIMEOUT_RESEARCH_MS, 240_000, 5000, 900_000),
+      research: count(env.ASK_TIMEOUT_RESEARCH_MS, 420_000, 5000, 900_000),
       plan: count(env.ASK_TIMEOUT_PLAN_MS, 20_000, 1000, 120_000),
       retrieve: count(env.ASK_TIMEOUT_RETRIEVE_MS, 20_000, 1000, 120_000),
-      answer: count(env.ASK_TIMEOUT_ANSWER_MS, 90_000, 1000, 300_000),
-      verify: count(env.ASK_TIMEOUT_VERIFY_MS, 30_000, 1000, 120_000),
+      answer: count(env.ASK_TIMEOUT_ANSWER_MS, 180_000, 1000, 600_000),
+      verify: count(env.ASK_TIMEOUT_VERIFY_MS, 60_000, 1000, 180_000),
       rerank: count(env.ASK_TIMEOUT_RERANK_MS, 20_000, 1000, 120_000),
     },
+  };
+}
+
+/**
+ * The same config, with the deep tier's numbers substituted in.
+ *
+ * One seam, called once, in lib/ask/pipeline.ts when the research loop is the
+ * retrieval. Everything after it — `select`, `composeRetrieval`, `answer`,
+ * `verifyAnswer` — reads the fields it always read and never learns that there
+ * are two tiers.
+ *
+ * This is why the deep tier is allowed to be expensive. The quick path answers
+ * "what does 8. gr. say" in ten seconds off fourteen sources; there is no
+ * reason for it to pay for twenty-eight sources and six thousand characters of
+ * reasoning per judgment, and no reason for the deep path not to.
+ */
+export function deepen(config: AskConfig): AskConfig {
+  return {
+    ...config,
+    maxSources: config.deep.maxSources,
+    evidenceWindow: config.deep.evidenceWindow,
+    summaryChars: config.deep.summaryChars,
+    reasoningChars: config.deep.reasoningChars,
+    holdingChars: config.deep.holdingChars,
+    provisionChars: config.deep.provisionChars,
+    answerMaxTokens: config.deep.answerMaxTokens,
+    verifyCitations: config.deep.verifyCitations,
+    verifyEffort: config.deep.verifyEffort,
   };
 }

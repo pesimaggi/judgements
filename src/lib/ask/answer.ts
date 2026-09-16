@@ -25,11 +25,20 @@ import type { AskSource, AskTurn, AskResponse, QueryPlan } from "./types";
 import type { Retrieval } from "./retrieve";
 
 /**
+ * Which tier wrote this answer, and therefore what shape it takes.
+ *
+ * Not a style setting. The two tiers are handed different amounts of evidence
+ * by different means — see lib/ask/config.ts, `deepen` — and an instruction
+ * sized for one produces the wrong answer from the other.
+ */
+export type AnswerDepth = "quick" | "deep";
+
+/**
  * Written in English whatever the answer's language: the instructions are for
  * the model, and the one instruction that matters about language is the one
  * telling it which to write in.
  */
-export function answerSystemPrompt(language: "is" | "en"): string {
+export function answerSystemPrompt(language: "is" | "en", depth: AnswerDepth = "quick"): string {
   return `You are the well of Lögbrunnur ("the well of law"), an unofficial research tool that searches Icelandic case law and legislation, EEA/EU acts, and the decisions of the Icelandic administrative appeal boards, courts, the EFTA Court, the CJEU and Umboðsmaður Alþingis.
 
 Someone has dropped a question into the well. Below their question you are given the sources the search brought back, each with a number in square brackets. Answer from those sources.
@@ -50,7 +59,18 @@ WHAT THE SOURCES ARE, AND WHAT EACH PART OF ONE MEANS:
 - Inside a decision, the labelled parts are not interchangeable. "COURT'S OWN SUMMARY" is the court's útdráttur. "MATCHED PASSAGE" is only the part the search matched — it may be the court reciting a party's argument, not the court's own view. "REASONING (Niðurstaða)" is why it decided as it did, and "HOLDING (Dómsorð)" is what it actually ordered. Say what a case *held* only from the reasoning or the holding.
 - A provision extract may say that later paragraphs are not shown. Where it does, do not state that the article has no exception or condition — you have not seen all of it.
 
-HOW TO WRITE IT:
+${depth === "deep" ? DEEP_SHAPE : QUICK_SHAPE}
+
+Write the answer in ${language === "is" ? "Icelandic" : "English"}.`;
+}
+
+/**
+ * The quick tier: a short answer to a short question.
+ *
+ * Unchanged, and deliberately. "Hvað segir 8. gr. stjórnsýslulaga" wants four
+ * hundred words and gets worse, not better, at two thousand.
+ */
+const QUICK_SHAPE = `HOW TO WRITE IT:
 
 - Open with a direct answer of two to four sentences. No preamble, no restating the question.
 - Then, under a "## " heading, the provisions that govern it — what each one requires, in your own words, cited.
@@ -58,10 +78,37 @@ HOW TO WRITE IT:
 - Short paragraphs. "- " for bullets. "**" for bold. No other formatting, no tables, no code blocks.
 - Around 250-450 words. Longer only when the question genuinely has several limbs.
 - Latency-sensitive: begin your visible answer immediately.
-- Do not add a disclaimer about verifying against the official source; the page around you already carries one on every screen.
+- Do not add a disclaimer about verifying against the official source; the page around you already carries one on every screen.`;
 
-Write the answer in ${language === "is" ? "Icelandic" : "English"}.`;
-}
+/**
+ * The deep tier: the answer a lawyer would actually hand a client.
+ *
+ * This is where "250-450 words, no tables" had to go. The sources below it
+ * were gathered by a research loop that read the governing articles, followed
+ * the citation graph out of them and opened judgments at three levels of
+ * court, over several minutes — and then the answer stage was instructed to
+ * produce four hundred words with no table in it. The result reads like a
+ * summary of a search because that is the only thing that fits.
+ *
+ * What replaces it is not "write more". It is the shape of a real answer to a
+ * legal question: the rule, the distinctions the rule turns on, the conditions,
+ * and the cases — grouped the way the question divides them, with what each
+ * one turned on and what it is authority for. Length follows from covering
+ * that; it is not a target.
+ */
+const DEEP_SHAPE = `HOW TO WRITE IT:
+
+This is a deep research answer. The sources below it were gathered by reading the governing law and the judgments that apply it, not by one pass of a search engine, and the answer must be worth that. Write what a lawyer would hand a client who asked this.
+
+- Open with a direct answer of three to six sentences: the rule, and the qualification the rest of the answer is about. No preamble, no restating the question.
+- Then take the question apart and answer each limb under its own "## " heading. If it asks what the rule is, whether something is permitted, on what conditions, and what the courts have done about it, that is four limbs and each one gets its own section. If it distinguishes the general labour market from the public sector, or any other two situations, keep them in separate sections — do not merge them and do not answer one as if it covered both.
+- State conditions as conditions. Where a rule applies only if something is satisfied, list what has to be satisfied, each cited. Exceptions, notice periods, procedural requirements and protections that survive the rule all belong here.
+- Give the decisions room. For each case that matters: what happened, what the court actually held, and what it is authority for. A case is worth a paragraph or a table row, not a clause.
+- You may use a Markdown table where one genuinely reads better than prose — a rule against its exceptions, or a set of cases against what each decides. Header row, then a "| --- | --- |" separator, then the rows. Keep it to two to four columns and cite inside the cells. Do not put the main analysis in a table; a table summarises, the prose reasons.
+- Say what is missing. If the sources cover one side of the question and not the other, say which and say what would answer it. An unanswered limb stated plainly is part of the answer; an unanswered limb left silent is a defect.
+- "## " for headings, "- " for bullets, "**" for bold, "|" tables as above. No other formatting and no code blocks.
+- Length follows the question. A question with four limbs and a dozen cases behind it will run to 1,200-2,000 words and should. Do not pad a narrow question to reach that, and do not compress a wide one to avoid it.
+- Do not add a disclaimer about verifying against the official source; the page around you already carries one on every screen.`;
 
 /** The question, the limitations, and its retrieved law, as one user turn. */
 export function answerUserMessage(question: string, retrieval: Retrieval): string {
@@ -132,17 +179,32 @@ export class AskEmptyAnswer extends Error {
 export function answerEffort(
   plan: QueryPlan,
   retrieval: Retrieval,
-  config: AskConfig
+  config: AskConfig,
+  depth: AnswerDepth = "quick"
 ): { effort: AskEffort; complexity: Complexity } {
   const complexity = classifyComplexity(plan, retrieval.shape);
-  return {
-    effort: complexity.complex ? config.complexEffort : config.simpleEffort,
-    complexity,
-  };
+  const chosen = complexity.complex ? config.complexEffort : config.simpleEffort;
+  // The deep tier has already spent minutes gathering twenty-odd sources. The
+  // classifier's job is to keep a cheap question cheap, and on this path there
+  // is no cheap question left to protect: writing the answer is the smallest
+  // part of the bill and the part everything else was for. So the deep effort
+  // is a floor, not an override — a deployment that raised ASK_EFFORT_COMPLEX
+  // above it still gets what it asked for.
+  const effort = depth === "deep" ? maxEffort(chosen, config.deep.answerEffort) : chosen;
+  return { effort, complexity };
+}
+
+const EFFORT_ORDER: AskEffort[] = ["low", "medium", "high", "xhigh", "max"];
+
+/** The higher of two efforts, by the order the models define. */
+export function maxEffort(a: AskEffort, b: AskEffort): AskEffort {
+  return EFFORT_ORDER.indexOf(a) >= EFFORT_ORDER.indexOf(b) ? a : b;
 }
 
 export interface AnswerOptions {
   config?: AskConfig;
+  /** Which tier retrieved the sources. Defaults to the quick one. */
+  depth?: AnswerDepth;
   /** Overrides the effort the complexity classifier would have chosen. */
   effort?: AskEffort;
   onUsage?: (usage: AskUsage) => void;
@@ -200,7 +262,8 @@ export async function answer(
     };
   }
 
-  const decision = answerEffort(plan, retrieval, config);
+  const depth = options.depth ?? "quick";
+  const decision = answerEffort(plan, retrieval, config, depth);
   const effort = options.effort ?? decision.effort;
   options.onDecision?.({ ...decision, effort });
 
@@ -212,7 +275,7 @@ export async function answer(
     : null;
 
   const text = await model.complete({
-    system: answerSystemPrompt(plan.language),
+    system: answerSystemPrompt(plan.language, depth),
     // Earlier turns come along so a follow-up reads as one, but the sources
     // travel with the question they were retrieved for — the last user turn.
     messages: [...history, { role: "user", content: answerUserMessage(plan.standalone, retrieval) }],

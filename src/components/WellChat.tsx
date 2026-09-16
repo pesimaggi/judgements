@@ -102,6 +102,20 @@ export function WellChat({ enabled }: { enabled: boolean }) {
    * read something else in the meantime.
    */
   const [minimised, setMinimised] = useState(false);
+  /**
+   * Which tier the next question runs on.
+   *
+   * Deep by default, because deep research is what this tool is for: the loop
+   * reads the governing articles, follows the citation graph out of them and
+   * opens the judgments at every level of court, over a minute or two. Quick
+   * is the escape hatch for a question that does not need any of that — "hvað
+   * segir 8. gr. stjórnsýslulaga" is answered in seconds and is not improved
+   * by four minutes of research.
+   *
+   * Sent explicitly on every request. Before this the site ran on whatever
+   * `ASK_RESEARCH` said and a reader could not choose at all.
+   */
+  const [mode, setMode] = useState<"quick" | "deep">("deep");
 
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
@@ -201,7 +215,7 @@ export function WellChat({ enabled }: { enabled: boolean }) {
       const request = fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-        body: JSON.stringify({ question: trimmed, history, stream: true }),
+        body: JSON.stringify({ question: trimmed, history, stream: true, mode }),
       });
 
       await wait(still ? 0 : DROP_MS);
@@ -310,7 +324,7 @@ export function WellChat({ enabled }: { enabled: boolean }) {
         setPhase("answered");
       }
     },
-    [busy, messages]
+    [busy, messages, mode]
   );
 
   if (!enabled) return null;
@@ -548,6 +562,14 @@ export function WellChat({ enabled }: { enabled: boolean }) {
                 >
                   {busy ? "…" : "Sleppa ofan í"}
                 </button>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <ModeToggle mode={mode} onChange={setMode} disabled={busy} />
+                <span className="text-[10px] text-inkSoft">
+                  {mode === "deep"
+                    ? "Les lögin og dómana sjálfa. Tekur eina til fjórar mínútur."
+                    : "Ein leit í safninu. Tekur nokkrar sekúndur."}
+                </span>
               </div>
               <p className="mt-2 text-[10px] leading-snug text-inkSoft">
                 Óopinbert hjálpartæki. Svarið er samantekt úr safninu, ekki lögfræðiráðgjöf —
@@ -810,6 +832,43 @@ function Answer({
               </ul>
             );
           }
+          if (block.kind === "table") {
+            // Scrolls rather than wraps: a three-column table of cases does not
+            // fit the chat column on a phone, and squeezing it makes every cell
+            // two characters wide. The panel is the readable place for a wide
+            // one; this keeps it legible in the chat without breaking the layout.
+            return (
+              <div key={i} className="-mx-1 overflow-x-auto">
+                <table className="w-full min-w-[28rem] border-collapse text-[12px]">
+                  {block.header && (
+                    <thead>
+                      <tr>
+                        {block.header.map((cell, j) => (
+                          <th
+                            key={j}
+                            className="border-b border-line px-2 py-1.5 text-left align-top font-medium text-ink"
+                          >
+                            <Spans spans={cell} sources={byNumber} onOpen={onOpen} />
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                  )}
+                  <tbody>
+                    {block.rows.map((row, j) => (
+                      <tr key={j} className="align-top">
+                        {row.map((cell, k) => (
+                          <td key={k} className="border-b border-line/50 px-2 py-1.5">
+                            <Spans spans={cell} sources={byNumber} onOpen={onOpen} />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          }
           return (
             <p key={i}>
               <Spans spans={block.spans} sources={byNumber} onOpen={onOpen} />
@@ -848,6 +907,44 @@ function Answer({
  * answer — which button, how many sources, which provider — and the id of the
  * request, which carries nothing about what was asked. See lib/ask/feedback.ts.
  */
+/**
+ * Deep or quick, for the next question.
+ *
+ * Two buttons rather than a select: there are exactly two and the difference
+ * between them is worth stating on screen, because it is a difference of
+ * minutes. Disabled while a question is in flight — the tier is fixed when the
+ * request goes out, and a control that appears to change a running search is
+ * worse than no control.
+ */
+function ModeToggle({
+  mode,
+  onChange,
+  disabled,
+}: {
+  mode: "quick" | "deep";
+  onChange: (mode: "quick" | "deep") => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="inline-flex rounded-md border border-line p-0.5" role="group" aria-label="Dýpt leitar">
+      {(["deep", "quick"] as const).map((value) => (
+        <button
+          key={value}
+          type="button"
+          disabled={disabled}
+          aria-pressed={mode === value}
+          onClick={() => onChange(value)}
+          className={`rounded px-2 py-1 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-50 ${
+            mode === value ? "bg-ink text-paper" : "text-inkSoft hover:text-ink"
+          }`}
+        >
+          {value === "deep" ? "Djúpleit" : "Fljótleit"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function Feedback({ message }: { message: Message }) {
   const [sent, setSent] = useState<FeedbackKind | null>(null);
   const [open, setOpen] = useState(false);

@@ -33,6 +33,8 @@ export interface AskMetrics {
   /** The effort the answer stage actually ran at. */
   effort: string | null;
   planEffort: string | null;
+  /** Which tier answered: "deep" ran the research loop, "quick" did not. */
+  mode: "quick" | "deep" | null;
   /** Whether the complexity classifier called it complex, and why. */
   complex: boolean;
   complexitySignals: ComplexitySignal[];
@@ -78,7 +80,21 @@ export interface AskMetrics {
    * last two are the numbers worth watching — one says the ceiling is too low,
    * the other that the loop is not working at all.
    */
-  research?: { steps: number; rounds: number; exhausted: boolean; fellBack: boolean };
+  research?: {
+    steps: number;
+    rounds: number;
+    exhausted: boolean;
+    fellBack: boolean;
+    /**
+     * True when the loop called research_complete and the coverage gate
+     * accepted it. False means it ran out of rounds or stopped being asked —
+     * the answer is still composed from what it gathered, but this is the
+     * number to watch if answers start reading thin again.
+     */
+    finished: boolean;
+    /** Gaps the loop declared, which the answer is required to state. */
+    gaps: number;
+  };
 
   language: string | null;
   /** True when the well declined to answer rather than answering from nothing. */
@@ -106,6 +122,7 @@ export class AskMetricsRecorder {
   model: string | null = null;
   effort: string | null = null;
   planEffort: string | null = null;
+  mode: "quick" | "deep" | null = null;
   complex = false;
   complexitySignals: ComplexitySignal[] = [];
   candidates = 0;
@@ -162,6 +179,7 @@ export class AskMetricsRecorder {
       model: this.model,
       effort: this.effort,
       planEffort: this.planEffort,
+      mode: this.mode,
       complex: this.complex,
       complexitySignals: this.complexitySignals,
       timings: { ...this.timings, total: Date.now() - this.startedAt },
