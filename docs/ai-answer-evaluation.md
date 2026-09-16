@@ -178,3 +178,101 @@ What was wrong is written up in *well-roadmap.md* §9b; in short:
 All of the above is fixed. **None of it is measured.** A2 is the first output
 that can be compared, and it should record its model, effort settings and
 commit — the run itself is the evidence, not the reasoning above.
+
+### What A2 established
+
+Added 16 September 2026 by the engineer; the reviewer's comment above is
+untouched. A2 is the first output in this file that can be compared with
+another like for like, because it is the first with its configuration recorded.
+
+**The budget change took effect, and the output proves it.** A2 cites source
+numbers up to 26. Under the previous `maxSources` of 10 no number above 10
+could exist, so the deep tier's wider source budget is demonstrably reaching
+the answer. A1 cited nine.
+
+**Against the reviewer's target list.**
+
+| Expected | A2 |
+| --- | --- |
+| Landsréttur 310/2018 — Hafliði Páll Guðjónsson gegn íslenska ríkinu | **Found**, and read properly: the probation-clause point, and that the dismissal was still unlawful for want of a written áminning |
+| Héraðsdómur Reykjaness E-2997/2023 — Sjóklæðagerðin hf. | Missed |
+| Hrd. 23. september 2021, 15/2021 — A gegn B ses. | Missed |
+| Hrd. 13. desember 2012, 256/2012 — Valitor hf. | Missed |
+| lög nr. 70/1996, 41. gr. | **Found** in substance — fixed-term appointment permitted, terminable only where the contract says so, two-year limit |
+| lög nr. 139/2003 | **Found**, including 5. gr.'s two-year ceiling and the six-week chaining rule |
+| lög um starfsmenn í hlutastörfum | Missed |
+| lög um kjarasamninga opinberra starfsmanna | Missed |
+| lög nr. 19/1979 (uppsagnarfrestur verkafólks) | Missed. A2 names lög nr. 55/1980 instead, which is a different act |
+
+So one of four expected judgments and two of four expected acts. That is the
+number to beat, and it is not yet good enough.
+
+**What it found that was not on the list**, and which the reviewer has not yet
+assessed: Landsréttur 735/2022, Hrd. 218/2017, Hrd. 345/2014, Félagsdómur
+F-22/2020, four Héraðsdómur Vesturlands judgments about Hvalur hf. from 2025
+(E-231/2025, E-233/2025, E-319/2025, E-320/2025), Héraðsdómur Reykjavíkur
+E-3228/2009, E-835/2016 and E-830/2016, two ministry rulings (IRR11030398,
+IRR11040243) and UA 88/2025. Whether that breadth is worth the space is a
+question for the reviewer; the four Hvalur judgments in particular are recent,
+squarely on the point, and A2 notices that they do not all come out the same way
+and says why — which is rule 4 of the answer prompt working.
+
+**The shape the deep tier asks for is there.** Public and private are separate
+sections, conditions are listed as conditions, and there is a closing section on
+what the sources do not answer. A1 had none of that.
+
+### Three defects visible in A2
+
+**1. Third-level headings are not rendered.** `src/lib/ask/render.ts` understands
+`## ` and nothing else, and the deep tier's answers now have enough structure
+that the model reaches for `### `. The paste shows this exactly: the second-level
+headings arrive as plain lines, because they rendered as headings and copying
+gave the text — while "### Landsréttur 310/2018", "### Hæstiréttur 218/2017",
+"### Landsréttur 735/2022", "### Héraðsdómur Reykjavíkur E-3228/2009" and
+"### Önnur opinber mál" arrive with their hashes attached and run together into
+one wall of text, because the renderer never recognised them. The whole
+"Dómar um uppsögn hjá hinu opinbera" section is one paragraph on screen.
+
+This is the single biggest legibility problem in A2 and it is a small fix:
+accept `### ` as a sub-heading in the renderer, or tell the deep prompt there is
+only one heading level. Accepting it is better now the answers are long.
+
+**2. No table was used**, although the deep prompt offers one and the case
+sections are exactly where the reviewer's own model answer uses two. The prompt
+says "where one genuinely reads better than prose" and "do not put the main
+analysis in a table", which may be reading as discouragement. Worth one revision
+of that wording before concluding the tables do not work.
+
+**3. The unsupported-claim marker fired twice.** Both instances sit at the end of
+a paragraph that does carry citations, which in `validateCitations` means only
+one thing: the sentence cited a source number that did not exist, the marker was
+deleted, and the sentence was qualified. That is the validator working exactly as
+designed — but it means the model invented at least two source numbers, and
+raising the ceiling from 10 to 28 gives it more numbers to confuse. Both
+qualified sentences look substantively plausible, which is the cost: a correct
+sentence carrying a warning.
+
+Checkable in one look: the metrics line for that request records
+`validation.nonexistentCitations`. If it is 2, this reading is confirmed. Worth
+watching across the next few runs — if it is routine, the answer prompt should
+name the valid range explicitly.
+
+### Why Sjóklæðagerðin was missed — hypotheses, none verified
+
+Unverified, and listed so the next person does not start from nothing:
+
+- **It may not be in the corpus.** Héraðsdómur Reykjaness, 11 June 2024. The
+  check is one search of the corpus for `E-2997/2023`, and it should be done
+  before anything else — a retrieval fix for a document that is not there is
+  wasted work.
+- **If it is there, the citation graph may not reach it.** `cases_citing_provision`
+  only finds a judgment whose citations our parser resolved. A judgment that
+  turns on a contractual clause referring to a kjarasamningur may cite no article
+  the graph holds.
+- **The case-number ranking defect in §9a of *well-roadmap.md* is still open**,
+  and `find_citing_cases` runs on that same search.
+
+The same three apply to Hrd. 15/2021 and Hrd. 256/2012. Note that A2 did find
+several héraðsdómar, including four from 2025, so first-instance judgments are
+clearly reachable in general — which makes a corpus gap the more likely
+explanation for this particular one, and makes the search worth running first.
