@@ -31,7 +31,7 @@
  */
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { SCHOLARSHIP_SOURCE_KEYS } from "@/lib/sources";
+import { NON_DECISION_SOURCE_KEYS } from "@/lib/sources";
 import {
   extractActCitations,
   extractProvisionCitations,
@@ -340,8 +340,8 @@ export const citationsAdapter: IngestionAdapter = {
     const maxDocs = Number(process.env.CITATION_MAX_DOCS ?? Number.MAX_SAFE_INTEGER);
     // Empty-safe: with no scholarly sources registered this adds no condition
     // at all, rather than an `IN ()` Postgres would reject.
-    const excludeScholarship = SCHOLARSHIP_SOURCE_KEYS.length
-      ? Prisma.sql`AND source NOT IN (${Prisma.join(SCHOLARSHIP_SOURCE_KEYS)})`
+    const excludeScholarship = NON_DECISION_SOURCE_KEYS.length
+      ? Prisma.sql`AND source NOT IN (${Prisma.join(NON_DECISION_SOURCE_KEYS)})`
       : Prisma.empty;
     const aliasTotals = new Map<string, Map<string, number>>();
     const unknownActs = new Map<string, number>();

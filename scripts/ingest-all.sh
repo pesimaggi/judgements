@@ -157,8 +157,13 @@ set -u
 # made under. A regulation arriving after them waits a full firing to be
 # linked to anything.
 #
+# `frumvorp` follows lagasafn because it walks the acts: every Lagasafn act
+# page links the þingskjal the act was passed from, that link is stored on the
+# act, and this adapter fetches what is behind it. It has no listing of its own
+# to walk, so an act with no bill link is simply not work.
+#
 # `lagastod` touches no network at all — it reads regulations already stored.
-DEFAULT_ADAPTERS="bin-dictionary stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal yfirskattanefnd yfirskattanefnd-retry stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-joint-committee eftasurv eftasurv-retry lagasafn eur-lex-catalogue eur-lex eur-lex-retry eur-lex-eea cjeu-listing cjeu reglugerd citations lagastod"
+DEFAULT_ADAPTERS="bin-dictionary stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal yfirskattanefnd yfirskattanefnd-retry stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-joint-committee eftasurv eftasurv-retry lagasafn eur-lex-catalogue eur-lex eur-lex-retry eur-lex-eea cjeu-listing cjeu reglugerd frumvorp citations lagastod"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"

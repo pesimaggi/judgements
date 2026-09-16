@@ -36,7 +36,14 @@ describe("registry integrity", () => {
       assert.ok(s.adapterKey, `${s.key}: no adapter would ever fill it`);
       assert.match(s.officialBaseUrl, /^https?:\/\//, `${s.key}: ${s.officialBaseUrl}`);
       assert.match(s.language, /^[a-z]{2}$/, `${s.key}: ${s.language}`);
-      assert.ok(["decision", "scholarship"].includes(s.kind), `${s.key}: ${s.kind}`);
+      // Three kinds, and the distinction is load-bearing rather than
+      // descriptive: only a "decision" is scanned by the provision citation
+      // job, because "12 úrlausnir vísa til þessa ákvæðis" counts decisions.
+      // An article and a bill both cite acts constantly and neither is one.
+      assert.ok(
+        ["decision", "scholarship", "travaux"].includes(s.kind),
+        `${s.key}: ${s.kind}`
+      );
       assert.ok(["live", "pilot"].includes(s.status), `${s.key}: ${s.status}`);
     }
   });

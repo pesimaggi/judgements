@@ -68,6 +68,20 @@
       "url": "https://api.reglugerd.is/api/v1/regulations/newest?page=1",
       "captured": "2026-09-15",
       "describes": "One page of the register: 30 of 14,648 entries across 489 pages, each flagged base or amending. More than half the register is amending."
+    },
+    {
+      "file": "althingi/130-1194.html.gz",
+      "url": "https://www.althingi.is/altext/130/s/1194.html",
+      "via": "https://web.archive.org/web/2021/… — /altext/ is served through Cloudflare and refuses requests from this development environment, while /lagas/ from the same machine answers. The Wayback toolbar block was removed; nothing else was touched.",
+      "captured": "2026-09-16",
+      "describes": "Frumvarp til jarðalaga — þskj. 1194 of the 130th þing, the bill that became lög nr. 81/2004. A whole one: the bill's articles, a 36,000-character greinargerð, and seventy-five articles commented on one by one, including a two-article heading ('Um 5. og 6. gr.') and three temporary provisions that name no article at all. The page also lists the case's other six documents, which is this app's only route to a bill's nefndarálit."
+    },
+    {
+      "file": "althingi/153-0001.html.gz",
+      "url": "https://www.althingi.is/altext/153/s/0001.html",
+      "via": "https://web.archive.org/web/2021/… — as above.",
+      "captured": "2026-09-16",
+      "describes": "Fjárlagafrumvarp 2023 — the failure mode. The newer header form ('Þingskjal 1 — 1. mál.' rather than 'Þskj. 1194 — 783. mál.'), a title line that gives the document's category before its name, and no document at all: the text is a 368-page PDF beside the page, leaving several thousand characters of site navigation that a parser must not mistake for a bill."
     }
   ]
 }
