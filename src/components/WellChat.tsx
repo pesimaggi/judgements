@@ -41,10 +41,32 @@ const MIN_LOAD_MS = 900;
 /** The scene's own resize, from .well-stage in globals.css. */
 const SCENE_TRANSITION_MS = 320;
 
+/**
+ * One call the research loop made, as the panel shows it.
+ *
+ * `why` is the loop's own reason for the call, in Icelandic, given before it
+ * made it — see WHY in lib/ask/tools.ts. It is what turns this list from a
+ * log of queries into the method the reader is being asked to trust.
+ */
+interface ResearchStep {
+  name: string;
+  detail: string;
+  why: string;
+}
+
 interface Message {
   role: "user" | "assistant";
   content: string;
   sources?: AskSource[];
+  /**
+   * How this answer was researched, kept with the answer it produced.
+   *
+   * On the message rather than in component state because the trail belongs
+   * to its answer: the next question clears the live steps, and a reader
+   * scrolling back to an earlier answer should still be able to see what was
+   * done for it.
+   */
+  steps?: ResearchStep[];
   /** The id the answer came back with, which feedback is attached to. */
   requestId?: string;
   language?: "is" | "en";
@@ -92,7 +114,7 @@ export function WellChat({ enabled }: { enabled: boolean }) {
    * judgment, ask what cites a case — and it doubles as the record of how the
    * answer was arrived at, which in legal research is worth having.
    */
-  const [steps, setSteps] = useState<{ name: string; detail: string }[]>([]);
+  const [steps, setSteps] = useState<ResearchStep[]>([]);
   /**
    * Folded away to the corner while it works, without stopping it.
    *
@@ -235,6 +257,16 @@ export function WellChat({ enabled }: { enabled: boolean }) {
        */
       let language: "is" | "en" = "is";
       /**
+       * The research trail, accumulated locally as well as in `steps`.
+       *
+       * Two copies because they are read at different times and by different
+       * things: `steps` drives the live panel and is cleared by the next
+       * question, while this one is attached to the finished turn. Reading the
+       * state variable here instead would capture it as it was when this
+       * closure was made, which is empty.
+       */
+      const trail: ResearchStep[] = [];
+      /**
        * Moves off the loading scene, but never sooner than MIN_LOAD_MS.
        *
        * Streaming made the floor matter more, not less: the first line can now
@@ -278,7 +310,10 @@ export function WellChat({ enabled }: { enabled: boolean }) {
             case "step":
               // Capped: a long run is dozens of calls and the reader wants the
               // shape of the search, not a log.
-              setSteps((prev) => [...prev, { name: event.name, detail: event.detail }].slice(-40));
+              trail.push({ name: event.name, detail: event.detail, why: event.why });
+              setSteps((prev) =>
+                [...prev, { name: event.name, detail: event.detail, why: event.why }].slice(-40)
+              );
               break;
             case "sources":
               // Creates the assistant turn, which is what fills the sources
@@ -307,6 +342,7 @@ export function WellChat({ enabled }: { enabled: boolean }) {
                 sources: event.response.sources,
                 requestId: event.response.requestId,
                 language: event.response.language,
+                steps: trail.length ? [...trail] : undefined,
               }));
               break;
             case "error":
@@ -456,14 +492,28 @@ export function WellChat({ enabled }: { enabled: boolean }) {
                       ))}
                     </p>
                     {steps.length > 0 && (
-                      // What the research loop is doing, newest last. Only the
-                      // last few: the reader wants the shape of the search, and
-                      // the full trail is in the metrics line.
-                      <ul className="mt-2 space-y-0.5 border-t border-line/60 pt-1.5">
-                        {steps.slice(-4).map((step, i) => (
-                          <li key={i} className="truncate text-[11px] text-inkSoft">
-                            <span className="text-ink">{STEP_LABEL[step.name] ?? step.name}</span>
-                            {step.detail ? ` — ${step.detail}` : ""}
+                      // What the research loop is doing, newest last, with the
+                      // reason it gave for each call. Only the last few while
+                      // it runs — the reader wants the shape of the search, not
+                      // a log — and the whole trail is kept on the answer.
+                      <ul className="mt-2 space-y-1.5 border-t border-line/60 pt-1.5">
+                        {steps.slice(-3).map((step, i) => (
+                          <li key={i} className="text-[11px] text-inkSoft">
+                            <span className="truncate">
+                              <span className="text-ink">
+                                {STEP_LABEL[step.name] ?? step.name}
+                              </span>
+                              {step.detail ? ` — ${step.detail}` : ""}
+                            </span>
+                            {step.why && (
+                              // The method, in the loop's own words. Indented
+                              // under the call it belongs to and never styled
+                              // as the answer: this is the well reasoning
+                              // aloud, not law.
+                              <span className="mt-0.5 block border-l border-line pl-2 italic leading-snug text-inkSoft/90">
+                                {step.why}
+                              </span>
+                            )}
                           </li>
                         ))}
                       </ul>
@@ -887,10 +937,53 @@ function Answer({
         </button>
       )}
 
+      {message.steps && message.steps.length > 0 && <ResearchTrail steps={message.steps} />}
+
       {message.requestId && !message.failed && (
         <Feedback message={message} />
       )}
     </div>
+  );
+}
+
+/**
+ * How the answer was researched, kept under it.
+ *
+ * Closed by default and never inside the answer's own prose, because none of
+ * it is law: it is the loop's account of its method, and a reader must not be
+ * able to mistake a line of it for something citable. Open, it is the thing a
+ * lawyer actually wants from a research tool — not just what it found, but
+ * what it looked for and why, in order, including the searches that came back
+ * with nothing.
+ *
+ * A `details` element rather than state: it is a disclosure, the browser
+ * already knows how to do it, and it stays keyboard-reachable for free.
+ */
+function ResearchTrail({ steps }: { steps: ResearchStep[] }) {
+  return (
+    <details className="group mt-3 border-t border-line/60 pt-2">
+      <summary className="cursor-pointer list-none text-[11px] text-inkSoft hover:text-ink">
+        <span className="underline underline-offset-2">
+          Hvernig þetta var rannsakað
+        </span>{" "}
+        <span className="text-inkSoft/80">
+          ({steps.length} {steps.length === 1 ? "skref" : "skref"})
+        </span>
+      </summary>
+      <ol className="mt-2 space-y-2">
+        {steps.map((step, i) => (
+          <li key={i} className="text-[11px] leading-snug text-inkSoft">
+            <span className="text-ink">{i + 1}. {STEP_LABEL[step.name] ?? step.name}</span>
+            {step.detail ? ` — ${step.detail}` : ""}
+            {step.why && (
+              <span className="mt-0.5 block border-l border-line pl-2 italic text-inkSoft/90">
+                {step.why}
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }
 
@@ -1104,6 +1197,9 @@ const STEP_LABEL: Record<string, string> = {
   read_decision: "Les úrlausn",
   read_provision: "Les ákvæði",
   list_subject_tags: "Flettir upp efnisorðum",
+  cases_citing_provision: "Leitar að dómum um ákvæðið",
+  read_act_outline: "Les efnisyfirlit laga",
+  research_complete: "Lýkur rannsókn",
 };
 
 /**

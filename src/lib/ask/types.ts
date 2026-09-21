@@ -268,6 +268,18 @@ export type AskEvent =
       name: string;
       /** The argument worth showing — the query, the case number, the id. */
       detail: string;
+      /**
+       * The loop's own reason for making this call, in Icelandic — the step of
+       * the legal method it is on. Required of every research tool (see WHY in
+       * lib/ask/tools.ts), so in practice it is always present; empty only for
+       * `research_complete`, which does not carry one, and for a model that
+       * omitted a required argument.
+       *
+       * It is the model's stated purpose *before* the call, not a gloss
+       * written afterwards, which is what makes it worth showing: a reader can
+       * hold it against what the call actually returned.
+       */
+      why: string;
       ms: number;
     }
   | {

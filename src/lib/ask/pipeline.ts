@@ -75,6 +75,20 @@ export interface AskOptions {
  * A query, a case number or an id — not the whole JSON, which is noise on a
  * progress line, and not nothing, which makes every step look identical.
  */
+/**
+ * The loop's stated reason for a call, as the reader will see it.
+ *
+ * Trimmed to a length that fits the panel without a scrollbar: this is meant
+ * to be read at a glance while the research runs, and a model that writes a
+ * paragraph where a sentence was asked for should not push the next step off
+ * the screen.
+ */
+function stepWhy(input: unknown): string {
+  if (!input || typeof input !== "object") return "";
+  const why = (input as Record<string, unknown>).why;
+  return typeof why === "string" ? why.trim().slice(0, 240) : "";
+}
+
 function stepDetail(input: unknown): string {
   if (!input || typeof input !== "object") return "";
   const a = input as Record<string, unknown>;
@@ -168,6 +182,7 @@ export async function ask(
                   round: step.round,
                   name: step.name,
                   detail: stepDetail(step.input),
+                  why: stepWhy(step.input),
                   ms: step.ms,
                 });
               },

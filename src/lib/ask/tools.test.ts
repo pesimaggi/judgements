@@ -160,3 +160,62 @@ describe("finishBlocked", () => {
     assert.equal(s.finishBlocked(["Engir dómar fundust um opinbera vinnumarkaðinn"]), null);
   });
 });
+
+/**
+ * The `why` every research tool carries.
+ *
+ * Asserted on the schema rather than through a call, because the schema is
+ * the whole mechanism: the field is inert in `run` and exists only to be sent
+ * to the model as required and shown to the reader afterwards. An optional
+ * `why` is one a model under a token budget will quietly stop supplying, and
+ * the failure — a research panel that goes back to listing queries — is
+ * gradual and silent, which is exactly the kind worth pinning down in a test.
+ */
+describe("the why every research tool must give", () => {
+  const tools = new ResearchSession(plan()).tools();
+
+  const schemaOf = (name: string) => {
+    const tool = tools.find((t) => t.name === name);
+    assert.ok(tool, `no tool named ${name}`);
+    return tool.schema as {
+      properties: Record<string, unknown>;
+      required?: string[];
+    };
+  };
+
+  test("every tool that searches or reads requires one", () => {
+    const searching = tools.filter((t) => t.name !== "research_complete");
+    assert.ok(searching.length >= 8, "expected the full research toolset");
+
+    for (const tool of searching) {
+      const schema = schemaOf(tool.name);
+      assert.ok(schema.properties.why, `${tool.name} has no why property`);
+      assert.ok(
+        schema.required?.includes("why"),
+        `${tool.name} does not require why — a model will stop supplying it`
+      );
+    }
+  });
+
+  test("research_complete does not, because covered and gaps say more", () => {
+    const schema = schemaOf("research_complete");
+    assert.equal(schema.properties.why, undefined);
+    assert.ok(!schema.required?.includes("why"));
+  });
+
+  test("it is inert: the executors dispatch on the named arguments", async () => {
+    // A tool called with only a why and no arguments of its own must come back
+    // with its own complaint, not a crash — the loop is the expensive part and
+    // losing it to one malformed call is the worst outcome available.
+    const session = new ResearchSession(plan());
+    const out = await session.run("read_decision", { why: "Ég þarf að lesa dóminn." });
+    assert.equal(typeof out, "string");
+    assert.ok(out.length > 0);
+  });
+
+  test("an unknown tool is still reported rather than thrown", async () => {
+    const session = new ResearchSession(plan());
+    const out = await session.run("read_travaux", { why: "Ég ætla að skoða greinargerðina." });
+    assert.match(out, /No tool named/);
+  });
+});
