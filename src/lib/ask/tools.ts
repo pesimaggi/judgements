@@ -737,6 +737,28 @@ function clamp(v: unknown, fallback: number, min: number, max: number): number {
 // The definitions the model is shown
 // ---------------------------------------------------------------------------
 
+/**
+ * The justification every research tool carries.
+ *
+ * It is not read by any executor — `run` below dispatches on the named
+ * arguments and this one is inert. It exists to be *shown*: it travels with
+ * the call through `ToolStep.input` to the step event the well renders, so a
+ * reader watching the loop work sees the method rather than a list of
+ * queries. "Leitar í úrlausnum — riftun" says what was typed; "Ég þarf að sjá
+ * hvernig dómstólar hafa beitt 42. gr. áður en ég met riftunarheimildina"
+ * says why, and that is the part a lawyer checks.
+ *
+ * Required on every tool but `research_complete`, whose `covered` and `gaps`
+ * already say more than a one-line reason could. Making it required is the
+ * whole mechanism: an optional field is not supplied under a token budget,
+ * and a step without a reason is the silence this was built to end.
+ */
+const WHY = {
+  type: "string",
+  description:
+    "Why you are making this call, in one sentence of Icelandic — the step of the legal method you are on, not a restatement of the arguments. This is shown to the reader as the research happens, so write it for a lawyer reading over your shoulder: what you are trying to establish and why it is the next thing to do.",
+} as const;
+
 const TOOLS: AskToolDef[] = [
   {
     name: "search_decisions",
@@ -745,6 +767,7 @@ const TOOLS: AskToolDef[] = [
     schema: {
       type: "object",
       properties: {
+        why: WHY,
         query: { type: "string", description: "Search terms, in the corpus's language." },
         sources: {
           type: "array",
@@ -760,7 +783,7 @@ const TOOLS: AskToolDef[] = [
         dateTo: { type: "string", description: "ISO date; decisions on or before it." },
         limit: { type: "integer", description: `Rows to return, up to ${MAX_ROWS}.` },
       },
-      required: ["query"],
+      required: ["why", "query"],
       additionalProperties: false,
     },
   },
@@ -771,6 +794,7 @@ const TOOLS: AskToolDef[] = [
     schema: {
       type: "object",
       properties: {
+        why: WHY,
         caseNumber: { type: "string", description: "The cited case's number, as written." },
         sources: {
           type: "array",
@@ -779,7 +803,7 @@ const TOOLS: AskToolDef[] = [
         },
         limit: { type: "integer", description: `Rows to return, up to ${MAX_ROWS}.` },
       },
-      required: ["caseNumber"],
+      required: ["why", "caseNumber"],
       additionalProperties: false,
     },
   },
@@ -790,11 +814,12 @@ const TOOLS: AskToolDef[] = [
     schema: {
       type: "object",
       properties: {
+        why: WHY,
         query: { type: "string", description: "Search terms, in the language of the legislation." },
         actId: { type: "string", description: "Restrict to one act, by the id a previous result gave." },
         limit: { type: "integer", description: `Rows to return, up to ${MAX_ROWS}.` },
       },
-      required: ["query"],
+      required: ["why", "query"],
       additionalProperties: false,
     },
   },
@@ -805,6 +830,7 @@ const TOOLS: AskToolDef[] = [
     schema: {
       type: "object",
       properties: {
+        why: WHY,
         documentId: { type: "string", description: "documentId from a search result." },
         section: {
           type: "string",
@@ -812,7 +838,7 @@ const TOOLS: AskToolDef[] = [
           description: "Which part to read. Omit for the head of the document.",
         },
       },
-      required: ["documentId"],
+      required: ["why", "documentId"],
       additionalProperties: false,
     },
   },
@@ -823,9 +849,10 @@ const TOOLS: AskToolDef[] = [
     schema: {
       type: "object",
       properties: {
+        why: WHY,
         provisionId: { type: "string", description: "provisionId from search_provisions." },
       },
-      required: ["provisionId"],
+      required: ["why", "provisionId"],
       additionalProperties: false,
     },
   },
@@ -836,6 +863,7 @@ const TOOLS: AskToolDef[] = [
     schema: {
       type: "object",
       properties: {
+        why: WHY,
         provisionId: { type: "string", description: "provisionId of the article." },
         sources: {
           type: "array",
@@ -844,7 +872,7 @@ const TOOLS: AskToolDef[] = [
         },
         limit: { type: "integer", description: `Rows to return, up to ${MAX_ROWS}.` },
       },
-      required: ["provisionId"],
+      required: ["why", "provisionId"],
       additionalProperties: false,
     },
   },
@@ -855,10 +883,11 @@ const TOOLS: AskToolDef[] = [
     schema: {
       type: "object",
       properties: {
+        why: WHY,
         query: { type: "string", description: "The act's number, short name or title." },
         actId: { type: "string", description: "actId, when a previous result gave one." },
       },
-      required: [],
+      required: ["why"],
       additionalProperties: false,
     },
   },
@@ -869,10 +898,11 @@ const TOOLS: AskToolDef[] = [
     schema: {
       type: "object",
       properties: {
+        why: WHY,
         query: { type: "string", description: "Part of a tag. Omit for the commonest tags." },
         limit: { type: "integer", description: "Tags to return, up to 40." },
       },
-      required: [],
+      required: ["why"],
       additionalProperties: false,
     },
   },
