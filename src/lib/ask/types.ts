@@ -283,6 +283,27 @@ export type AskEvent =
       ms: number;
     }
   | {
+      /**
+       * The model's own reasoning, as it arrives.
+       *
+       * Not the answer, and never rendered as one. A `step` event is the
+       * loop's stated purpose for a call — a sentence written for the reader
+       * once the decision is made — whereas this is the deciding: the reading
+       * it considered and dropped, the provision it went looking for and did
+       * not find. That makes it the honest half of the record, and also the
+       * half that would be actively misleading set in the same type as the
+       * answer, because a discarded reading of a statute looks exactly like a
+       * statement of one.
+       *
+       * Present only when the provider returns it. Anthropic does, when asked
+       * for a summary; OpenAI's chat-completions endpoint spends reasoning
+       * tokens but hands back no summary of them, so under that provider this
+       * event simply never arrives. See `onThinking` in lib/ask/llm.ts.
+       */
+      type: "thinking";
+      text: string;
+    }
+  | {
       /** One validated line of the answer. Appended in order. */
       type: "line";
       text: string;

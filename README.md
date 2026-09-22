@@ -2290,6 +2290,31 @@ variable below is also in `.env.example`.
 | `ASK_MODEL_ANTHROPIC` | `claude-opus-5` | Model on the Anthropic side. |
 | `ASK_MODEL` | — | Overrides whichever of those two is active. Set the per-provider pair once and flip `ASK_PROVIDER`; use this for a quick one-off. |
 
+#### One thing the two providers do not do equally
+
+While the well works it shows what it is doing — the stage, the search terms,
+each call the research loop made and the reason it gave — and, under
+**Umhugsun**, the model's own reasoning. That last panel is **Anthropic only,
+and the asymmetry is the endpoint's rather than a bug.**
+
+Both providers reason before they answer, and on both the tokens are spent and
+billed. Anthropic returns a summary of that reasoning when asked for one, which
+`lib/ask/llm.ts` does by setting `display: "summarized"` — and only when a
+reader is listening, so the evaluation harness and every non-interactive path
+take the cheaper default. OpenAI's chat-completions endpoint hands back no
+summary at all, only the text the reasoning led to. So under `ASK_PROVIDER=openai`
+the Umhugsun panel never appears, and there is no variable that will make it.
+Everything else on the panel — the stage, the terms, the calls and their
+stated reasons — works identically on both.
+
+The reasoning is never rendered as the answer, and the separation is deliberate
+rather than cosmetic: what comes back is the model weighing readings and
+discarding some of them, and a discarded reading of a statute set in the same
+type as the answer looks exactly like a statement of one. It arrives on its own
+channel from `llm.ts` upward (`onThinking`, never `onDelta`), reaches the
+client as its own `thinking` event, and is captioned as working notes where it
+is shown.
+
 #### Effort, per stage
 
 **Precedence: the per-stage variable, then `ASK_EFFORT`, then the default.**
@@ -2402,7 +2427,7 @@ rate-limited to 12 questions per 10 minutes per address, in memory — enough to
 stop an unmetered public endpoint spending money, and no substitute for a real
 limit in front of the app. The **same question from the same address while the
 first is still running** answers 409 rather than paying for the pipeline twice;
-a double-click on "Sleppa ofan í" otherwise buys two full runs and shows
+a double-click on "Spyrja" otherwise buys two full runs and shows
 whichever finishes second.
 
 Failures are told apart rather than collapsed into one 500: 422 for a refusal,
@@ -2471,6 +2496,19 @@ Results are paginated 15 to a page. Counting stops at 10,000, so very broad quer
 - the fuzzy fallback uses `pg_trgm`'s `%` operator, which the trigram indexes serve, instead of a `similarity()` call that forced a sequential scan — and it only runs when the indexed search found nothing.
 
 If you change `document_search_vector()`, stored vectors are not updated retroactively: run `UPDATE "Document" SET search_vector = NULL;` and then `npm run db:setup-search` to rebuild them.
+
+### The indexes are declared twice, on purpose
+
+`setup-search.sql` creates these indexes, and `prisma/schema.prisma` also declares them. That is not a duplicate: `prisma db push` drops every index it does not find in the schema, and `db:deploy` runs `push` *before* the setup SQL. Undeclared, the two full-text GIN indexes and the four document trigram indexes were dropped on every deploy and rebuilt seconds later — a full GIN rebuild of the whole corpus inside the pre-deploy window, every time. Declared, push recognises them and leaves them alone; the SQL's `CREATE INDEX IF NOT EXISTS` then finds them already there. The declaration has to generate exactly what the SQL creates, which is what `map:` and `ops: raw(…)` are for.
+
+Two kinds stay undeclared, and both are deliberate:
+
+- **`document_source_date_idx`** is `(source, date DESC NULLS LAST)`, and Prisma can only express `date DESC` — which in Postgres means NULLS FIRST. Declaring it would build the wrong index on a fresh database, where push runs first and `CREATE INDEX IF NOT EXISTS` then leaves it. It is one btree, so the rebuild is cheap; the wrong sort order would not be.
+- **The expression indexes** (`acts_aliases_trgm_idx`, `acts_citation_trgm_idx`) index a function call, which Prisma cannot express — but it does not drop what it cannot express either, so they survive a push untouched.
+
+Because the trigram indexes are now part of the schema, `pg_trgm` has to exist before push builds them. `schema.prisma`'s datasource therefore declares `extensions = [pg_trgm, unaccent]` (behind the `postgresqlExtensions` preview feature), so push installs them itself; without that, a push against a brand-new database fails with `operator class "gin_trgm_ops" does not exist`. Extensions installed but not named there are left alone.
+
+`scripts/test-db-deploy.ts` holds all of this down against a real Postgres in CI: it builds a database the way production was built — schema push, then the setup SQL — then runs the real `db:deploy` twice and asserts every one of these indexes has the same `pg_class` OID afterwards. Comparing OIDs rather than names is the point: a drop followed by `setup-search.sql` putting the same name back looks identical from the outside.
 
 ## Tests
 
@@ -2705,7 +2743,7 @@ src/
     api/tags/route.ts            GET — subject-tag type-ahead over a cached vocabulary
   components/
     WellChat.tsx                 the well: split screen — conversation | sources
-    WellScene.tsx                the well drawing and its four phases
+    WellProgress.tsx             what the well is doing: stage, terms, calls, reasoning
   lib/
     sources.ts                   source registry: courts, EEA/EFTA, Umboðsmaður, journals
     query-parser.ts              phrases / boolean / case-number detection

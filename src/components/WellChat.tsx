@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { WellScene, type WellPhase } from "./WellScene";
+import { WellProgress, stepLabel, type WellStage } from "./WellProgress";
 import { WellReader } from "./WellReader";
 import { markCitedIn, parseAnswer, type InlineSpan } from "@/lib/ask/render";
 import { FEEDBACK_KINDS, FEEDBACK_LABELS, type FeedbackKind } from "@/lib/ask/feedback";
@@ -30,16 +30,25 @@ import type { AskSource, AskTurn } from "@/lib/ask/types";
  * — the same two panels, one at a time.
  */
 
-/** How long the slip of paper takes to fall. Matches well-note-drop. */
-const DROP_MS = 720;
 /**
- * The floor on how long the loading state is shown. Without it a fast answer
- * flashes the artefacts for 200ms, which reads as a glitch rather than as the
- * well working.
+ * The floor on how long the progress panel is shown.
+ *
+ * Without it a fast answer puts the stage rail on screen for 200ms and takes
+ * it away again, which reads as a glitch rather than as the well working.
+ * It is a floor on the *display*, never on the request: the question is sent
+ * before this is consulted.
  */
 const MIN_LOAD_MS = 900;
-/** The scene's own resize, from .well-stage in globals.css. */
-const SCENE_TRANSITION_MS = 320;
+
+/**
+ * Where the panel is in answering a question.
+ *
+ * There used to be a fourth, `dropping`, which covered the 720ms the question
+ * took to fall into the well drawing on a slip of paper. With the drawing gone
+ * there is nothing to cover, so the question now joins the transcript the
+ * moment it is asked.
+ */
+export type WellPhase = "idle" | "loading" | "answered";
 
 /**
  * One call the research loop made, as the panel shows it.
@@ -85,7 +94,6 @@ export function WellChat({ enabled }: { enabled: boolean }) {
   const [input, setInput] = useState("");
   const [phase, setPhase] = useState<WellPhase>("idle");
   const [messages, setMessages] = useState<Message[]>([]);
-  const [falling, setFalling] = useState("");
   /** Which pane is showing, when the screen is too narrow for both. */
   const [pane, setPane] = useState<"chat" | "sources">("chat");
   /**
@@ -116,6 +124,27 @@ export function WellChat({ enabled }: { enabled: boolean }) {
    */
   const [steps, setSteps] = useState<ResearchStep[]>([]);
   /**
+   * The model's own reasoning, newest last, while it works.
+   *
+   * Separate state from `steps` because they are separate things and must not
+   * be interleaved: a step is the reason the loop gave for a call it is about
+   * to make, this is the model weighing what to do at all. Kept only for the
+   * question being answered — unlike `steps` it is not carried onto the
+   * finished message, because reasoning that led nowhere is worth watching
+   * live and is not worth keeping under an answer as though it supported it.
+   */
+  const [thinking, setThinking] = useState<string[]>([]);
+  /**
+   * How far through the pipeline this question is.
+   *
+   * Derived from the events rather than from a timer: `plan` moves it to
+   * retrieval, the first `sources` or `line` to the answer. A progress
+   * indicator driven by elapsed time would be guessing, and would be wrong in
+   * exactly the case that matters — the question that is taking longer than
+   * usual.
+   */
+  const [stage, setStage] = useState<WellStage>("plan");
+  /**
    * Folded away to the corner while it works, without stopping it.
    *
    * The stream is held by the request in `ask`, not by the panel, so hiding
@@ -141,7 +170,7 @@ export function WellChat({ enabled }: { enabled: boolean }) {
 
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
-  const busy = phase === "dropping" || phase === "loading";
+  const busy = phase === "loading";
 
   /**
    * Opens a source in the reading pane.
@@ -181,9 +210,10 @@ export function WellChat({ enabled }: { enabled: boolean }) {
       return;
     }
 
-    // Deferred past the scene's own height transition: the well shrinks by a
-    // hundred pixels at exactly this moment, and anchoring before it has
-    // finished lands a hundred pixels into the answer.
+    // Deferred by a frame or two so the answer has been laid out before it is
+    // measured. This used to wait out the well drawing's own height
+    // transition, which was ten times longer; with the illustration gone
+    // there is nothing left to wait for but the paint.
     const timer = setTimeout(() => {
       const answers = transcript.querySelectorAll<HTMLElement>("[data-answer]");
       const newest = answers[answers.length - 1];
@@ -194,7 +224,7 @@ export function WellChat({ enabled }: { enabled: boolean }) {
       const delta =
         newest.getBoundingClientRect().top - transcript.getBoundingClientRect().top;
       transcript.scrollTo({ top: transcript.scrollTop + delta - 12, behavior: "smooth" });
-    }, SCENE_TRANSITION_MS + 40);
+    }, 40);
 
     return () => clearTimeout(timer);
   }, [messages, phase]);
@@ -229,11 +259,12 @@ export function WellChat({ enabled }: { enabled: boolean }) {
         window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
       setInput("");
-      setFalling(trimmed);
-      setPhase("dropping");
+      setPhase("loading");
       setPane("chat");
       setTerms([]);
       setSteps([]);
+      setThinking([]);
+      setStage("plan");
       // The open document belongs to the answer being replaced. Leaving it up
       // beside a new question is showing the law for the previous one.
       setReading(null);
@@ -249,11 +280,10 @@ export function WellChat({ enabled }: { enabled: boolean }) {
         body: JSON.stringify({ question: trimmed, history, stream: true, mode }),
       });
 
-      await wait(still ? 0 : DROP_MS);
-      // The question joins the transcript when it lands, not when it is typed.
+      // The question joins the transcript at once. It used to be held back
+      // until the slip of paper landed in the drawing, which is 720ms of
+      // watching nothing happen now that there is no drawing.
       setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
-      setFalling("");
-      setPhase("loading");
 
       const startedAt = Date.now();
       let revealed = false;
@@ -276,12 +306,12 @@ export function WellChat({ enabled }: { enabled: boolean }) {
        */
       const trail: ResearchStep[] = [];
       /**
-       * Moves off the loading scene, but never sooner than MIN_LOAD_MS.
+       * Moves off the progress panel, but never sooner than MIN_LOAD_MS.
        *
        * Streaming made the floor matter more, not less: the first line can now
-       * arrive in a couple of hundred milliseconds, and without this the well's
-       * artefacts would appear and vanish, which reads as a glitch rather than
-       * as the well working.
+       * arrive in a couple of hundred milliseconds, and without this the stage
+       * rail would appear and vanish, which reads as a glitch rather than as
+       * the well working.
        */
       const reveal = () => {
         if (revealed) return;
@@ -314,7 +344,15 @@ export function WellChat({ enabled }: { enabled: boolean }) {
           switch (event.type) {
             case "plan":
               setTerms(event.terms);
+              setStage("retrieve");
               language = event.language;
+              break;
+            case "thinking":
+              // Capped for the same reason as the steps, and because this
+              // arrives in paragraphs: the panel shows the most recent, and
+              // holding every one of them for a four-minute run is a leak with
+              // no reader.
+              setThinking((prev) => [...prev, event.text].slice(-12));
               break;
             case "step":
               // Capped: a long run is dozens of calls and the reader wants the
@@ -325,6 +363,7 @@ export function WellChat({ enabled }: { enabled: boolean }) {
               );
               break;
             case "sources":
+              setStage("answer");
               // Creates the assistant turn, which is what fills the sources
               // pane — the law stands open beside the answer before a word of
               // the answer has been written.
@@ -471,76 +510,26 @@ export function WellChat({ enabled }: { enabled: boolean }) {
             }`}
           >
             <div ref={transcriptRef} className="min-h-0 flex-1 overflow-y-auto">
-              {/* Full size while the well is working — the drop and the
-                  artefacts are the whole point of the wait — and shrunk once
-                  there is an answer, which is then the thing worth the room. */}
-              <WellScene
-                phase={phase}
-                question={falling}
-                compact={phase === "answered" && messages.length > 0}
-              />
-
               {/* What the well is doing, while it does it.
-                  The planner's terms are the first thing that exists — a
-                  second or two in, against an answer that can take a minute —
-                  and they are worth showing because they say the question was
-                  understood and name the words the law is being searched for.
-                  Under them, the count of sources the search brought back;
-                  those are already standing open in the other pane by the time
-                  this appears. */}
-              {phase === "loading" && terms.length > 0 && (
-                <div className="px-4 pb-3">
-                  <div className="mx-auto max-w-[30rem] rounded-md border border-line bg-paper/60 px-3 py-2">
-                    <p className="text-[11px] uppercase tracking-wide text-inkSoft">
-                      Leitað í safninu
-                    </p>
-                    <p className="mt-1 flex flex-wrap gap-1.5">
-                      {terms.slice(0, 6).map((term) => (
-                        <span
-                          key={term}
-                          className="rounded bg-white px-1.5 py-0.5 text-[12px] text-ink shadow-sm"
-                        >
-                          {term}
-                        </span>
-                      ))}
-                    </p>
-                    {steps.length > 0 && (
-                      // What the research loop is doing, newest last, with the
-                      // reason it gave for each call. Only the last few while
-                      // it runs — the reader wants the shape of the search, not
-                      // a log — and the whole trail is kept on the answer.
-                      <ul className="mt-2 space-y-1.5 border-t border-line/60 pt-1.5">
-                        {steps.slice(-3).map((step, i) => (
-                          <li key={i} className="text-[11px] text-inkSoft">
-                            <span className="truncate">
-                              <span className="text-ink">
-                                {STEP_LABEL[step.name] ?? step.name}
-                              </span>
-                              {step.detail ? ` — ${step.detail}` : ""}
-                            </span>
-                            {step.why && (
-                              // The method, in the loop's own words. Indented
-                              // under the call it belongs to and never styled
-                              // as the answer: this is the well reasoning
-                              // aloud, not law.
-                              <span className="mt-0.5 block border-l border-line pl-2 italic leading-snug text-inkSoft/90">
-                                {step.why}
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {sources.length > 0 && (
-                      <p className="mt-1.5 text-[11px] text-inkSoft">
-                        {sources.length === 1
-                          ? "1 heimild fundin"
-                          : `${sources.length} heimildir fundnar`}{" "}
-                        — sjá hægra megin
-                      </p>
-                    )}
-                  </div>
-                </div>
+
+                  This used to be a drawing of a well — the question fell in on
+                  a slip of paper, article numbers arced back out — with a
+                  small box of search terms under it. The drawing was earning
+                  its place on the wait alone, and a research tool that answers
+                  with an illustration while it works is saying something about
+                  itself that the rest of this interface does not. The panel
+                  below spends the same seconds on what is actually known so
+                  far: the stage, the terms, the calls and the model's own
+                  reasoning. See components/WellProgress.tsx. */}
+              {phase === "loading" && (
+                <WellProgress
+                  stage={stage}
+                  mode={mode}
+                  terms={terms}
+                  sourceCount={sources.length}
+                  steps={steps}
+                  thinking={thinking}
+                />
               )}
 
               {messages.length === 0 && phase === "idle" && (
@@ -623,7 +612,7 @@ export function WellChat({ enabled }: { enabled: boolean }) {
                   disabled={busy || input.trim().length < 3}
                   className="rounded-md bg-accent px-3 py-2.5 text-[13px] font-medium text-white transition hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {busy ? "…" : "Sleppa ofan í"}
+                  {busy ? "…" : "Spyrja"}
                 </button>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -986,7 +975,7 @@ function ResearchTrail({ steps }: { steps: ResearchStep[] }) {
       <ol className="mt-2 space-y-2">
         {steps.map((step, i) => (
           <li key={i} className="text-[11px] leading-snug text-inkSoft">
-            <span className="text-ink">{i + 1}. {STEP_LABEL[step.name] ?? step.name}</span>
+            <span className="text-ink">{i + 1}. {stepLabel(step.name)}</span>
             {step.detail ? ` — ${step.detail}` : ""}
             {step.why && (
               <span className="mt-0.5 block border-l border-line pl-2 italic text-inkSoft/90">
@@ -1203,17 +1192,6 @@ function Spans({
 }
 
 /** What each tool is doing, in the language the panel is written in. */
-const STEP_LABEL: Record<string, string> = {
-  search_decisions: "Leitar í úrlausnum",
-  search_provisions: "Leitar í lagaákvæðum",
-  find_citing_cases: "Leitar að málum sem vísa til",
-  read_decision: "Les úrlausn",
-  read_provision: "Les ákvæði",
-  list_subject_tags: "Flettir upp efnisorðum",
-  cases_citing_provision: "Leitar að dómum um ákvæðið",
-  read_act_outline: "Les efnisyfirlit laga",
-  research_complete: "Lýkur rannsókn",
-};
 
 /**
  * The well folded away while it works.
@@ -1231,7 +1209,7 @@ function MinimisedWell({
   step: { name: string; detail: string } | null;
   onRestore: () => void;
 }) {
-  const label = step ? (STEP_LABEL[step.name] ?? "Leitar") : "Sæki lögin úr brunninum";
+  const label = step ? stepLabel(step.name) : "Sæki lögin úr brunninum";
   return (
     <button
       type="button"

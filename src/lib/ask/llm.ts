@@ -90,10 +90,29 @@ export interface CompleteRequest {
    * return value is identical either way — the complete answer — so nothing
    * downstream of `complete()` has to know which path ran.
    *
-   * Never the whole answer so far: only the new text. And never thinking
-   * tokens, which are not the answer and must not reach a reader.
+   * Never the whole answer so far: only the new text. And never thinking,
+   * which is not the answer: it arrives on `onThinking` below, on its own
+   * channel, so that the two can never be concatenated by accident.
    */
   onDelta?: (text: string) => void;
+  /**
+   * Called with the model's reasoning as it arrives, when the provider
+   * returns any.
+   *
+   * This is deliberately *not* `onDelta`. What comes back here is the model
+   * working out what it thinks — false starts, discarded readings, a
+   * provision it considers and rejects — and a reader who cannot tell it from
+   * the answer would take a discarded reading for a statement of law. It is
+   * rendered as the well's own working, under its own heading, never as
+   * prose; see the progress panel in components/WellProgress.tsx.
+   *
+   * Only Anthropic supplies it. OpenAI's chat-completions endpoint spends
+   * reasoning tokens — they are billed and reported in `onUsage` — but does
+   * not hand back any summary of them, so on that provider this is never
+   * called and the panel simply has nothing to show. That is a property of
+   * the endpoint, not a bug to be fixed here.
+   */
+  onThinking?: (text: string) => void;
 }
 
 export interface ExtractRequest<T> {
@@ -151,6 +170,16 @@ export interface RunToolsRequest {
   execute: (name: string, input: unknown) => Promise<string>;
   onStep?: (step: ToolStep) => void;
   onUsage?: (usage: AskUsage) => void;
+  /**
+   * The model's reasoning between tool calls, where the provider returns it.
+   *
+   * The research loop already reports *why* it made each call — the `why`
+   * argument every tool requires — but that is a sentence the model writes
+   * for the reader after it has decided. This is the deciding itself, and it
+   * is the part that shows a search going somewhere and being abandoned.
+   * Anthropic only, for the reason given on `CompleteRequest.onThinking`.
+   */
+  onThinking?: (text: string) => void;
   /**
    * Hard ceiling on model round-trips.
    *
@@ -310,7 +339,16 @@ class AnthropicAskModel implements AskModel {
       max_tokens: req.maxTokens,
       betas: [FALLBACK_BETA],
       fallbacks: "default" as const,
-      thinking: { type: "adaptive" as const },
+      // `display` decides whether the thinking blocks carry any text at all.
+      // The default on this model family is "omitted" — thinking still
+      // happens and is still billed, but the blocks come back empty — so
+      // asking for the summary is what makes the reasoning panel possible.
+      // Asked for only when a caller is listening: the evaluation harness and
+      // every non-interactive path take the cheaper default.
+      thinking: {
+        type: "adaptive" as const,
+        ...(req.onThinking ? { display: "summarized" as const } : {}),
+      },
       output_config: { effort: req.effort },
       // The system prompt is the same on every question and sits first in the
       // request, so caching it costs one write and is read back on every
@@ -326,13 +364,19 @@ class AnthropicAskModel implements AskModel {
     // is what makes that possible — it resolves to the complete message even
     // though the text has already been handed out in pieces.
     const response = req.onDelta
-      ? await this.streamed(params, req.onDelta)
+      ? await this.streamed(params, req.onDelta, req.onThinking)
       : await this.client.beta.messages.create(params);
 
     // Checked before the content is read: on a refusal `content` carries no
     // answer, and treating it as an empty string would put a blank card in
     // the well rather than an explanation.
     reportAnthropicUsage(req.onUsage, response.usage);
+
+    // The unstreamed path has the same thinking to report, all at once rather
+    // than as it was produced. Reported here too so that a caller watching the
+    // reasoning sees the same thing whichever path ran — the difference
+    // between them should be latency, not content.
+    if (req.onThinking && !req.onDelta) reportAnthropicThinking(req.onThinking, response.content);
 
     if (response.stop_reason === "refusal") {
       throw new AskRefusal(response.stop_details?.explanation ?? undefined);
@@ -358,12 +402,17 @@ class AnthropicAskModel implements AskModel {
    */
   private async streamed(
     params: Parameters<typeof this.client.beta.messages.create>[0] & object,
-    onDelta: (text: string) => void
+    onDelta: (text: string) => void,
+    onThinking?: (text: string) => void
   ): Promise<Anthropic.Beta.BetaMessage> {
     const stream = this.client.beta.messages.stream(
       params as Parameters<typeof this.client.beta.messages.stream>[0]
     );
     stream.on("text", onDelta);
+    // Two separate events, kept separate all the way to the screen. The SDK
+    // hands each one its own delta, so there is no point at which the answer
+    // and the reasoning are the same string.
+    if (onThinking) stream.on("thinking", (delta) => onThinking(delta));
     return stream.finalMessage();
   }
 
@@ -396,7 +445,10 @@ class AnthropicAskModel implements AskModel {
         max_tokens: req.maxTokens,
         betas: [FALLBACK_BETA],
         fallbacks: "default",
-        thinking: { type: "adaptive" },
+        thinking: {
+          type: "adaptive",
+          ...(req.onThinking ? { display: "summarized" as const } : {}),
+        },
         output_config: { effort: req.effort },
         // Stable prefix first, so the tools and the instructions are read from
         // cache on every round after the first. In a fifteen-round loop that is
@@ -414,6 +466,9 @@ class AnthropicAskModel implements AskModel {
       for (const block of response.content) {
         if (block.type === "text") text += block.text;
       }
+      // Before the tool calls are executed, so the reasoning reaches the
+      // reader in the order it was produced: the model thinks, then calls.
+      if (req.onThinking) reportAnthropicThinking(req.onThinking, response.content);
 
       // A server-tool turn that paused: append and re-send to continue.
       if (response.stop_reason === "pause_turn") {
@@ -499,6 +554,14 @@ class AnthropicAskModel implements AskModel {
 class OpenAIAskModel implements AskModel {
   private client = (openaiClient ??= new OpenAI());
   private model = askModelId("openai");
+
+  // `onThinking` is never called on this side, and the omission is the
+  // endpoint's rather than an oversight. These models reason before they
+  // answer — the tokens are spent, billed, and reported through `onUsage` as
+  // part of the completion — but chat-completions returns no summary of that
+  // reasoning, only the text it led to. So the well's reasoning panel is
+  // empty under this provider and populated under Anthropic, which is worth
+  // knowing before concluding the panel is broken.
 
   /**
    * The system prompt goes in a `developer` message, which is what the role
@@ -694,6 +757,24 @@ class OpenAIAskModel implements AskModel {
  * way to know what a question cost. Wrapped in try/catch because a usage
  * field that moved is not a reason to fail a question that was answered.
  */
+/**
+ * The thinking blocks of a finished message, handed over as one string each.
+ *
+ * Empty blocks are dropped rather than forwarded: with `display` left at its
+ * default every block is empty, and a panel that renders those shows a
+ * heading over nothing at all.
+ */
+function reportAnthropicThinking(
+  onThinking: (text: string) => void,
+  content: Anthropic.Beta.BetaMessage["content"]
+): void {
+  for (const block of content) {
+    if (block.type !== "thinking") continue;
+    const text = block.thinking.trim();
+    if (text) onThinking(text);
+  }
+}
+
 function reportAnthropicUsage(
   onUsage: ((usage: AskUsage) => void) | undefined,
   usage: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number | null } | undefined

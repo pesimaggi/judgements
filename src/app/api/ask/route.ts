@@ -49,7 +49,7 @@ function rateLimited(key: string): boolean {
  * The same question, from the same client, while the first one is still being
  * answered.
  *
- * A double-click on "Sleppa ofan í", or an impatient reload, otherwise buys
+ * A double-click on "Spyrja", or an impatient reload, otherwise buys
  * two full runs of a pipeline that makes two model calls — paid for twice, and
  * the reader sees whichever finishes second. The key is a hash so nothing here
  * holds a question in memory beyond the request that asked it.

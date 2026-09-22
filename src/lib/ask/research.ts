@@ -105,6 +105,13 @@ When research_complete is accepted, write two or three sentences on what you fou
 export interface ResearchOptions extends RetrieveOptions {
   /** Reported per tool call, for the metrics line and for the reader. */
   onStep?: (step: ToolStep) => void;
+  /**
+   * The model's reasoning between rounds, where the provider returns it.
+   *
+   * This is the stage worth watching it on: the loop runs for minutes, and
+   * the `why` on each call says what it decided but not what it weighed.
+   */
+  onThinking?: (text: string) => void;
 }
 
 export interface ResearchOutcome {
@@ -187,6 +194,7 @@ export async function deepResearch(
       maxRounds: config.researchMaxRounds,
       execute: (name, input) => session.run(name, input),
       onStep: options.onStep,
+      onThinking: options.onThinking,
       // The gate, made binding. A model that stops without calling
       // research_complete is sent the same objection the tool would have
       // given it and carries on; `maxRounds` still ends the loop either way.
