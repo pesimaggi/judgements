@@ -63,6 +63,16 @@ const DEFAULT_MODELS: Record<AskProvider, string> = {
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
 /**
+ * How much a thinking block must grow before the reader is sent it again.
+ *
+ * Each update carries the block from its start, so this is the trade between
+ * bandwidth and how live the panel feels. About a line of Icelandic prose:
+ * small enough that the reasoning visibly arrives, large enough that a long
+ * block is a couple of dozen updates rather than a thousand.
+ */
+const THINKING_CHUNK = 80;
+
+/**
  * What a call cost, where the provider says. Reported through a callback
  * rather than a return value so that adding it changed no signature and broke
  * no caller — a fake model in a test simply never calls it.
@@ -376,7 +386,11 @@ class AnthropicAskModel implements AskModel {
     // than as it was produced. Reported here too so that a caller watching the
     // reasoning sees the same thing whichever path ran — the difference
     // between them should be latency, not content.
-    if (req.onThinking && !req.onDelta) reportAnthropicThinking(req.onThinking, response.content);
+    // Both paths, not just the unstreamed one: on the streamed path the
+    // blocks below are the completed versions of the snapshots already sent,
+    // so each one extends what the reader has and replaces it rather than
+    // being appended again.
+    if (req.onThinking) reportAnthropicThinking(req.onThinking, response.content);
 
     if (response.stop_reason === "refusal") {
       throw new AskRefusal(response.stop_details?.explanation ?? undefined);
@@ -412,7 +426,27 @@ class AnthropicAskModel implements AskModel {
     // Two separate events, kept separate all the way to the screen. The SDK
     // hands each one its own delta, so there is no point at which the answer
     // and the reasoning are the same string.
-    if (onThinking) stream.on("thinking", (delta) => onThinking(delta));
+    //
+    // What goes out is the *block so far*, not the delta. Sending deltas put
+    // three or four characters on screen at a time, because a consumer cannot
+    // tell from a delta alone whether it continues the last one or begins a
+    // new thinking block — and `runTools` below reports whole blocks, so the
+    // panel would have had to handle both. One shape for both paths: every
+    // event carries a complete prefix of one block, and a consumer appends a
+    // new entry only when what arrives does not extend what it already has.
+    //
+    // Resent snapshots cost bandwidth, so they go out a line at a time rather
+    // than a character at a time. `finalMessage()` reports the finished blocks
+    // below, which flushes whatever the last threshold left behind.
+    if (onThinking) {
+      let sent = "";
+      stream.on("thinking", (_delta, snapshot) => {
+        const continues = snapshot.startsWith(sent);
+        if (continues && snapshot.length - sent.length < THINKING_CHUNK) return;
+        sent = snapshot;
+        onThinking(snapshot);
+      });
+    }
     return stream.finalMessage();
   }
 

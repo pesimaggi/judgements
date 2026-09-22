@@ -5,6 +5,7 @@ import { WellReader } from "./WellReader";
 import { markCitedIn, parseAnswer, type InlineSpan } from "@/lib/ask/render";
 import { FEEDBACK_KINDS, FEEDBACK_LABELS, type FeedbackKind } from "@/lib/ask/feedback";
 import { readAskEvents } from "@/lib/ask/sse";
+import { appendThinking } from "@/lib/ask/thinking";
 import type { AskSource, AskTurn } from "@/lib/ask/types";
 
 /**
@@ -348,11 +349,10 @@ export function WellChat({ enabled }: { enabled: boolean }) {
               language = event.language;
               break;
             case "thinking":
-              // Capped for the same reason as the steps, and because this
-              // arrives in paragraphs: the panel shows the most recent, and
-              // holding every one of them for a four-minute run is a leak with
-              // no reader.
-              setThinking((prev) => [...prev, event.text].slice(-12));
+              // One block per entry, folded by the rule in lib/ask/thinking.ts
+              // — which is where the comment explaining why lives, along with
+              // the tests for it.
+              setThinking((prev) => appendThinking(prev, event.text));
               break;
             case "step":
               // Capped: a long run is dozens of calls and the reader wants the
