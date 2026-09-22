@@ -1,4 +1,5 @@
 "use client";
+import { useEffect, useRef } from "react";
 
 /**
  * What the well is doing, while it does it.
@@ -209,19 +210,52 @@ export function WellProgress({
             <p className="text-[10px] uppercase tracking-[.16em] text-textMuted">
               Umhugsun
             </p>
-            {/* The most recent only. This arrives in paragraphs and would push
-                everything above it off the screen otherwise — and what was
-                being weighed two rounds ago is history the reader can no
-                longer act on. */}
-            <p className="mt-1.5 whitespace-pre-wrap text-[11px] leading-relaxed text-textMuted">
-              {thinking[thinking.length - 1]}
-            </p>
+            <ThinkingWindow text={thinking[thinking.length - 1] ?? ""} />
             <p className="mt-1.5 text-[10px] italic text-textMuted/80">
               Vinnunótur líkansins, ekki svarið — og ekki lögfræðiráðgjöf.
             </p>
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The reasoning as it arrives, in a window that follows it.
+ *
+ * A fixed height with the scroll pinned to the bottom, rather than a
+ * paragraph that grows: a thinking block runs to several hundred words, and
+ * letting it set its own height pushes the stage rail and the search terms —
+ * the things a reader is actually tracking — off the top of the panel. The
+ * newest sentence is the one worth showing, and the rest stays scrollable for
+ * anyone who wants to read back.
+ *
+ * Pinned only while the reader has not taken over. Yanking the view back to
+ * the bottom every 80 characters while somebody is reading further up is the
+ * behaviour that makes live logs unusable.
+ */
+function ThinkingWindow({ text }: { text: string }) {
+  const box = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
+
+  useEffect(() => {
+    const el = box.current;
+    if (el && pinned.current) el.scrollTop = el.scrollHeight;
+  }, [text]);
+
+  return (
+    <div
+      ref={box}
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        // A couple of lines of slack, so a smooth scroll that lands a pixel
+        // short does not read as the reader having scrolled away.
+        pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+      }}
+      className="mt-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-textMuted"
+    >
+      {text}
     </div>
   );
 }
