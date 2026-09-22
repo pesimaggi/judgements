@@ -138,7 +138,9 @@ export function HelpDialog({ open, onClose }: Props) {
           </div>
 
           <div className="shrink-0 border-line bg-paper px-6 pb-5 pt-[18px] md:w-[296px] md:border-l">
-            <h3 className="mb-2 text-[11px] uppercase tracking-[.12em] text-inkSoft">Brunnurinn</h3>
+            <h3 className="mb-2 text-[11px] uppercase tracking-[.12em] text-inkSoft">
+              Brunnurinn AI
+            </h3>
             <p className="font-serif text-[13.5px] leading-relaxed text-text">
               Spurðu heilli spurningu — „Hvenær má víkja frá andmælareglu?“ — og Brunnurinn leitar
               sjálfur í lögum, ákvæðum og úrlausnum og svarar í samfelldu máli.
@@ -161,7 +163,7 @@ export function HelpDialog({ open, onClose }: Props) {
               }}
               className="mt-3 inline-block rounded-[3px] border border-ink px-3.5 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-glacier"
             >
-              Opna Brunninn
+              Opna Brunninn AI
             </button>
           </div>
         </div>

@@ -103,7 +103,7 @@ function MastheadInner() {
               onClick={() => window.dispatchEvent(new CustomEvent("logbrunnur:open-well"))}
               className="text-[#B9C7D4] transition-colors hover:text-white"
             >
-              Brunnurinn
+              Brunnurinn AI
             </button>
             <button
               type="button"
