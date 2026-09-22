@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { HelpDialog } from "./HelpDialog";
 import { HelpIcon } from "./icons";
+import { AccountControls } from "./auth/AccountControls";
 
 /**
  * The masthead: the wordmark and the nav, on every page.
@@ -55,7 +56,7 @@ export function Masthead() {
             </span>
           </Link>
 
-          <nav className="ml-auto flex items-center gap-5 text-[13px]">
+          <nav className="ml-auto flex flex-wrap items-center gap-x-5 gap-y-3 text-[13px]">
             {navLink("/", "Úrlausnir", pathname === "/")}
             {navLink("/log", "Lög", pathname.startsWith("/log"))}
             <button
@@ -73,6 +74,7 @@ export function Masthead() {
               <HelpIcon className="h-3.5 w-3.5 text-gold" />
               Leiðbeiningar
             </button>
+            <AccountControls />
           </nav>
         </div>
       </header>

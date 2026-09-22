@@ -1,11 +1,11 @@
 # docs
 
-Six files, and it is not obvious from the names which are describing today,
-which are describing a decision made once, and which are proposing something
-not yet built. That is what this index is for.
+These files describe the current application, decisions made along the way, and
+proposals for future work. This index distinguishes them.
 
 | File | What it is | Trust it for |
 |---|---|---|
+| **[authentication.md](authentication.md)** | Current Clerk integration, data model, provider setup and deployment checklist. | How to enable optional accounts without gating public research. |
 | **[ai-answer-evaluation.md](ai-answer-evaluation.md)** | A human-reviewed log of real AI answers, scored by hand. Live and actively being added to. | What the well is doing *now*, and what is wrong with it. This is where the current round of work is judged. |
 | **[well-roadmap.md](well-roadmap.md)** | The plan for making the well competitive, and the diagnosis behind it. Roughly half has shipped — read its *Where this stands* table first. | Why a thing was done, and what is left. Its diagnosis sections are written in the present tense about problems that are in several cases fixed. |
 | **[icelandic-lemmatisation.md](icelandic-lemmatisation.md)** | How the search index learned that Icelandic words inflect: BÍN, the two vectors, the trade-offs, the measured costs. Current. | How lemma matching works today, and how to run or extend it. |
