@@ -138,6 +138,27 @@ export function groupKeys(group: SourceGroup): string[] {
   return [...group.keys, ...(group.subGroups ?? []).flatMap((s) => s.keys)];
 }
 
+/**
+ * What the search runs over before anybody chooses anything: the courts.
+ *
+ * The page used to open with nothing ticked and treat that as "everything",
+ * which made the first click on a source read as *removing* it from a
+ * selection of 57 nobody had made. A concrete default fixes that — the boxes
+ * now say what is being searched, and ticking one means what it looks like.
+ *
+ * The courts rather than the whole corpus because the whole corpus is the
+ * wrong first answer: a query for a subject returns immigration board rulings
+ * by the hundred, and they bury the judgments. Choosing a different default
+ * per reader is the next thing this wants, once there is somewhere to keep
+ * that choice.
+ */
+export const DEFAULT_GROUP_ID = "domstolar";
+
+export function defaultSourceKeys(available: Set<string>): string[] {
+  const group = SOURCE_TREE.find((g) => g.id === DEFAULT_GROUP_ID);
+  return group ? groupKeys(group).filter((k) => available.has(k)) : [];
+}
+
 /** Every key in the tree, in the order the panel renders them. */
 export function allTreeKeys(): string[] {
   return SOURCE_TREE.flatMap(groupKeys);
@@ -155,11 +176,11 @@ export interface FilterChip {
 /**
  * What the chip row should render for a selection.
  *
- * The point of the redesign: 57 chips said nothing that "everything" would not
- * have said in one word, so the default — all sources, or none ticked, which
- * the search treats as all — renders no chips at all. A category that is
- * entirely chosen collapses to one pill; a category chosen in part names the
- * sources, because that is the state where which ones matters.
+ * The point of the redesign: 57 chips said nothing that "everything" would
+ * not have said in one word, so a selection of everything renders no chips at
+ * all and the bar says so in words instead. A category that is entirely
+ * chosen collapses to one pill; a category chosen in part names the sources,
+ * because that is the state where which ones matters.
  *
  * `nameOf` resolves a key to the source's own name. It is passed in rather
  * than read from SOURCES here so the panel can label a chip with whatever the

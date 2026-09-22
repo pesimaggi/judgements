@@ -9,6 +9,8 @@ interface Props {
   selected: Set<string>;
   onToggleSource: (key: string) => void;
   onSetSources: (keys: string[], on: boolean) => void;
+  /** Replace the whole selection with these — the "aðeins" affordance. */
+  onOnlySources: (keys: string[]) => void;
 }
 
 /**
@@ -24,8 +26,20 @@ interface Props {
  * Search inside the panel is not a nicety: with the tree collapsed, a source
  * whose group you cannot guess is unreachable. Matching therefore looks
  * *inside* collapsed groups and opens them.
+ *
+ * Two intents, two controls. The checkbox adds and removes, as a checkbox
+ * must. "Aðeins" replaces the selection outright, because the common request
+ * — "just the Supreme Court" — is otherwise four unticks, and doing it by
+ * unticking is precisely what makes a checkbox feel like it did the opposite
+ * of what was asked.
  */
-export function SourcePanel({ sources, selected, onToggleSource, onSetSources }: Props) {
+export function SourcePanel({
+  sources,
+  selected,
+  onToggleSource,
+  onSetSources,
+  onOnlySources,
+}: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   // The panel only auto-opens once, when the source list first arrives.
@@ -126,6 +140,7 @@ export function SourcePanel({ sources, selected, onToggleSource, onSetSources }:
             onToggleExpanded={toggleExpanded}
             onToggleSource={onToggleSource}
             onSetSources={onSetSources}
+            onOnlySources={onOnlySources}
             needle={needle}
             visibleKeys={visibleKeys}
           />
@@ -144,6 +159,7 @@ interface GroupProps {
   onToggleExpanded: (id: string) => void;
   onToggleSource: (key: string) => void;
   onSetSources: (keys: string[], on: boolean) => void;
+  onOnlySources: (keys: string[]) => void;
   needle: string;
   visibleKeys: (keys: string[], containerName: string) => string[];
 }
@@ -157,6 +173,7 @@ function Group({
   onToggleExpanded,
   onToggleSource,
   onSetSources,
+  onOnlySources,
   needle,
   visibleKeys,
 }: GroupProps) {
@@ -182,7 +199,7 @@ function Group({
   const admin = group.id === "stjornsysla";
 
   return (
-    <div className="border-t border-lineSoft">
+    <div className="group/row border-t border-lineSoft">
       <div
         className="flex items-center gap-2.5 py-2 pl-2.5 pr-3"
         style={{
@@ -208,6 +225,7 @@ function Group({
           </span>
           <Caret open={open} />
         </button>
+        <OnlyButton name={group.name} onClick={() => onOnlySources(keys)} />
       </div>
 
       {open && (
@@ -218,6 +236,7 @@ function Group({
               name={byKey.get(key)?.name ?? key}
               checked={selected.has(key)}
               onChange={() => onToggleSource(key)}
+              onOnly={() => onOnlySources([key])}
               needle={needle}
             />
           ))}
@@ -235,6 +254,7 @@ function Group({
                   onToggleExpanded={onToggleExpanded}
                   onToggleSource={onToggleSource}
                   onSetSources={onSetSources}
+                  onOnlySources={onOnlySources}
                   needle={needle}
                   visible={visibleKeys(sub.keys, sub.name)}
                 />
@@ -256,6 +276,7 @@ function SubGroup({
   onToggleExpanded,
   onToggleSource,
   onSetSources,
+  onOnlySources,
   needle,
   visible,
 }: {
@@ -267,6 +288,7 @@ function SubGroup({
   onToggleExpanded: (id: string) => void;
   onToggleSource: (key: string) => void;
   onSetSources: (keys: string[], on: boolean) => void;
+  onOnlySources: (keys: string[]) => void;
   needle: string;
   visible: string[];
 }) {
@@ -276,7 +298,7 @@ function SubGroup({
   const all = chosen === keys.length;
 
   return (
-    <div>
+    <div className="group/row">
       <div className="flex items-center gap-2 py-[3px] text-xs text-textMuted">
         <Checkbox
           checked={all}
@@ -295,6 +317,7 @@ function SubGroup({
           <span>{chosen > 0 ? `${chosen}/${keys.length}` : keys.length}</span>
           <Caret open={open} />
         </button>
+        <OnlyButton name={sub.name} onClick={() => onOnlySources(keys)} />
       </div>
       {open && (
         <div className="flex flex-col gap-0.5 pb-1.5 pl-[22px]">
@@ -304,6 +327,7 @@ function SubGroup({
               name={byKey.get(key)?.name ?? key}
               checked={selected.has(key)}
               onChange={() => onToggleSource(key)}
+              onOnly={() => onOnlySources([key])}
               needle={needle}
             />
           ))}
@@ -317,20 +341,44 @@ function SourceCheckbox({
   name,
   checked,
   onChange,
+  onOnly,
   needle,
 }: {
   name: string;
   checked: boolean;
   onChange: () => void;
+  onOnly: () => void;
   needle: string;
 }) {
   return (
-    <label className="flex cursor-pointer items-start gap-2.5 py-0.5 text-[12.5px] leading-[1.35] text-inkSoft">
-      <Checkbox checked={checked} onChange={onChange} small className="mt-0.5" />
-      <span>
-        <Highlighted text={name} needle={needle} />
-      </span>
-    </label>
+    <div className="group/row flex items-start gap-2.5">
+      <label className="flex flex-1 cursor-pointer items-start gap-2.5 py-0.5 text-[12.5px] leading-[1.35] text-inkSoft">
+        <Checkbox checked={checked} onChange={onChange} small className="mt-0.5" />
+        <span>
+          <Highlighted text={name} needle={needle} />
+        </span>
+      </label>
+      <OnlyButton name={name} onClick={onOnly} />
+    </div>
+  );
+}
+
+/**
+ * "Only this one." Hidden until the row is hovered or the button is focused,
+ * because it is the second thing anyone wants from a row and showing 57 of
+ * them at rest would be its own wall.
+ */
+function OnlyButton({ name, onClick }: { name: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={`Leita aðeins í ${name}`}
+      aria-label={`Leita aðeins í ${name}`}
+      className="mt-0.5 shrink-0 text-[11px] text-textMuted opacity-0 transition-opacity hover:text-ink focus:opacity-100 group-hover/row:opacity-100"
+    >
+      aðeins
+    </button>
   );
 }
 

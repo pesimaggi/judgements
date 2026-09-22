@@ -1,7 +1,13 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { SOURCES } from "./sources";
-import { SOURCE_TREE, allTreeKeys, groupKeys, activeFilterChips } from "./source-tree";
+import {
+  SOURCE_TREE,
+  allTreeKeys,
+  groupKeys,
+  activeFilterChips,
+  defaultSourceKeys,
+} from "./source-tree";
 
 /**
  * The tree is a hand-kept copy of a list that is generated elsewhere, which is
@@ -35,6 +41,34 @@ describe("SOURCE_TREE covers the live sources", () => {
     // search API rejects as unknown.
     const pilots = ["althingi-frumvorp"];
     for (const key of pilots) assert.ok(!tree.includes(key), `${key} is a pilot`);
+  });
+});
+
+describe("defaultSourceKeys", () => {
+  const live = new Set(SOURCES.map((s) => s.key));
+
+  test("the page opens on the Icelandic courts", () => {
+    const keys = defaultSourceKeys(live);
+    assert.deepEqual(
+      keys,
+      groupKeys(SOURCE_TREE.find((g) => g.id === "domstolar")!),
+      "the default is the courts group, in the tree's own order"
+    );
+  });
+
+  test("every default key is a source the API offers", () => {
+    // The default is what the first request is made with: a stale key here is
+    // a search that 400s before anybody has touched a control.
+    for (const key of defaultSourceKeys(live)) assert.ok(live.has(key), key);
+  });
+
+  test("a source the API does not offer is dropped rather than searched", () => {
+    const partial = new Set(["haestirettur", "landsrettur"]);
+    assert.deepEqual(defaultSourceKeys(partial), ["haestirettur", "landsrettur"]);
+  });
+
+  test("the default is never empty, which would be a page with no results", () => {
+    assert.ok(defaultSourceKeys(live).length > 0);
   });
 });
 
