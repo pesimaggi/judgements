@@ -92,6 +92,17 @@ export interface SearchHit {
    * needed it. See lib/search/meilisearch.ts.
    */
   isFuzzy: boolean;
+  /**
+   * The provision this judgment turns on, as the judgment itself cites it —
+   * "1. mgr. 175. gr. laga nr. 91/1991". One line on the result row, and the
+   * fastest way to tell two cases with similar titles apart.
+   *
+   * Filled in by the search route from CaseProvisionLink rather than by a
+   * provider: it is the same join whichever engine found the hit. Absent for
+   * a document the citation job has not linked, which is every scholarship
+   * and travaux document by design — see NON_DECISION_SOURCE_KEYS.
+   */
+  citedProvision?: string | null;
 }
 
 export interface SearchResponse {

@@ -43,6 +43,22 @@ function HomeCasesSkeleton() {
   );
 }
 
+/**
+ * The same white panel the results sit in, so the front page and a result
+ * page are one surface rather than two — the rows inside carry their own
+ * dividers and need a frame around them.
+ */
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-[3px] border border-line bg-white">
+      <div className="border-b border-line px-5 py-3 text-[11px] uppercase tracking-[.1em] text-textMuted">
+        {title}
+      </div>
+      {children}
+    </section>
+  );
+}
+
 /** Front-page widget shown before any search: a random featured case, then the newest arrivals. */
 export function HomeCases() {
   const [data, setData] = useState<HomeCasesData | null>(null);
@@ -62,41 +78,41 @@ export function HomeCases() {
     return (
       <>
         <span className="sr-only" role="status">
-          Loading cases…
+          Sæki úrlausnir…
         </span>
         <HomeCasesSkeleton />
       </>
     );
   }
 
-  if (!data || (!data.featured && data.newest.length === 0)) {
+  // `newest` is guarded rather than trusted: a failed request resolves to
+  // whatever JSON the route produced for its error, and a front page that
+  // throws on a 500 from one widget is worse than one without the widget.
+  if (!data || (!data.featured && !data.newest?.length)) {
     return (
-      <div className="rounded-lg border border-dashed border-line p-10 text-center text-sm text-inkSoft">
-        <p className="font-serif text-lg text-ink">Nothing is searched by default.</p>
+      <div className="rounded-[3px] border border-dashed border-line p-10 text-center text-sm text-textMuted">
+        <p className="font-heading text-lg text-ink">Ekkert er leitað sjálfgefið.</p>
         <p className="mt-1">
-          Tick the courts you want on the left, then search words, phrases, case numbers or parties.
+          Leitaðu að orðum, orðasamböndum, málsnúmeri eða aðilum — eða veldu heimildir til
+          vinstri og þrengdu leitina.
         </p>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-[18px]">
       {data.featured && (
-        <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-accent">🎲 Featured case</p>
+        <Panel title="Úrlausn dagsins">
           <ResultCard hit={data.featured} query="" />
-        </div>
+        </Panel>
       )}
-      {data.newest.length > 0 && (
-        <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-inkSoft">Newest cases</p>
-          <div className="flex flex-col gap-3">
-            {data.newest.map((h) => (
-              <ResultCard key={h.id} hit={h} query="" />
-            ))}
-          </div>
-        </div>
+      {data.newest?.length > 0 && (
+        <Panel title="Nýjast í safninu">
+          {data.newest.map((h) => (
+            <ResultCard key={h.id} hit={h} query="" />
+          ))}
+        </Panel>
       )}
     </div>
   );

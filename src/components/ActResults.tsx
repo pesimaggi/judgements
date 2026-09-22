@@ -7,6 +7,8 @@ export interface ActSearchHit {
   jurisdiction: string;
   title: string;
   citation: string;
+  /** Title and number in one string — what a filter chip has to say. */
+  fullLabel: string;
   path: string;
   provisionCount: number;
   citingCases: number;
@@ -19,6 +21,8 @@ export interface ProvisionSearchHit {
   id: string;
   actId: string;
   displayLabel: string;
+  /** "13. gr. laga nr. 37/1993" — the provision cited in full. */
+  fullLabel: string;
   heading: string | null;
   snippet: string;
   citation: string;

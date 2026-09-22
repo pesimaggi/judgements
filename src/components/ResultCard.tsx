@@ -3,13 +3,34 @@ import Link from "next/link";
 import type { SearchHit } from "@/lib/types";
 import { isScholarship } from "@/lib/sources";
 import { SnippetHtml } from "./HighlightedText";
+import { FolderIcon } from "./icons";
 
+/**
+ * One result, as a row rather than a card.
+ *
+ * Fifteen bordered cards on a page read as fifteen separate things to
+ * consider; a list of rows reads as one list to scan, which is what a result
+ * set is. The row carries what tells two judgments apart — court, case
+ * number, title, the matched passage — with the dates and links in a rail on
+ * the right, out of the way of the scan but in the same place on every row.
+ *
+ * The whole row is the link. The title's own link is the real one and it
+ * stretches over the row through `after:absolute`, which keeps the HTML
+ * valid — an <a> wrapping the tags and the rail's links would not be — and
+ * leaves the keyboard with a single sensible tab stop per result.
+ */
 export function ResultCard({ hit, query }: { hit: SearchHit; query: string }) {
   const dateStr = hit.date
-    ? new Date(hit.date).toLocaleDateString("is-IS", { day: "numeric", month: "short", year: "numeric" })
-    : hit.year ? String(hit.year) : "—";
+    ? new Date(hit.date).toLocaleDateString("is-IS", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      })
+    : hit.year
+      ? String(hit.year)
+      : "—";
 
-  // A journal article is its author's work, not a public record, so the card
+  // A journal article is its author's work, not a public record, so the row
   // leads to the journal that published it rather than to our copy. The copy
   // is what made the article findable in the first place; it is not ours to
   // put on a page of our own. Judgments keep the in-app reader.
@@ -18,122 +39,151 @@ export function ResultCard({ hit, query }: { hit: SearchHit; query: string }) {
     ? hit.officialUrl
     : `/document/${hit.id}?q=${encodeURIComponent(query)}`;
 
+  const title = hit.caseName ?? hit.title;
+
   return (
-    <article className="rounded-lg border border-line bg-white p-4">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-inkSoft">
-        {hit.caseNumber && (
-          <span className="rounded bg-paper px-1.5 py-0.5 font-mono text-[11px] font-semibold text-ink">
-            {hit.caseNumber}
+    <article className="relative flex flex-col gap-4 border-b border-lineSoft px-5 py-[17px] transition-colors hover:bg-paper sm:flex-row sm:gap-6">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-[11.5px] text-textMuted">
+          <span className="border-l-2 border-gold pl-2 text-[10.5px] font-semibold uppercase tracking-[.09em] text-inkSoft">
+            {hit.court}
           </span>
-        )}
-        <span className="font-medium text-ink">{hit.court}</span>
-        <span>{dateStr}</span>
-        {hit.isSample && (
-          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
-            Sample data
-          </span>
-        )}
-        {/*
-          This result did not match what was typed — it was reached by
-          near-match on the case number, title or party name. Worth saying out
-          loud: for a case number a near-match is a *different case*, and
-          without the mark it sits at the top of the page looking like the
-          answer. `title` carries the longer explanation on hover.
-        */}
-        {hit.isFuzzy && (
-          <span
-            className="rounded bg-sky-100 px-1.5 py-0.5 text-[11px] font-medium text-sky-800"
-            title="Fannst ekki nákvæmlega eins og leitað var að — þetta er svipuð niðurstaða. Athugaðu málsnúmerið."
-          >
-            Svipuð niðurstaða
-          </span>
-        )}
-      </div>
+          {hit.caseNumber && (
+            <>
+              <span aria-hidden className="text-[#A9B9C9]">
+                —
+              </span>
+              <span className="font-serif text-[13px] font-semibold tabular-nums text-ink">
+                {hit.caseNumber}
+              </span>
+            </>
+          )}
+          {hit.isSample && (
+            <span className="rounded-[3px] bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
+              Sýnigögn
+            </span>
+          )}
+          {/*
+            This result did not match what was typed — it was reached by
+            near-match on the case number, title or party name. Worth saying
+            out loud: for a case number a near-match is a *different case*,
+            and without the mark it sits at the top of the page looking like
+            the answer.
+          */}
+          {hit.isFuzzy && (
+            <span
+              className="rounded-[3px] bg-sky-100 px-1.5 py-0.5 text-[11px] font-medium text-sky-800"
+              title="Fannst ekki nákvæmlega eins og leitað var að — þetta er svipuð niðurstaða. Athugaðu málsnúmerið."
+            >
+              Svipuð niðurstaða
+            </span>
+          )}
+        </div>
 
-      <h3 className="mt-1.5 font-serif text-lg font-semibold leading-snug">
-        {scholarship ? (
-          <a href={openHref} target="_blank" rel="noopener noreferrer" className="hover:underline">
-            {hit.caseName ?? hit.title} <span className="text-sm font-normal text-inkSoft">↗</span>
-          </a>
-        ) : (
-          <Link href={openHref} className="hover:underline">
-            {hit.caseName ?? hit.title}
-          </Link>
+        <h3 className="mt-[7px] font-heading text-[19px] font-medium leading-[1.3] text-ink">
+          {scholarship ? (
+            <a
+              href={openHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="after:absolute after:inset-0 hover:underline"
+            >
+              {title} <span className="text-sm font-normal text-textMuted">↗</span>
+            </a>
+          ) : (
+            <Link href={openHref} className="after:absolute after:inset-0 hover:underline">
+              {title}
+            </Link>
+          )}
+        </h3>
+        {hit.caseName && hit.caseName !== hit.title && (
+          <p className="mt-0.5 text-[12.5px] text-textMuted">{hit.title}</p>
         )}
-      </h3>
-      {hit.caseName && hit.caseName !== hit.title && (
-        <p className="text-sm text-inkSoft">{hit.title}</p>
-      )}
 
-      {hit.snippet && (
-        <p className="mt-2 text-sm leading-relaxed text-inkSoft">
-          <SnippetHtml html={hit.snippet} /> …
-        </p>
-      )}
+        {hit.snippet && (
+          <p className="mt-[7px] max-w-[70ch] font-serif text-[14.5px] leading-[1.6] text-text">
+            <SnippetHtml html={hit.snippet} /> …
+          </p>
+        )}
 
-      {hit.summary && (
-        <details className="group mt-2">
-          <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-xs font-medium text-accent hover:underline [&::-webkit-details-marker]:hidden">
-            <span className="transition-transform group-open:rotate-90" aria-hidden="true">▸</span>
-            Útdráttur
-            <span className="font-normal text-inkSoft">(summary)</span>
-          </summary>
-          <div className="mt-2 border-l-2 border-line pl-3 font-serif text-[15px] leading-relaxed text-ink">
-            {hit.summary.split("\n\n").map((paragraph, i) => (
-              <p key={i} className="mb-2 last:mb-0">
-                {paragraph}
-              </p>
-            ))}
-          </div>
-        </details>
-      )}
+        <div className="relative z-10 mt-[11px] flex flex-wrap items-center gap-2">
+          {hit.summary && (
+            <details className="group/summary w-full">
+              <summary className="inline-flex w-fit cursor-pointer list-none items-center gap-[7px] rounded-[3px] border border-moss bg-mossSoft px-[11px] py-1 text-xs font-medium text-mossText transition-colors hover:bg-[#DCE5DC] [&::-webkit-details-marker]:hidden">
+                <span aria-hidden className="text-[9px] group-open/summary:hidden">
+                  ▸
+                </span>
+                <span aria-hidden className="hidden text-[9px] group-open/summary:inline">
+                  ▾
+                </span>
+                Útdráttur dómsins
+              </summary>
+              <div className="mt-2.5 border-l-2 border-moss bg-[#F6F8F6] px-3.5 py-[11px]">
+                <div className="mb-[5px] text-[10px] uppercase tracking-[.12em] text-moss">
+                  Útdráttur
+                </div>
+                {hit.summary.split("\n\n").map((paragraph, i) => (
+                  <p
+                    key={i}
+                    className="mb-2 max-w-[68ch] font-serif text-sm leading-[1.62] text-text last:mb-0"
+                  >
+                    {paragraph}
+                  </p>
+                ))}
+              </div>
+            </details>
+          )}
 
-      {hit.subjectTags.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
           {hit.subjectTags.map((t) => (
             <Link
               key={t}
               href={`/?tag=${encodeURIComponent(t)}`}
-              className="rounded-full bg-paper px-2 py-0.5 text-[11px] text-inkSoft hover:bg-line hover:text-ink"
-              title={`Show other cases tagged "${t}"`}
+              className="rounded-full bg-[#F1F4F8] px-2.5 py-[3px] text-[11px] text-inkSoft transition-colors hover:bg-glacier hover:text-ink"
+              title={`Sýna aðrar úrlausnir merktar „${t}“`}
             >
               {t}
             </Link>
           ))}
         </div>
-      )}
+      </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
-        {scholarship ? (
+      <div className="relative z-10 flex shrink-0 flex-row flex-wrap items-center gap-x-4 gap-y-2 border-lineSoft sm:w-[176px] sm:flex-col sm:items-stretch sm:border-l sm:pl-5">
+        <div className="text-xs text-text">{dateStr}</div>
+        {hit.citedProvision && (
+          <div className="text-[11.5px] leading-[1.45] text-textMuted">
+            Vísar í {hit.citedProvision}
+          </div>
+        )}
+        {/* The slot is reserved deliberately: saving a judgment to a folder is
+            the next thing this page needs and the rail is where it goes. It
+            is disabled rather than absent so the layout it will live in is
+            the layout being reviewed. */}
+        {!scholarship && (
+          <button
+            type="button"
+            disabled
+            title="Væntanlegt"
+            className="inline-flex cursor-not-allowed items-center justify-center gap-[7px] rounded-[3px] border border-lineStrong px-2.5 py-1.5 text-[11.5px] font-medium text-textMuted opacity-60"
+          >
+            <FolderIcon className="h-[13px] w-[13px]" />
+            Vista í möppu
+          </button>
+        )}
+        <a
+          href={hit.officialUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[11px] text-textMuted hover:text-ink hover:underline"
+        >
+          Opinber heimild ↗
+        </a>
+        {hit.pdfUrl && !scholarship && (
           <a
-            href={openHref}
+            href={hit.pdfUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="rounded bg-ink px-2.5 py-1 text-xs font-medium text-white hover:bg-inkSoft"
+            className="text-[11px] text-textMuted hover:text-ink hover:underline"
           >
-            Read at publisher ↗
-          </a>
-        ) : (
-          <>
-            <Link
-              href={openHref}
-              className="rounded bg-ink px-2.5 py-1 text-xs font-medium text-white hover:bg-inkSoft"
-            >
-              Open full text
-            </Link>
-            <a href={hit.officialUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-accent hover:underline">
-              Official source ↗
-            </a>
-          </>
-        )}
-        {/*
-          No direct PDF link for an article. The file is the journal's own, but
-          linking it lands the reader on a bare document instead of the page
-          the journal publishes it on — the byline, the licence terms, the
-          issue it belongs to. One route in, and it is theirs.
-        */}
-        {hit.pdfUrl && !scholarship && (
-          <a href={hit.pdfUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-inkSoft hover:underline">
             PDF ↗
           </a>
         )}

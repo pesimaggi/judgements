@@ -1,6 +1,8 @@
 "use client";
-import { useState } from "react";
-import { groupedSources, type SourceDef } from "@/lib/sources";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { SourceDef } from "@/lib/sources";
+import { SOURCE_TREE, groupKeys, type SourceGroup, type SourceSubGroup } from "@/lib/source-tree";
+import { SearchIcon } from "./icons";
 
 interface Props {
   sources: SourceDef[];
@@ -10,118 +12,390 @@ interface Props {
 }
 
 /**
- * Above this many sources, a group is collapsed until the reader opens it.
+ * Heimildir — which of the 57 sources the search runs over.
  *
- * The panel used to be eight checkboxes and a flat list was right for it.
- * With the 41 úrskurðarnefndir it is not: a list that long buries the courts
- * above it and makes the panel taller than the results beside it. So a big
- * group folds down to one line — its name and how many of it are ticked —
- * and opens on a click. A group with something already ticked opens itself,
- * because a filter you cannot see is a filter you will forget you set.
+ * A flat list of 57 checkboxes was unusable in both directions: it buried the
+ * courts under forty appeal boards, and it made "everything administrative"
+ * a forty-click operation. So the panel is the hierarchy in
+ * lib/source-tree.ts, collapsed to five rows, each of which can be ticked
+ * whole. Nothing about the query changes — the search still receives a flat
+ * list of source keys.
+ *
+ * Search inside the panel is not a nicety: with the tree collapsed, a source
+ * whose group you cannot guess is unreachable. Matching therefore looks
+ * *inside* collapsed groups and opens them.
  */
-const COLLAPSE_ABOVE = 8;
+export function SourcePanel({ sources, selected, onToggleSource, onSetSources }: Props) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState("");
+  // The panel only auto-opens once, when the source list first arrives.
+  // After that the open/closed state is the reader's: a group that reopened
+  // itself every time a box was ticked would fight whoever is using it.
+  const seeded = useRef(false);
 
-function Check({ checked, onChange, label }: {
-  checked: boolean; onChange: () => void; label: string;
-}) {
+  const byKey = useMemo(() => new Map(sources.map((s) => [s.key, s])), [sources]);
+  const available = useMemo(() => new Set(sources.map((s) => s.key)), [sources]);
+  const allKeys = useMemo(() => sources.map((s) => s.key), [sources]);
+  const allChosen = allKeys.length > 0 && allKeys.every((k) => selected.has(k));
+
+  useEffect(() => {
+    if (seeded.current || sources.length === 0) return;
+    seeded.current = true;
+    // A filter you cannot see is a filter you will forget you set — so a
+    // group holding part of the selection opens itself. "Everything is
+    // ticked" is the default rather than a filter, and opening all five
+    // groups for it would put the wall straight back.
+    const everything = sources.every((s) => selected.has(s.key));
+    if (selected.size === 0 || everything) return;
+    const open = new Set<string>();
+    for (const group of SOURCE_TREE) {
+      if (groupKeys(group).some((k) => selected.has(k))) open.add(group.id);
+      for (const sub of group.subGroups ?? []) {
+        if (sub.keys.some((k) => selected.has(k))) open.add(sub.id);
+      }
+    }
+    setExpanded(open);
+  }, [sources, selected]);
+
+  const toggleExpanded = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const needle = query.trim().toLowerCase();
+  const matches = (key: string) => (byKey.get(key)?.name ?? key).toLowerCase().includes(needle);
+
+  /** The keys a group or subgroup shows for the current search. */
+  const visibleKeys = (keys: string[], containerName: string) => {
+    const live = keys.filter((k) => available.has(k));
+    if (!needle) return live;
+    // A group whose own name matches shows everything under it: someone
+    // typing "dómstólar" means the category, not one court in it.
+    if (containerName.toLowerCase().includes(needle)) return live;
+    return live.filter(matches);
+  };
+
+  const selectedCount = selected.size === 0 ? allKeys.length : selected.size;
+
   return (
-    <label className={`flex cursor-pointer items-start gap-2 rounded px-1.5 py-1 text-sm hover:bg-paper ${checked ? "text-ink" : "text-inkSoft"}`}>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={onChange}
-        className="mt-0.5 h-4 w-4 rounded border-line accent-accent"
-      />
-      <span>{label}</span>
-    </label>
+    <section className="rounded-[3px] border border-line bg-white">
+      <div className="flex items-center justify-between gap-2 border-b border-line px-3 pb-2 pt-[11px]">
+        <h2 className="font-heading text-[15px] font-medium text-ink">Heimildir</h2>
+        <span className="text-[11px] text-textMuted">
+          {allChosen || selected.size === 0
+            ? `Allar ${allKeys.length}`
+            : `${selectedCount} valdar`}
+        </span>
+      </div>
+
+      <div className="px-3 pb-2 pt-2.5">
+        <div className="relative">
+          <SearchIcon className="pointer-events-none absolute left-2 top-[7px] h-3.5 w-3.5 text-textMuted" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Leita að heimild"
+            aria-label="Leita að heimild"
+            lang="is"
+            className="w-full rounded-[3px] border border-lineStrong py-[5px] pl-7 pr-2 text-[12.5px] text-text placeholder:text-textMuted"
+          />
+        </div>
+      </div>
+
+      <label className="flex cursor-pointer items-center gap-2.5 border-t border-lineSoft px-3 py-2 text-[13px] text-ink">
+        <Checkbox
+          checked={allChosen}
+          indeterminate={!allChosen && selected.size > 0}
+          onChange={() => onSetSources(allKeys, !allChosen)}
+        />
+        Allar heimildir
+        <span className="ml-auto text-[11px] text-textMuted">{allKeys.length}</span>
+      </label>
+
+      <div className="max-h-[540px] overflow-y-auto">
+        {SOURCE_TREE.map((group) => (
+          <Group
+            key={group.id}
+            group={group}
+            byKey={byKey}
+            available={available}
+            selected={selected}
+            expanded={expanded}
+            onToggleExpanded={toggleExpanded}
+            onToggleSource={onToggleSource}
+            onSetSources={onSetSources}
+            needle={needle}
+            visibleKeys={visibleKeys}
+          />
+        ))}
+      </div>
+    </section>
   );
 }
 
-function Group({ name, sources, selected, onToggleSource, onSetSources, first }: {
-  name: string;
-  sources: SourceDef[];
+interface GroupProps {
+  group: SourceGroup;
+  byKey: Map<string, SourceDef>;
+  available: Set<string>;
   selected: Set<string>;
+  expanded: Set<string>;
+  onToggleExpanded: (id: string) => void;
   onToggleSource: (key: string) => void;
   onSetSources: (keys: string[], on: boolean) => void;
-  first: boolean;
-}) {
-  const keys = sources.map((s) => s.key);
+  needle: string;
+  visibleKeys: (keys: string[], containerName: string) => string[];
+}
+
+function Group({
+  group,
+  byKey,
+  available,
+  selected,
+  expanded,
+  onToggleExpanded,
+  onToggleSource,
+  onSetSources,
+  needle,
+  visibleKeys,
+}: GroupProps) {
+  const keys = groupKeys(group).filter((k) => available.has(k));
+  if (keys.length === 0) return null;
+
+  const directVisible = visibleKeys(group.keys, group.name);
+  const subGroups = (group.subGroups ?? []).filter(
+    (sub) =>
+      group.name.toLowerCase().includes(needle) ||
+      sub.name.toLowerCase().includes(needle) ||
+      visibleKeys(sub.keys, sub.name).length > 0
+  );
+  // A search that matches nothing in this group hides the group entirely,
+  // rather than leaving a row that opens onto nothing.
+  if (needle && directVisible.length === 0 && subGroups.length === 0) return null;
+
   const chosen = keys.filter((k) => selected.has(k)).length;
-  const collapsible = sources.length > COLLAPSE_ABOVE;
-  const [open, setOpen] = useState(!collapsible || chosen > 0);
-  const allChosen = chosen === keys.length;
+  const all = chosen === keys.length;
+  const open = needle ? true : expanded.has(group.id);
+  // Moss marks the administrative family wherever it appears — here, and on
+  // the Útdráttur control. One family, one colour.
+  const admin = group.id === "stjornsysla";
 
   return (
-    <div className={first ? undefined : "mt-3"}>
-      <h3 className="mb-1 flex items-center justify-between gap-2 border-b border-line pb-1 text-[11px] font-semibold uppercase tracking-wider text-inkSoft">
-        {collapsible ? (
-          <button
-            type="button"
-            onClick={() => setOpen(!open)}
-            aria-expanded={open}
-            className="flex flex-1 items-center gap-1.5 text-left uppercase tracking-wider hover:text-ink"
-          >
-            <span aria-hidden className={`transition-transform ${open ? "rotate-90" : ""}`}>›</span>
-            <span>{name}</span>
-            <span className="font-normal normal-case tracking-normal text-inkSoft/70">
-              {chosen > 0 ? `${chosen}/${sources.length}` : sources.length}
-            </span>
-          </button>
-        ) : (
-          <span>{name}</span>
-        )}
-      </h3>
+    <div className="border-t border-lineSoft">
+      <div
+        className="flex items-center gap-2.5 py-2 pl-2.5 pr-3"
+        style={{
+          borderLeft: `3px solid ${chosen > 0 ? (admin ? "#5B7A5E" : "#0F2A44") : "transparent"}`,
+          background: chosen > 0 ? "#E1E8F0" : undefined,
+        }}
+      >
+        <Checkbox
+          checked={all}
+          indeterminate={chosen > 0 && !all}
+          onChange={() => onSetSources(keys, !all)}
+          label={`Velja allar heimildir í flokknum ${group.name}`}
+        />
+        <button
+          type="button"
+          onClick={() => onToggleExpanded(group.id)}
+          aria-expanded={open}
+          className="flex flex-1 items-center gap-2 text-left"
+        >
+          <span className="flex-1 text-[13px] font-medium text-text">{group.name}</span>
+          <span className="text-[11px] text-textMuted">
+            {chosen > 0 ? `${chosen}/${keys.length}` : keys.length}
+          </span>
+          <Caret open={open} />
+        </button>
+      </div>
 
       {open && (
-        <>
-          {sources.map((s) => (
-            <Check
-              key={s.key}
-              checked={selected.has(s.key)}
-              onChange={() => onToggleSource(s.key)}
-              label={s.name}
+        <div className="flex flex-col gap-0.5 py-[3px] pl-8 pr-3 pb-2">
+          {directVisible.map((key) => (
+            <SourceCheckbox
+              key={key}
+              name={byKey.get(key)?.name ?? key}
+              checked={selected.has(key)}
+              onChange={() => onToggleSource(key)}
+              needle={needle}
             />
           ))}
-          {collapsible && (
-            <button
-              type="button"
-              onClick={() => onSetSources(keys, !allChosen)}
-              className="mt-0.5 px-1.5 text-xs text-accent hover:underline"
-            >
-              {allChosen ? `Clear ${name}` : `Select all ${sources.length}`}
-            </button>
+
+          {subGroups.length > 0 && (
+            <div className="mt-1.5 flex flex-col gap-px border-t border-lineSoft pt-1.5">
+              {subGroups.map((sub) => (
+                <SubGroup
+                  key={sub.id}
+                  sub={sub}
+                  byKey={byKey}
+                  available={available}
+                  selected={selected}
+                  open={needle ? true : expanded.has(sub.id)}
+                  onToggleExpanded={onToggleExpanded}
+                  onToggleSource={onToggleSource}
+                  onSetSources={onSetSources}
+                  needle={needle}
+                  visible={visibleKeys(sub.keys, sub.name)}
+                />
+              ))}
+            </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );
 }
 
-export function SourcePanel(p: Props) {
-  const keys = p.sources.map((s) => s.key);
-  const all = keys.length > 0 && keys.every((k) => p.selected.has(k));
+function SubGroup({
+  sub,
+  byKey,
+  available,
+  selected,
+  open,
+  onToggleExpanded,
+  onToggleSource,
+  onSetSources,
+  needle,
+  visible,
+}: {
+  sub: SourceSubGroup;
+  byKey: Map<string, SourceDef>;
+  available: Set<string>;
+  selected: Set<string>;
+  open: boolean;
+  onToggleExpanded: (id: string) => void;
+  onToggleSource: (key: string) => void;
+  onSetSources: (keys: string[], on: boolean) => void;
+  needle: string;
+  visible: string[];
+}) {
+  const keys = sub.keys.filter((k) => available.has(k));
+  if (keys.length === 0) return null;
+  const chosen = keys.filter((k) => selected.has(k)).length;
+  const all = chosen === keys.length;
 
   return (
-    <aside className="w-full shrink-0 lg:w-72">
-      <div className="rounded-lg border border-line bg-white p-3">
-        {groupedSources(p.sources).map((g, i) => (
-          <Group
-            key={g.group}
-            name={g.group}
-            sources={g.sources}
-            selected={p.selected}
-            onToggleSource={p.onToggleSource}
-            onSetSources={p.onSetSources}
-            first={i === 0}
-          />
-        ))}
+    <div>
+      <div className="flex items-center gap-2 py-[3px] text-xs text-textMuted">
+        <Checkbox
+          checked={all}
+          indeterminate={chosen > 0 && !all}
+          onChange={() => onSetSources(keys, !all)}
+          label={`Velja allar heimildir í flokknum ${sub.name}`}
+          small
+        />
         <button
-          onClick={() => p.onSetSources(keys, !all)}
-          className="mt-1 px-1.5 text-xs text-accent hover:underline"
+          type="button"
+          onClick={() => onToggleExpanded(sub.id)}
+          aria-expanded={open}
+          className="flex flex-1 items-center gap-2 text-left"
         >
-          {all ? "Clear all" : "Select all"}
+          <span className="flex-1">{sub.name}</span>
+          <span>{chosen > 0 ? `${chosen}/${keys.length}` : keys.length}</span>
+          <Caret open={open} />
         </button>
       </div>
-    </aside>
+      {open && (
+        <div className="flex flex-col gap-0.5 pb-1.5 pl-[22px]">
+          {visible.map((key) => (
+            <SourceCheckbox
+              key={key}
+              name={byKey.get(key)?.name ?? key}
+              checked={selected.has(key)}
+              onChange={() => onToggleSource(key)}
+              needle={needle}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SourceCheckbox({
+  name,
+  checked,
+  onChange,
+  needle,
+}: {
+  name: string;
+  checked: boolean;
+  onChange: () => void;
+  needle: string;
+}) {
+  return (
+    <label className="flex cursor-pointer items-start gap-2.5 py-0.5 text-[12.5px] leading-[1.35] text-inkSoft">
+      <Checkbox checked={checked} onChange={onChange} small className="mt-0.5" />
+      <span>
+        <Highlighted text={name} needle={needle} />
+      </span>
+    </label>
+  );
+}
+
+/**
+ * The matched part of a source's name, marked.
+ *
+ * Without it, a search that reveals a source three levels down leaves the
+ * reader to work out which of forty similar names it matched on — the
+ * institution names here differ by one word in the middle.
+ */
+function Highlighted({ text, needle }: { text: string; needle: string }) {
+  if (!needle) return <>{text}</>;
+  const at = text.toLowerCase().indexOf(needle);
+  if (at < 0) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, at)}
+      <mark>{text.slice(at, at + needle.length)}</mark>
+      {text.slice(at + needle.length)}
+    </>
+  );
+}
+
+function Caret({ open }: { open: boolean }) {
+  return (
+    <span aria-hidden className={`text-[10px] text-textMuted ${open ? "" : "-rotate-90"}`}>
+      ▾
+    </span>
+  );
+}
+
+/**
+ * A checkbox that can be indeterminate — the state a partly-chosen group is
+ * actually in. `indeterminate` is a DOM property with no HTML attribute, so
+ * it has to be set through a ref; rendering a checked box for "3 of 20" would
+ * be a lie the reader acts on.
+ */
+function Checkbox({
+  checked,
+  indeterminate = false,
+  onChange,
+  label,
+  small = false,
+  className = "",
+}: {
+  checked: boolean;
+  indeterminate?: boolean;
+  onChange: () => void;
+  label?: string;
+  small?: boolean;
+  className?: string;
+}) {
+  const ref = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      onChange={onChange}
+      aria-label={label}
+      className={`${small ? "h-[13px] w-[13px]" : "h-3.5 w-3.5"} shrink-0 accent-ink ${className}`}
+    />
   );
 }

@@ -208,6 +208,15 @@ export function WellChat({ enabled }: { enabled: boolean }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
+  // The help dialog offers "Opna Brunninn" from the masthead, which is a page
+  // away from this component's own launcher. An event rather than lifted state
+  // because the launcher belongs to the layout and the dialog does not.
+  useEffect(() => {
+    const onAsk = () => setOpen(true);
+    window.addEventListener("logbrunnur:open-well", onAsk);
+    return () => window.removeEventListener("logbrunnur:open-well", onAsk);
+  }, []);
+
   const ask = useCallback(
     async (question: string) => {
       const trimmed = question.trim();
@@ -371,10 +380,14 @@ export function WellChat({ enabled }: { enabled: boolean }) {
         type="button"
         onClick={() => setOpen(true)}
         className="fixed bottom-5 right-5 z-40 flex items-center gap-2.5 rounded-full border border-line bg-white py-2 pl-2 pr-4 shadow-lg shadow-ink/10 transition hover:-translate-y-0.5 hover:shadow-xl"
-        aria-label="Spyrja brunninn"
+        aria-label="Spyrja Brunninn AI"
       >
         <WellMark />
-        <span className="font-serif text-sm font-semibold text-ink">Spyrja brunninn</span>
+        {/* The name carries "AI" wherever it labels the thing itself, so that
+            what the launcher opens is not a surprise. The well as a metaphor
+            — "sæki lögin úr brunninum" — stays as it is: that is a place the
+            law comes from, not the product's name. */}
+        <span className="font-serif text-sm font-semibold text-ink">Spyrja Brunninn AI</span>
       </button>
     );
   }
@@ -396,14 +409,14 @@ export function WellChat({ enabled }: { enabled: boolean }) {
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-0 sm:p-4"
       role="dialog"
       aria-modal="true"
-      aria-label="Brunnurinn"
+      aria-label="Brunnurinn AI"
     >
       <div className="well-panel flex h-full w-full max-w-6xl flex-col overflow-hidden bg-white shadow-2xl shadow-ink/20 sm:h-[min(52rem,calc(100vh-2rem))] sm:rounded-xl sm:border sm:border-line">
         <header className="flex shrink-0 items-center justify-between border-b border-line px-4 py-2.5">
           <div className="flex items-center gap-2.5">
             <WellMark />
             <div>
-              <p className="font-serif text-sm font-semibold text-ink">Brunnurinn</p>
+              <p className="font-serif text-sm font-semibold text-ink">Brunnurinn AI</p>
               <p className="text-[11px] text-inkSoft">
                 Svör byggð á lögum og úrlausnum úr safninu
               </p>

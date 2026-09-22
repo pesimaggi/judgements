@@ -8,9 +8,10 @@ The three Icelandic courts published at [island.is/domar](https://island.is/doma
 
 ## What's in the MVP
 
-- **Search UI** — main search bar, left-side panel with every source as an opt-in checkbox, filters (date range, year, sort), result cards with highlighted snippets, and paginated results (15 per page). Sources are grouped, and a group of more than eight (the 40 úrskurðarnefndir) folds down to one line showing how many of it are ticked, so a long list cannot bury the courts above it. A group with something already ticked opens itself — a filter you cannot see is a filter you will forget you set.
-- **Strict opt-in sources** — nothing is selected when the app opens, the Search button is disabled until at least one source is ticked, selected sources are shown as removable chips above the results, and the API itself returns `400 Select one or more sources to search.` if called without sources. The UI says *sources*, not *courts*: the panel is six courts, the Ombudsman, forty appeal boards and two journals, and calling all of that "courts" was wrong on three counts out of four.
-- **Case summaries** — where a judgment carries its own `Útdráttur` section, result cards offer it behind a disclosure arrow, so you can read the court's own summary without opening the full text.
+- **Search UI** — the search box sits in the masthead on every page and writes what it is searching for into the URL (`/?q=…`), so a result page can be linked, bookmarked and reloaded. Under it: a filter bar carrying the active filters and the date, year and sort controls; a 262px sidebar with the sources and the specific-search lookups; and the results as rows in one panel, 15 to a page, each row a link to the judgment. The date and sort controls are always on screen rather than behind a disclosure — a date range nobody can see is a date range silently narrowing their results.
+- **Sources as a hierarchy** — the panel is five groups (`src/lib/source-tree.ts`) over the same 57 source keys the API takes, collapsed by default and tickable whole, with the 44 administrative bodies splitting further into appeal boards, ministries and valuation committees. A flat list of 57 checkboxes buried the courts under forty appeal boards and made "everything administrative" a forty-click operation. Searching inside the panel looks *into* collapsed groups and opens them, because a source whose group you cannot guess is otherwise unreachable; a `source-tree.test.ts` invariant keeps the tree covering every live source exactly once.
+- **Filters you can see** — nothing ticked means every source, and the bar says so in one line (`Leitað í öllum heimildum · 57`) rather than in 57 chips. A category ticked whole collapses to one navy chip; a category ticked in part names its sources, four of them before the rest fold behind `+ N fleiri`. The API itself still returns `400 Select one or more sources to search.` if called without sources. The UI says *sources*, not *courts*: the panel is six courts, the Ombudsman, forty-four appeal boards and two journals, and calling all of that "courts" was wrong on three counts out of four.
+- **Case summaries** — where a judgment carries its own `Útdráttur` section, the result row offers it behind an *Útdráttur dómsins* disclosure, so you can read the court's own summary without opening the full text.
 - **Full document page** — structured metadata, the judgment typeset as readable prose (headings, paragraphs, numbered clauses, quoted passages) with highlighted hits, search-within-document, copyable citation, official-source link, related cases via case-number citation extraction.
 - **Icelandic acts (lög)** — the in-force text of Icelandic law from [Lagasafn](https://www.althingi.is/lagas/), parsed into chapters (kaflar), provisions (greinar) and paragraphs (málsgreinar), with an act reader at `/log/{actNumber}-{year}`.
 - **Frumvörp and greinargerðir** — the bill each act was passed from, ingested in full from Alþingi: the text as proposed, the explanatory memorandum, and the article-by-article commentary that a court quotes when it construes a provision. Reached from the act rather than from a listing — every Lagasafn act page links its own þingskjal — so there is no index to drift out of step with. Searchable alongside the case law and read by the well. A bill is **not** authority and is never counted as one: `SourceDef.kind` is `"travaux"`, and the provision citation job skips it, because "12 úrlausnir vísa til þessa ákvæðis" counts decisions. See *Frumvörp* below.
@@ -20,7 +21,7 @@ The three Icelandic courts published at [island.is/domar](https://island.is/doma
 - **Lagastoð — which act a regulation is made under** — every regulation closes by naming its own statutory basis ("Reglugerð þessi, sem sett er samkvæmt 7., 15. gr. a, 15. gr. b og 20. gr. laga nr. 60/2007 …"), and that sentence is extracted and resolved. The act reader for lög nr. 60/2007 lists the regulations made under it and which of its articles each one names; each article says how many; and a regulation's own page links back to the articles that authorise it. It is what the regulation asserts about itself, not an inference — see *Lagastoð* below.
 - **Provision-level case linking** — each provision shows how many decisions cite it ("12 úrlausnir vísa til þessa ákvæðis"), expanding to the citing cases with the sentence the citation was found in, so you can see *why* a case matched before opening it.
 - **EU acts (ESB-gerðir)** — the regulations and directives in force, from EUR-Lex, parsed into the same chapter / article / paragraph structure and read in the same act reader at `/log/{CELEX}` — `/log/32016R0679` is the GDPR. Each act carries whether EUR-Lex marks it *"(Text with EEA relevance)"* and which decisions of the EEA Joint Committee this database holds that name it. See *EU acts (EUR-Lex)* below.
-- **EES / ESB scope toggle** — one control, in the act catalogue and beside the specific-search act box, deciding how much of the EU library any act lookup sees. **EES** (the default) is Icelandic law plus the EU acts that may be part of EEA law — the marked ones and the ones a Joint Committee decision names. **ESB** lifts the limit, which is what you want precisely when an act has *not* been incorporated and you need to establish that. Icelandic law is in both: the toggle never hides lög nr. 91/1991.
+- **EES / ESB scope toggle** — one control, in the act catalogue, deciding how much of the EU library an act lookup there sees. (It used to sit beside the specific-search act box too, where it was set on one screen and silently applied on another; the search screen now always uses the default scope.) **EES** (the default) is Icelandic law plus the EU acts that may be part of EEA law — the marked ones and the ones a Joint Committee decision names. **ESB** lifts the limit, which is what you want precisely when an act has *not* been incorporated and you need to establish that. Icelandic law is in both: the toggle never hides lög nr. 91/1991.
 - **Act catalogue** — `/log` lists every ingested act with its provision count and how many judgments cite it, searchable by title, short name or number, and sortable by most-cited. Two tabs: Icelandic acts and EU acts, the second carrying the scope toggle.
 - **The law itself, above the judgments** — the main search box searches the act library as well as the case law. Type `vaxtalög`, `38/2001`, `gdpr` or `2016/679` and the act heads the results, with the judgments below it; type `130. gr. laga nr. 91/1991` and the article heads them, with its text. Each card offers the two things worth doing next — read the text, or narrow the judgments below to the ones citing it. An act is only ever shown when the query genuinely *names* one, so a search for a subject (`gæsluvarðhald`) looks exactly as it did before. See *Searching for a law* below.
 - **Specific search** — alongside the keyword search, two live lookups that narrow the results, each accepting several selections that combine as AND: an act/provision box that takes the citation as it is written ("lög um aðbúnað og hollustuhætti" finds the cases about the act; "57. gr. a. laga um aðbúnað og hollustuhætti" narrows to the cases citing that article), and a subject-tag box. Acts match on title, citation number, or the short names judgments actually use — "vaxtalög" finds lög nr. 38/2001.
@@ -472,7 +473,9 @@ Joint Committee adapter's header for the difference.
 Most of the EU library has never had anything to do with Iceland, and a search
 that returns a Commission implementing regulation on the marketing of hop
 products alongside the four Icelandic acts you asked about is a worse search.
-So every act query takes a scope, and the toggle sets it:
+So every act query takes a scope, and the toggle in the act catalogue sets
+it. The search screen does not offer the toggle — it always asks in the
+default scope — so what follows describes `/log`:
 
 | | What an act lookup sees |
 |---|---|
@@ -1521,9 +1524,12 @@ exists at the official source but do not hold:
 
 Because a successful save clears the row, the open rows are by construction
 exactly the work outstanding — a retry queue and the explanation for the
-missing percent in one table. Both the front-page bars and `/admin/ingestion`
-now split the shortfall into *identified* (in the ledger, queued for retry) and
-*not yet swept*, because those need different fixes.
+missing percent in one table. The bars split the shortfall into *identified*
+(in the ledger, queued for retry) and *not yet swept*, because those need
+different fixes. They live on `/admin/ingestion`, reached from *Um
+gagnasafnið* in the footer; the search page carries one line of it (`Söfnun
+heimilda 78,0% · 48.312 / 61.940 skjöl`), which is as much as a reader
+looking for a judgment wants of it.
 
 An unmapped court gets a row too, under the reserved `_unmapped` source, and a
 banner on `/admin/ingestion` naming the court. A counter is how the last one
@@ -2491,6 +2497,7 @@ What is covered, and why those:
 | `lib/lagasafn.ts` | the act parser, against two real acts frozen from althingi.is |
 | `lib/query-parser.ts` | case-number detection and the boolean → `websearch_to_tsquery` translation |
 | `lib/sources.ts`, `lib/adr-boards.ts` | registry invariants: unique keys, every board a source, Félagsdómur not among the boards, exotic `Committee=` values surviving URL encoding |
+| `lib/source-tree.ts` | that the hierarchy the source panel renders still covers every live source exactly once — a source added to the registry and forgotten here simply cannot be ticked — and that a whole category collapses to one filter chip while a partial one names its sources |
 | `lib/yfirskattanefnd.ts` | that the two eras of the tax archive are told apart — the bold paragraph that is a summary in one and a keyword list in the other, the ruling number that is not the case number, and the opening formula only the newer rulings carry |
 | `search-eval/metrics.ts` | the ranking metrics themselves |
 | `lib/ask/llm.ts` | which provider answers and on which model — configuration flipped on a dashboard, whose failure modes (a silent fallback to the other provider, a launcher with no key behind it) are quiet ones |
