@@ -25,11 +25,11 @@ model Document {
   htmlUrl      String?                  @map("html_url")
   fullText     String                   @map("full_text")
   textHash     String                   @map("text_hash")
-  /// Materialized full-text search vector. Created by
-  /// prisma/sql/setup-search.sql as a GENERATED ALWAYS … STORED column;
-  /// declared here (as Unsupported, so the client never reads or writes it)
-  /// only so that `prisma db push` leaves it alone instead of dropping it.
+  /// Materialized search vectors, maintained by the SQL setup triggers.
+  /// Unsupported fields keep Prisma Client from reading/writing them while
+  /// ensuring db push preserves the populated columns.
   searchVector Unsupported("tsvector")? @map("search_vector")
+  lemmaVector  Unsupported("tsvector")? @map("lemma_vector")
   isSample     Boolean                  @default(false) @map("is_sample") // seed/mock docs are flagged, never passed off as real
   createdAt    DateTime                 @default(now()) @map("created_at")
   updatedAt    DateTime                 @updatedAt @map("updated_at")
@@ -65,6 +65,7 @@ model Document {
   @@index([date])
   @@index([year])
   @@index([citationScanHash])
+  @@index([lemmaVector(ops: raw("tsvector_ops"))], type: Gin, map: "document_lemma_vector_idx")
 }
 
 /// Application data only. Clerk owns identities, sessions and credentials.
@@ -323,6 +324,8 @@ model Provision {
   /// prisma/sql/setup-search.sql. Declared as Unsupported so `prisma db push`
   /// leaves it alone and Prisma Client never reads or writes it.
   searchVector  Unsupported("tsvector")? @map("search_vector")
+  /// BÍN lemma vector, maintained by prisma/sql/setup-lemmas.sql.
+  lemmaVector   Unsupported("tsvector")? @map("lemma_vector")
   createdAt     DateTime                 @default(now()) @map("created_at")
   updatedAt     DateTime                 @updatedAt @map("updated_at")
 
@@ -336,6 +339,7 @@ model Provision {
   @@unique([actId, anchor])
   @@index([actId, ordering])
   @@index([actId, articleNumber, articleLetter])
+  @@index([lemmaVector(ops: raw("tsvector_ops"))], type: Gin, map: "provision_lemma_vector_idx")
   @@map("provisions")
 }
 
@@ -605,4 +609,15 @@ model RegulationBasis {
   @@index([provisionId])
   @@index([regulationId])
   @@map("regulation_basis")
+}
+
+/// BÍN search dictionary, populated by prisma/load-bin.ts. Its schema must be
+/// declared here even though search accesses it through SQL: otherwise db push
+/// attempts to drop millions of imported entries on every deployment.
+model BinLemma {
+  form   String   @id
+  lemmas String[]
+
+  @@index([lemmas], type: Gin, map: "bin_lemma_lemmas_idx")
+  @@map("bin_lemma")
 }
