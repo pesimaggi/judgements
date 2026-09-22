@@ -186,6 +186,12 @@ export async function ask(
                   ms: step.ms,
                 });
               },
+              // Only when somebody is listening, for the same reason the
+              // answer stage streams only then: asking for a thinking summary
+              // costs nothing extra to produce but is pointless to request
+              // when there is no one to show it to, and the evaluation
+              // harness passes no `onEvent`.
+              onThinking: options.onEvent ? (text) => emit({ type: "thinking", text }) : undefined,
             });
             metrics.stages.researched = !outcome.fellBack;
             metrics.research = {
@@ -245,6 +251,7 @@ export async function ask(
           // Only when somebody is listening. Without this the answer stage
           // makes a single unstreamed call, as it always did.
           onLine: options.onEvent ? (text) => emit({ type: "line", text }) : undefined,
+          onThinking: options.onEvent ? (text) => emit({ type: "thinking", text }) : undefined,
         }),
         config.timeouts.answer,
         "answer"

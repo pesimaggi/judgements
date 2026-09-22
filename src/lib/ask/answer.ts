@@ -225,6 +225,14 @@ export interface AnswerOptions {
    * harness measures.
    */
   onLine?: (text: string) => void;
+  /**
+   * The model's reasoning while it writes, where the provider returns it.
+   *
+   * Passed straight through to `complete`, and kept off `onLine`: a line is
+   * validated prose that has already had its invalid citations stripped, and
+   * reasoning has been through none of that.
+   */
+  onThinking?: (text: string) => void;
 }
 
 /**
@@ -282,6 +290,7 @@ export async function answer(
     maxTokens: config.answerMaxTokens,
     effort,
     onUsage: options.onUsage,
+    onThinking: options.onThinking,
     onDelta: lines
       ? (delta) => {
           for (const line of lines.push(delta)) options.onLine!(line);
