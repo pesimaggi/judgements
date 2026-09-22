@@ -3,7 +3,7 @@ import Link from "next/link";
 import type { SearchHit } from "@/lib/types";
 import { isScholarship } from "@/lib/sources";
 import { SnippetHtml } from "./HighlightedText";
-import { FolderIcon } from "./icons";
+import { SaveDocumentButton } from "./auth/SaveDocumentButton";
 
 /**
  * One result, as a row rather than a card.
@@ -154,21 +154,7 @@ export function ResultCard({ hit, query }: { hit: SearchHit; query: string }) {
             Vísar í {hit.citedProvision}
           </div>
         )}
-        {/* The slot is reserved deliberately: saving a judgment to a folder is
-            the next thing this page needs and the rail is where it goes. It
-            is disabled rather than absent so the layout it will live in is
-            the layout being reviewed. */}
-        {!scholarship && (
-          <button
-            type="button"
-            disabled
-            title="Væntanlegt"
-            className="inline-flex cursor-not-allowed items-center justify-center gap-[7px] rounded-[3px] border border-lineStrong px-2.5 py-1.5 text-[11.5px] font-medium text-textMuted opacity-60"
-          >
-            <FolderIcon className="h-[13px] w-[13px]" />
-            Vista í möppu
-          </button>
-        )}
+        {!scholarship && <SaveDocumentButton documentId={hit.id} />}
         <a
           href={hit.officialUrl}
           target="_blank"

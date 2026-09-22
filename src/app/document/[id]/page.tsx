@@ -1,10 +1,12 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { JudgmentText } from "@/components/JudgmentText";
 import { buildCitation } from "@/lib/citation";
 import { isScholarship, sourceByKey } from "@/lib/sources";
+import { SaveDocumentButton } from "@/components/auth/SaveDocumentButton";
+import { CAPTURE_VIEW_EVENT, currentPath, readContinuation, readView } from "@/lib/auth/continuation";
 
 interface Related {
   id: string; caseNumber: string | null; title: string;
@@ -21,6 +23,26 @@ export default function DocumentPage() {
   const [error, setError] = useState("");
   const [innerQuery, setInnerQuery] = useState(initialQuery);
   const [copied, setCopied] = useState(false);
+  const resumeScroll = useRef<number | null>(null);
+
+  useEffect(() => {
+    const restored = readView<{ innerQuery: string }>("document");
+    if (typeof restored?.innerQuery === "string") setInnerQuery(restored.innerQuery);
+    const pending = readContinuation();
+    if (pending?.returnTo === currentPath()) resumeScroll.current = pending.scrollY;
+  }, []);
+  useEffect(() => {
+    if (doc && resumeScroll.current !== null) {
+      const top = resumeScroll.current;
+      resumeScroll.current = null;
+      requestAnimationFrame(() => window.scrollTo({ top, behavior: "instant" }));
+    }
+  }, [doc]);
+  useEffect(() => {
+    const capture = (e: Event) => { (e as CustomEvent).detail.document = { innerQuery }; };
+    window.addEventListener(CAPTURE_VIEW_EVENT, capture);
+    return () => window.removeEventListener(CAPTURE_VIEW_EVENT, capture);
+  }, [innerQuery]);
 
   useEffect(() => {
     fetch(`/api/documents/${id}`)
@@ -108,6 +130,7 @@ export default function DocumentPage() {
         )}
 
         <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+          {!scholarship && <SaveDocumentButton documentId={doc.id} />}
           <a href={doc.officialUrl} target="_blank" rel="noopener noreferrer" className="rounded bg-ink px-2.5 py-1 text-xs font-medium text-white hover:bg-inkSoft">
             {scholarship ? "Read at publisher ↗" : "Official source ↗"}
           </a>

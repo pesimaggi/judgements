@@ -4,6 +4,8 @@ import { Masthead } from "@/components/Masthead";
 import { IngestionStatusLine } from "@/components/ProgressBars";
 import { WellChat } from "@/components/WellChat";
 import { isAskEnabled } from "@/lib/ask/llm";
+import { AuthProvider } from "@/components/auth/AuthProvider";
+import { clerkConfigured } from "@/lib/auth/clerk";
 import "./globals.css";
 
 // Three faces doing three jobs: Playfair for the wordmark and anything that
@@ -32,6 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`${sans.variable} ${serif.variable} ${heading.variable}`}
     >
       <body className="flex min-h-screen flex-col">
+        <AuthProvider publishableKey={clerkConfigured() ? process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY! : null}>
         <Masthead />
         <div className="flex-1">{children}</div>
         <footer>
@@ -66,6 +69,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Read on the server: with no API key the launcher is never rendered
             at all, rather than offered and then failing when it is clicked. */}
         <WellChat enabled={isAskEnabled()} />
+        </AuthProvider>
       </body>
     </html>
   );

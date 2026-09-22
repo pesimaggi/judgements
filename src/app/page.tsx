@@ -10,6 +10,7 @@ import { ChevronDownIcon, FiltersIcon, SearchIcon } from "@/components/icons";
 import { activeFilterChips, defaultSourceKeys } from "@/lib/source-tree";
 import type { SourceDef } from "@/lib/sources";
 import type { SearchResponse } from "@/lib/types";
+import { CAPTURE_VIEW_EVENT, currentPath, readContinuation, readView } from "@/lib/auth/continuation";
 
 const PAGE_SIZE = 15;
 /** How many individual source chips the filter bar shows before folding. */
@@ -31,6 +32,11 @@ interface SearchCriteria {
   /** Provisions a result must cite — all of them. */
   provisionIds?: string[];
   sort: "relevance" | "newest" | "oldest";
+}
+
+interface SearchView {
+  selected: string[]; queryInput: string; dateFrom: string; dateTo: string; year: string;
+  sort: SearchCriteria["sort"]; activeTags: string[]; legal: LegalSelection[]; page: number;
 }
 
 function SearchPageInner() {
@@ -73,8 +79,25 @@ function SearchPageInner() {
   const resultsTopRef = useRef<HTMLDivElement | null>(null);
   // Guards against an earlier, slower request overwriting a later one.
   const requestIdRef = useRef(0);
+  const resumePage = useRef(1);
+  const resumeScroll = useRef<number | null>(null);
+
+  // Normally OAuth opens a popup and this component never unmounts. Capture
+  // the actual controls as well for a redirect/reload: only q/tag live in the
+  // URL, so returning to that URL alone would silently discard all the filters.
+  useEffect(() => {
+    const capture = (e: Event) => {
+      (e as CustomEvent).detail.search = { selected: [...selected], queryInput, dateFrom, dateTo, year,
+        sort, activeTags, legal, page: results?.page ?? 1 } satisfies SearchView;
+    };
+    window.addEventListener(CAPTURE_VIEW_EVENT, capture);
+    return () => window.removeEventListener(CAPTURE_VIEW_EVENT, capture);
+  }, [selected, queryInput, dateFrom, dateTo, year, sort, activeTags, legal, results?.page]);
 
   useEffect(() => {
+    const restored = readView<SearchView>("search");
+    const pending = readContinuation();
+    if (pending?.returnTo === currentPath()) resumeScroll.current = pending.scrollY;
     fetch("/api/sources")
       .then((r) => r.json())
       .then((d: { sources: SourceDef[] }) => {
@@ -82,7 +105,16 @@ function SearchPageInner() {
         // The courts, until the reader says otherwise. Seeded here rather
         // than in useState because it is the API's list that decides which
         // of the tree's keys actually exist.
-        setSelected(new Set(defaultSourceKeys(new Set(d.sources.map((s) => s.key)))));
+        const keys = new Set(d.sources.map(s => s.key));
+        if (restored && Array.isArray(restored.selected) && Array.isArray(restored.legal) &&
+            Array.isArray(restored.activeTags) && ["relevance", "newest", "oldest"].includes(restored.sort) &&
+            [restored.queryInput, restored.dateFrom, restored.dateTo, restored.year].every(v => typeof v === "string")) {
+          setSelected(new Set(restored.selected.filter(k => keys.has(k))));
+          setQueryInput(restored.queryInput); setDateFrom(restored.dateFrom); setDateTo(restored.dateTo);
+          setYear(restored.year); setSort(restored.sort); setActiveTags(restored.activeTags);
+          setLegal(restored.legal);
+          resumePage.current = Number.isInteger(restored.page) && restored.page > 0 ? restored.page : 1;
+        } else setSelected(new Set(defaultSourceKeys(keys)));
       })
       .catch(() => {
         setError("Ekki tókst að sækja lista yfir heimildir.");
@@ -142,7 +174,7 @@ function SearchPageInner() {
     // Only on the first page: the act that heads a search stays put while its
     // judgments are paged through, and re-asking for it on page 4 would be a
     // query for an answer already on screen.
-    if (page === 1) void fetchActs(criteria, requestId);
+    if (page === 1 || resumeScroll.current !== null) void fetchActs(criteria, requestId);
     try {
       const res = await fetch("/api/search", {
         method: "POST",
@@ -158,6 +190,11 @@ function SearchPageInner() {
       // while these results are on screen, and the line above them has to
       // describe the results, not the selection that will replace them.
       setSearchedSources(criteria.sources.length);
+      if (resumeScroll.current !== null) {
+        const top = resumeScroll.current;
+        resumeScroll.current = null;
+        requestAnimationFrame(() => window.scrollTo({ top, behavior: "instant" }));
+      }
     } catch (e: any) {
       if (requestId !== requestIdRef.current) return;
       setError(e.message);
@@ -212,7 +249,11 @@ function SearchPageInner() {
     };
     criteriaRef.current = criteria;
     setLoading(true);
-    const timer = setTimeout(() => fetchPage(criteria, 1), REFILTER_DELAY_MS);
+    const timer = setTimeout(() => {
+      const page = resumePage.current;
+      resumePage.current = 1;
+      void fetchPage(criteria, page);
+    }, REFILTER_DELAY_MS);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchKey, sources.length]);

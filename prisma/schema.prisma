@@ -57,6 +57,7 @@ model Document {
 
   provisionLinks CaseProvisionLink[]
   actLinks       CaseActLink[]
+  savedBy        SavedDocument[]
 
   @@unique([source, officialUrl])
   @@index([source])
@@ -64,6 +65,19 @@ model Document {
   @@index([date])
   @@index([year])
   @@index([citationScanHash])
+}
+
+/// Application data only. Clerk owns identities, sessions and credentials.
+/// A compound primary key makes saving safe to retry after an OAuth redirect.
+model SavedDocument {
+  clerkUserId String   @map("clerk_user_id")
+  documentId  String   @map("document_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@id([clerkUserId, documentId])
+  @@index([documentId])
+  @@map("saved_documents")
 }
 
 /// One act: an Icelandic act (lög) as published in Lagasafn, or an EU act

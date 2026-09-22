@@ -33,6 +33,12 @@ jobs:
       # on every pull request rather than the next time somebody looks.
       - run: npm run eval:ask
 
+      # Public browsing and contextual login must work even before Clerk keys
+      # are configured. Fixture APIs keep these checks independent of Postgres.
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+
       # `npm run lint` is deliberately not here yet: ESLint has never been
       # configured in this repo, so `next lint` prompts for a config and would
       # hang the job. Configure it, then add the step.
