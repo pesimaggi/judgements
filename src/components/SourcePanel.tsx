@@ -377,7 +377,7 @@ function OnlyButton({ name, onClick }: { name: string; onClick: () => void }) {
       aria-label={`Leita aðeins í ${name}`}
       className="mt-0.5 shrink-0 text-[11px] text-textMuted opacity-0 transition-opacity hover:text-ink focus:opacity-100 group-hover/row:opacity-100"
     >
-      aðeins
+      
     </button>
   );
 }
