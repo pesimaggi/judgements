@@ -28,7 +28,7 @@ export function AuthDialog({ intent, ready, configured, onClose }: {
         </div>
         {!configured ? <p role="status">Innskráning er ekki tilbúin. Þú getur áfram leitað og lesið allar heimildir.</p>
           : !ready ? <p role="status">Tengi við innskráningu… Ef tengingin næst ekki geturðu lokað og haldið áfram að leita.</p>
-          : <SignIn routing="virtual" withSignUp transferable oauthFlow="popup"
+          : <SignIn routing="virtual" withSignUp transferable
               forceRedirectUrl={intent.returnTo} signUpForceRedirectUrl={intent.returnTo}
               fallback={<p role="status">Hleð innskráningu…</p>} />}
       </div>

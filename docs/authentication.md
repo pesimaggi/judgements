@@ -1,4 +1,4 @@
-# Authentication: Clerk, with public research
+# Authentication: email codes through Clerk, with public research
 
 ## What is implemented
 
@@ -12,11 +12,13 @@ after Clerk activates the session. **Vistað** opens the saved-judgment list;
 saved items can also be removed. Folders, saved searches and other future account
 features have not been built.
 
-Clerk's prebuilt components handle the verification flow, errors, resend timers,
-OAuth transfers and account management. They inherit the site's navy/stone
-palette and fonts. `SignIn` uses `withSignUp` and `transferable` so new and existing
-users enter through the same screen. Microsoft is ordered before Google.
-Dashboard configuration below is required to make these the available methods.
+The initial rollout is **email only**: enter an email address, receive a one-time
+code, and enter the code. There are no passwords or Google/Microsoft buttons.
+Clerk's prebuilt components handle verification, errors, resend timers and account
+management using the site's navy/stone palette and fonts. `SignIn` uses
+`withSignUp` and `transferable`, so new and returning users use the same screen.
+The available methods come from Clerk's dashboard; disable social connections
+there rather than merely hiding their buttons in CSS.
 
 The SDK is `@clerk/nextjs` 6.39.7 or a compatible v6 patch, matching the existing
 Next.js 14/React 18 application. A migration to Next.js 15+ is not required for
@@ -30,10 +32,9 @@ this change. Clerk Core 3 examples using SDK v7 are not drop-in replacements.
    verification, selecting **Email verification code** both for registration
    verification and passwordless sign-in. Disable passwords and email links for
    this configuration. Do not require username, phone number, name or organisation.
-3. In **SSO connections**, add **Microsoft** and **Google**, each **For all users**,
-   enabled for both sign-up and sign-in. Disable other providers if present.
-   Development instances can use Clerk's shared provider credentials; production
-   needs the custom provider credentials described below.
+3. In **SSO connections**, leave **Microsoft**, **Google** and other social
+   providers disabled. No Google Cloud or Microsoft Entra application is needed.
+   Also leave phone authentication and other sign-in methods disabled.
 4. Keep sign-up public and use a single active session. Do not enable a waitlist,
    organisation requirement or mandatory account-setup task. No Google One Tap
    banner is mounted by the application.
@@ -42,10 +43,10 @@ this change. Clerk Core 3 examples using SDK v7 are not drop-in replacements.
    app; `/sign-up` exists for Clerk's new-user transfer and is not a separate
    navigation choice. Do not configure global forced redirects to `/`: the
    components supply the original page for both sign-in and sign-up.
-6. Keep Clerk's normal verified-email account-linking safeguards enabled.
-   Do not implement email-based merging in Postgres. Matching verified addresses
-   can link automatically; different addresses require the user to connect an
-   additional account in **Aðgangur**, where Clerk verifies ownership.
+6. Keep Clerk as the owner of identities and verified email addresses. Signing
+   in again with the same email returns to the same Clerk account. Do not
+   implement email-based merging in Postgres. Social login can be added later
+   using Clerk's normal account-linking safeguards.
 
 Configure the verification email's branding/language in Clerk as desired. The
 application's Icelandic UI does not itself translate email templates. Clerk sends
@@ -64,7 +65,8 @@ References: [authentication options](https://clerk.com/docs/guides/configure/aut
 | `CLERK_AUTHORIZED_PARTIES` | Comma-separated exact application origins, no trailing slash | Server environment; also the allowed Origin list for private writes |
 | `DATABASE_URL` | Existing Postgres connection | Already configured; keep it |
 
-Local example: `CLERK_AUTHORIZED_PARTIES=http://localhost:3000`. Production example:
+Local example: `CLERK_AUTHORIZED_PARTIES=http://localhost:3000`. For a Railway
+test deployment, use `https://judgements-production.up.railway.app`. Production example:
 `https://your-domain.is,https://www.your-domain.is` (only include origins actually
 serving this application). Supply this in production because the server may see
 Railway's internal proxy URL rather than the public origin. Never use a wildcard.
@@ -72,7 +74,7 @@ Railway's internal proxy URL rather than the public origin. Never use a wildcard
 Set both Clerk keys **before** building. Next.js embeds the publishable key into
 the browser bundle, so switching keys requires a rebuild, not just a restart.
 The code sets the sign-in/sign-up paths; no additional redirect environment
-variables are needed. Google/Microsoft client secrets belong in Clerk, not Railway.
+variables are needed. No Google or Microsoft credentials are needed for email login.
 
 Inspection on 22 September 2026 found Railway's `judgements` service in project
 `brave-reflection`, production environment, deploying `main`, with only the
@@ -88,42 +90,26 @@ instance IDs as production IDs.
 
 Reference: [Clerk environments](https://clerk.com/docs/guides/development/managing-environments).
 
-## Google configuration
+## Testing on the current Railway URL
 
-1. In Google Cloud, create/select a project and configure the OAuth consent screen
-   for Lögbrunnur, including the application domain and required contact details.
-2. Create an OAuth client of type **Web application**. Add the site's actual
-   origins under **Authorized JavaScript origins**.
-3. Copy **Authorized Redirect URI** from Clerk's Google connection into Google's
-   authorized redirect URIs exactly. It is Clerk's callback, not `/sign-in` on
-   the Lögbrunnur site.
-4. Put the Google client ID and secret into Clerk's Google connection under
-   **Use custom credentials**. Request only the normal identity scopes; no Drive,
-   Gmail or other Google data is needed.
-5. While testing, add required test users. Before public launch, switch the OAuth
-   application's publishing status to **In production** and complete any Google
-   verification required for its branding/scopes.
+Email-only login avoids configuring Google and Microsoft, but **does not remove
+Clerk's production-domain requirement**. Development keys can be used on the
+Railway-generated hostname for a test deployment. Clerk development instances
+are not intended for a public production service: they have a 100-user cap and
+development email branding, and their users do not transfer to a production
+instance. These are provider constraints, not limits implemented in Lögbrunnur.
 
-Reference: [Clerk's Google setup](https://clerk.com/docs/guides/configure/auth-strategies/social-connections/google).
+Use disposable accounts for this stage. Do not activate a development instance
+as the long-term home for testers' meaningful bookmarks. If development accounts
+already have bookmarks when moving to production, preserve those rows and arrange
+an explicit, verified identity mapping before switching instances; never silently
+reassign ownership from a browser-supplied email. No automatic cross-instance
+migration is implemented.
 
-## Microsoft Entra configuration
-
-1. In Microsoft Entra ID → **App registrations**, register Lögbrunnur. Select
-   **Accounts in any organizational directory and personal Microsoft accounts**,
-   so work/school accounts and Outlook/Hotmail accounts are supported.
-2. Add a **Web** redirect URI using the exact callback shown in Clerk's Microsoft
-   connection, not the site's `/sign-in` route.
-3. Copy the **Application (client) ID**. Create a client secret and copy its
-   **Value**, not its secret ID, into Clerk with the client ID.
-4. Follow Clerk's current linked OpenID settings and `xms_edov` verified-email
-   claim instructions. Do not remove its email-verification safeguards to make
-   account linking easier. No mail/calendar API access is required.
-5. Record the secret's expiry and rotate it in Entra and Clerk before it expires.
-   Test both a personal Microsoft account and a work/school account. Some tenant
-   administrators restrict third-party app consent; that is a tenant policy,
-   not something Lögbrunnur should bypass.
-
-Reference: [Clerk's Microsoft Entra setup](https://clerk.com/docs/guides/configure/auth-strategies/social-connections/microsoft).
+For the public launch with Clerk, use an owned domain and live keys even if email
+remains the only login method. The code does not require enabling social login.
+Google and Microsoft are deferred; adding them later should use Clerk's normal
+provider configuration and verified account linking without replacing local IDs.
 
 ## Application data and existing testers
 
@@ -160,8 +146,8 @@ operator procedure; automated cross-system account-deletion cleanup is not built
 point. Future actions add a typed intent and executor, plus a server-authenticated
 endpoint. Do not queue arbitrary browser-supplied API URLs or user identities.
 
-The modal uses virtual routing and OAuth popups to leave the current page in
-place. A tab-local, 30-minute continuation also records the action, local return
+The email-code dialog uses virtual routing to leave the current page in place.
+A tab-local, 30-minute continuation also records the action, local return
 URL, anchor, scroll and current search filters/draft/page (or reader search).
 It survives a redirect/reload. Dismissal clears it; successful writes clear it;
 failed writes offer a retry. A write initiated by an existing account is not
@@ -180,21 +166,23 @@ evaluation command is `node --import tsx src/ask-eval/run.ts`.
 
 Before production activation:
 
-- Configure the Clerk instance, passwordless email, Google and Microsoft above.
-- Configure the owned domain/DNS, production provider callbacks and live keys.
+- Configure the Clerk instance for email codes only, with passwords and social
+  connections disabled.
+- Configure the owned domain/DNS and live Clerk keys. No Google/Microsoft
+  callback or client-secret setup is needed for this rollout.
 - Back up the database and apply the additive table setup, or review/run the
   normal non-destructive `db:deploy` pre-deploy step.
 - Rebuild/deploy with the matching keys and exact authorized origins.
-- For **each** of Microsoft, Google and email code, test a new and a returning
-  user: search → filter/sort/page → open judgment → Vista → authenticate → one
+- With **email codes**, test a new and a returning user: search → filter/sort/page → open judgment → Vista → authenticate → one
   saved item, same page/query/anchor, no second click.
-- Test invalid/expired email codes, resend, cancelled OAuth, denied consent,
-  logout, expired sessions and retry after a failed save.
-- Verify same-email linking retains the same Clerk ID and bookmarks. Verify a
+- Test invalid/expired email codes, resend, closing the login dialog, logout,
+  expired sessions and retry after a failed save.
+- Verify repeat email login retains the same Clerk ID and bookmarks. Verify a
   second person cannot read or remove the first person's bookmarks, including
   after switching accounts in the same browser.
 - Repeat anonymous search and readers, and check a second device sees the saved
   item after login. Do not release an unverified provider configuration.
 
-Live OAuth, email delivery, account linking, production migration and deployment
-remain manual validation steps until credentials and dashboard access are supplied.
+Live email delivery, new/returning email-code sign-in, production migration and
+deployment remain manual validation steps until credentials and dashboard access
+are supplied. Microsoft and Google are not required for this rollout.
