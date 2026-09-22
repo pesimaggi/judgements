@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
+import { prisma } from "@/lib/db";
 import { getSearchProvider } from "@/lib/search";
 import { SOURCE_KEYS } from "@/lib/sources";
-import type { SearchRequest } from "@/lib/types";
+import type { SearchHit, SearchRequest } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -65,7 +66,7 @@ export async function POST(req: Request) {
       page,
       pageSize,
       totalPages: Math.max(1, Math.ceil(r.total / pageSize)),
-      hits: r.hits,
+      hits: await withCitedProvisions(r.hits),
     });
   } catch (e) {
     console.error("Search failed:", e);
@@ -79,4 +80,48 @@ export async function POST(req: Request) {
 /** Repeats would add redundant conditions without changing the result set. */
 function dedupe(values: string[]): string[] {
   return Array.from(new Set(values));
+}
+
+/**
+ * The provision each result turns on, for the one line the result row gives
+ * it ("Vísar í 13. gr. stjórnsýslulaga nr. 37/1993").
+ *
+ * Attached here rather than inside a provider because it is the same join
+ * whichever engine found the hits, and neither Postgres FTS nor Meilisearch
+ * has anything to do with it. The citation text is stored as the judgment
+ * wrote it, so the line reads as a lawyer would say it rather than as an id.
+ *
+ * Which provision, when a judgment cites twenty: the one it cites most often,
+ * and of that provision's occurrences the first — a case that returns to the
+ * same article six times is about that article, and the first mention is
+ * where it is introduced in full.
+ */
+async function withCitedProvisions(hits: SearchHit[]): Promise<SearchHit[]> {
+  if (hits.length === 0) return hits;
+  const links = await prisma.caseProvisionLink.findMany({
+    where: { documentId: { in: hits.map((h) => h.id) } },
+    select: { documentId: true, provisionId: true, citationText: true, charOffset: true },
+    orderBy: { charOffset: "asc" },
+  });
+  if (links.length === 0) return hits;
+
+  // documentId → provisionId → { count, first citation seen }
+  const byDocument = new Map<string, Map<string, { count: number; text: string }>>();
+  for (const link of links) {
+    let provisions = byDocument.get(link.documentId);
+    if (!provisions) byDocument.set(link.documentId, (provisions = new Map()));
+    const seen = provisions.get(link.provisionId);
+    if (seen) seen.count += 1;
+    else provisions.set(link.provisionId, { count: 1, text: link.citationText });
+  }
+
+  return hits.map((hit) => {
+    const provisions = byDocument.get(hit.id);
+    if (!provisions) return hit;
+    let best: { count: number; text: string } | null = null;
+    for (const candidate of provisions.values()) {
+      if (!best || candidate.count > best.count) best = candidate;
+    }
+    return best ? { ...hit, citedProvision: best.text } : hit;
+  });
 }

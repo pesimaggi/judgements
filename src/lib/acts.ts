@@ -129,6 +129,50 @@ export function actDisplayTitle(act: { jurisdiction: string; title: string }): s
 }
 
 /**
+ * The act named in full: "Almenn hegningarlög nr. 19/1940".
+ *
+ * What a chip or a one-line summary has to say. An Icelandic title already
+ * carries the word lög or reglugerð, so only the number is added; an EU act's
+ * citation is a formula of its own and goes in brackets after the subject.
+ */
+export function actFullLabel(act: {
+  jurisdiction: string;
+  docType?: string;
+  title: string;
+  citation: string | null;
+  actNumber: number;
+  year: number;
+}): string {
+  if (act.jurisdiction === "eu") return `${actDisplayTitle(act)} (${actCitation(act)})`;
+  return `${act.title} nr. ${act.actNumber}/${act.year}`;
+}
+
+/**
+ * A provision cited the way a judgment cites it: "4. gr. laga nr. 19/1940".
+ *
+ * `displayLabel` alone is "4. gr.", which is meaningless away from the act it
+ * belongs to — and away from it is exactly where a filter chip and a results
+ * summary put it. The genitive is the generic noun's, not the title's: "laga"
+ * and "reglugerðar" are the only two forms needed, so the citation is correct
+ * Icelandic without anyone having to decline a title the database holds in
+ * the nominative.
+ */
+export function provisionFullLabel(
+  displayLabel: string,
+  act: {
+    jurisdiction: string;
+    docType?: string;
+    citation: string | null;
+    actNumber: number;
+    year: number;
+  }
+): string {
+  if (act.jurisdiction === "eu") return `${displayLabel} ${actCitation(act)}`;
+  const kind = act.docType === "regulation" ? "reglugerðar" : "laga";
+  return `${displayLabel} ${kind} nr. ${act.actNumber}/${act.year}`;
+}
+
+/**
  * The route this app serves an act at.
  *
  * Icelandic acts are "/log/38-2001"; EU acts are "/log/32016R0679". The two

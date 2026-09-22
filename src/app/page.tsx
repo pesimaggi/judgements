@@ -1,18 +1,22 @@
 "use client";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { SourcePanel } from "@/components/SourcePanel";
 import { SpecificSearch, type LegalSelection } from "@/components/SpecificSearch";
 import { ResultCard } from "@/components/ResultCard";
 import { Pagination } from "@/components/Pagination";
-import { ProgressBars } from "@/components/ProgressBars";
 import { HomeCases } from "@/components/HomeCases";
 import { ActResults, type ActSearchHit, type ProvisionSearchHit } from "@/components/ActResults";
-import { useActScope } from "@/components/ScopeToggle";
+import { ChevronDownIcon, FiltersIcon } from "@/components/icons";
+import { activeFilterChips } from "@/lib/source-tree";
 import type { SourceDef } from "@/lib/sources";
 import type { SearchResponse } from "@/lib/types";
 
 const PAGE_SIZE = 15;
+/** How many individual source chips the filter bar shows before folding. */
+const CHIP_LIMIT = 4;
+/** Long enough that ticking four boxes is one search, short enough to feel live. */
+const REFILTER_DELAY_MS = 350;
 
 /** Everything that defines a result set, frozen at the moment Search is hit. */
 interface SearchCriteria {
@@ -32,26 +36,32 @@ interface SearchCriteria {
 
 function SearchPageInner() {
   const searchParams = useSearchParams();
+  // The query lives in the URL, because the box that sets it is in the
+  // masthead and a result page has to be linkable. See components/Masthead.
+  const query = searchParams.get("q") ?? "";
+  const urlTag = searchParams.get("tag");
 
   const [sources, setSources] = useState<SourceDef[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set()); // nothing selected by default
+  const [selected, setSelected] = useState<Set<string>>(new Set()); // nothing selected = everything
 
-  const [query, setQuery] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [year, setYear] = useState("");
   const [sort, setSort] = useState<"relevance" | "newest" | "oldest">("relevance");
-  const [showFilters, setShowFilters] = useState(false);
   // The specific-search panel's selections. Lists, and conjunctive: adding a
   // second tag or provision narrows rather than widens.
   const [activeTags, setActiveTags] = useState<string[]>([]);
   const [legal, setLegal] = useState<LegalSelection[]>([]);
+
+  const [chipsExpanded, setChipsExpanded] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const [results, setResults] = useState<SearchResponse | null>(null);
   // The law itself, when the query names one — shown above the judgments.
   const [actHits, setActHits] = useState<ActSearchHit[]>([]);
   const [provisionHits, setProvisionHits] = useState<ProvisionSearchHit[]>([]);
   const [searchedQuery, setSearchedQuery] = useState("");
+  const [searchedSources, setSearchedSources] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -62,16 +72,29 @@ function SearchPageInner() {
   const resultsTopRef = useRef<HTMLDivElement | null>(null);
   // Guards against an earlier, slower request overwriting a later one.
   const requestIdRef = useRef(0);
-  // How much of the EU library an act may be found from: the same EES/ESB
-  // setting the act box and the catalogue obey.
-  const [scope] = useActScope();
+  // Read whenever a search is re-run: the handlers need every filter's
+  // current value without the effects having to list them as dependencies,
+  // which would re-run the search on each keystroke in the year box. Kept in
+  // step after each commit; a handler that changes a filter *and* searches in
+  // the same tick writes it eagerly, because state has not updated yet at
+  // that point.
+  const filtersRef = useRef({ selected, activeTags, legal, dateFrom, dateTo, year, sort });
+  useEffect(() => {
+    filtersRef.current = { selected, activeTags, legal, dateFrom, dateTo, year, sort };
+  });
 
   useEffect(() => {
     fetch("/api/sources")
       .then((r) => r.json())
       .then((d) => setSources(d.sources))
-      .catch(() => setError("Could not load the source list."));
+      .catch(() => setError("Ekki tókst að sækja lista yfir heimildir."));
   }, []);
+
+  const allKeys = useMemo(() => sources.map((s) => s.key), [sources]);
+  const nameOf = useMemo(() => {
+    const names = new Map(sources.map((s) => [s.key, s.name]));
+    return (key: string) => names.get(key) ?? key;
+  }, [sources]);
 
   const toggle = (set: Set<string>, v: string) => {
     const next = new Set(set);
@@ -88,16 +111,16 @@ function SearchPageInner() {
    * looks exactly as it did before this existed.
    */
   async function fetchActs(criteria: SearchCriteria, requestId: number) {
-    const query = criteria.query.trim();
+    const q = criteria.query.trim();
     // A filtered browse ("show me the cases citing this provision") is not a
     // query naming an act, and neither is an empty box.
-    if (query.length < 2) {
+    if (q.length < 2) {
       setActHits([]);
       setProvisionHits([]);
       return;
     }
     try {
-      const res = await fetch(`/api/search/acts?q=${encodeURIComponent(query)}&scope=${scope}`);
+      const res = await fetch(`/api/search/acts?q=${encodeURIComponent(q)}`);
       const data = await res.json();
       if (requestId !== requestIdRef.current) return; // superseded
       setActHits(data.acts ?? []);
@@ -126,9 +149,13 @@ function SearchPageInner() {
       });
       const data = await res.json();
       if (requestId !== requestIdRef.current) return; // superseded
-      if (!res.ok) throw new Error(data.error ?? "Search failed.");
+      if (!res.ok) throw new Error(data.error ?? "Leitin brást.");
       setResults(data);
       setSearchedQuery(criteria.query);
+      // From the criteria, not from `selected`: the panel can be mid-change
+      // while these results are on screen, and the line above them has to
+      // describe the results, not the selection that will replace them.
+      setSearchedSources(criteria.sources.length);
     } catch (e: any) {
       if (requestId !== requestIdRef.current) return;
       setError(e.message);
@@ -138,33 +165,33 @@ function SearchPageInner() {
     }
   }
 
-  function runSearch(opts?: {
+  function buildCriteria(opts?: {
     tagsOverride?: string[];
-    sourcesOverride?: string[];
     legalOverride?: LegalSelection[];
-  }) {
-    const tags = opts?.tagsOverride ?? activeTags;
-    const legalFilter = opts?.legalOverride ?? legal;
+  }): SearchCriteria | null {
+    const current = filtersRef.current;
+    const tags = opts?.tagsOverride ?? current.activeTags;
+    const legalFilter = opts?.legalOverride ?? current.legal;
     // Nothing ticked → search every source rather than blocking the search.
-    const activeSources =
-      opts?.sourcesOverride ?? (selected.size > 0 ? Array.from(selected) : sources.map((s) => s.key));
-    if (activeSources.length === 0) return; // sources not loaded yet
+    const activeSources = current.selected.size > 0 ? Array.from(current.selected) : allKeys;
+    if (activeSources.length === 0) return null; // sources not loaded yet
 
-    if (selected.size === 0 && sources.length > 0 && !opts?.sourcesOverride) {
-      setSelected(new Set(sources.map((s) => s.key)));
-    }
-
-    const criteria: SearchCriteria = {
+    return {
       query,
       sources: activeSources,
-      dateFrom: dateFrom || undefined,
-      dateTo: dateTo || undefined,
-      year: year ? Number(year) : undefined,
+      dateFrom: current.dateFrom || undefined,
+      dateTo: current.dateTo || undefined,
+      year: current.year ? Number(current.year) : undefined,
       tags: tags.length ? tags : undefined,
       actIds: legalFilter.filter((l) => l.kind === "act").map((l) => l.id),
       provisionIds: legalFilter.filter((l) => l.kind === "provision").map((l) => l.id),
-      sort,
+      sort: current.sort,
     };
+  }
+
+  function runSearch(opts?: { tagsOverride?: string[]; legalOverride?: LegalSelection[] }) {
+    const criteria = buildCriteria(opts);
+    if (!criteria) return;
     criteriaRef.current = criteria;
     fetchPage(criteria, 1);
   }
@@ -172,17 +199,19 @@ function SearchPageInner() {
   /**
    * Picking an act, a provision or a tag runs the search straight away —
    * "show me the cases about this" is the whole point of the panel, so making
-   * the user then reach for the Search button would be a pointless step. The
+   * the user then reach for the search button would be a pointless step. The
    * chosen value is passed explicitly rather than read from state, which has
    * not re-rendered yet at this point.
    */
   function applyLegal(selections: LegalSelection[]) {
     setLegal(selections);
+    filtersRef.current = { ...filtersRef.current, legal: selections };
     runSearch({ legalOverride: selections });
   }
 
   function applyTags(next: string[]) {
     setActiveTags(next);
+    filtersRef.current = { ...filtersRef.current, activeTags: next };
     runSearch({ tagsOverride: next });
   }
 
@@ -194,128 +223,269 @@ function SearchPageInner() {
     resultsTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  // Clicking a tag (e.g. from a result card) lands here as /?tag=fasteign —
-  // search every source for that tag immediately, no manual selection needed.
+  // What the URL asks for. A query typed in the masthead lands here as ?q=,
+  // and a subject tag clicked on a result as ?tag= — the second clears the
+  // panel's own tags, because it is a request to see that one subject.
   useEffect(() => {
-    const tag = searchParams.get("tag");
-    if (!tag || sources.length === 0) return;
-    setActiveTags([tag]);
-    setQuery("");
-    const all = sources.map((s) => s.key);
-    setSelected(new Set(all));
-    criteriaRef.current = { query: "", sources: all, tags: [tag], sort: "relevance" };
-    fetchPage(criteriaRef.current, 1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, sources]);
-
-  function removeTag(tag: string) {
-    const next = activeTags.filter((t) => t !== tag);
-    // Other filters may still be in play; re-run rather than blanking the page.
-    if (next.length || legal.length || query.trim()) applyTags(next);
-    else {
-      setActiveTags(next);
+    if (sources.length === 0) return;
+    if (!query && !urlTag) {
       setResults(null);
       setActHits([]);
       setProvisionHits([]);
       setSearchedQuery("");
       criteriaRef.current = null;
+      return;
     }
+    const tagsOverride = urlTag ? [urlTag] : undefined;
+    if (tagsOverride) setActiveTags(tagsOverride);
+    const criteria = buildCriteria({ tagsOverride });
+    if (!criteria) return;
+    criteriaRef.current = criteria;
+    fetchPage(criteria, 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, urlTag, sources]);
+
+  // The filter bar and the source panel apply as they are changed: they are
+  // in view, and a control that visibly changes nothing until a button
+  // elsewhere is pressed reads as broken. Debounced so that ticking four
+  // boxes is one search rather than four, and only once a search exists —
+  // before that there is nothing to re-run.
+  const filterSignature = `${Array.from(selected).sort().join(",")}|${dateFrom}|${dateTo}|${year}|${sort}`;
+  const lastSignature = useRef<string | null>(null);
+  useEffect(() => {
+    if (!criteriaRef.current) {
+      lastSignature.current = filterSignature;
+      return;
+    }
+    if (lastSignature.current === filterSignature) return;
+    lastSignature.current = filterSignature;
+    const timer = setTimeout(() => runSearch(), REFILTER_DELAY_MS);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterSignature]);
+
+  function removeTag(tag: string) {
+    applyTags(activeTags.filter((t) => t !== tag));
   }
+
+  function setSources_(keys: string[], on: boolean) {
+    setSelected((s) => {
+      const next = new Set(s);
+      // Ticking a group while "nothing means everything" is in force has to
+      // start from everything, or the first tick would silently *narrow* to
+      // one group without the reader asking for it.
+      if (s.size === 0 && !on) allKeys.forEach((k) => next.add(k));
+      keys.forEach((k) => (on ? next.add(k) : next.delete(k)));
+      return next;
+    });
+  }
+
+  const sourceChips = useMemo(
+    () => activeFilterChips(selected, allKeys, nameOf),
+    [selected, allKeys, nameOf]
+  );
+  const groupChips = sourceChips.filter((c) => c.isGroup);
+  const singleChips = sourceChips.filter((c) => !c.isGroup);
+  const shownSingles = chipsExpanded ? singleChips : singleChips.slice(0, CHIP_LIMIT);
+  const hiddenSingles = chipsExpanded ? [] : singleChips.slice(CHIP_LIMIT);
+
+  const searchingAll = sourceChips.length === 0;
+  const dirty =
+    !searchingAll ||
+    activeTags.length > 0 ||
+    legal.length > 0 ||
+    Boolean(dateFrom || dateTo || year) ||
+    sort !== "relevance";
 
   const firstOnPage = results ? (results.page - 1) * results.pageSize + 1 : 0;
   const lastOnPage = results ? firstOnPage + results.hits.length - 1 : 0;
 
-  return (
-    <main className="mx-auto max-w-7xl px-4 py-5">
-      <div className="mb-4">
-        <ProgressBars />
-      </div>
+  function clearAll() {
+    setSelected(new Set());
+    setActiveTags([]);
+    setLegal([]);
+    setDateFrom("");
+    setDateTo("");
+    setYear("");
+    setSort("relevance");
+    filtersRef.current = {
+      selected: new Set(),
+      activeTags: [],
+      legal: [],
+      dateFrom: "",
+      dateTo: "",
+      year: "",
+      sort: "relevance",
+    };
+    if (criteriaRef.current) runSearch({ tagsOverride: [], legalOverride: [] });
+  }
 
-      {/* Search bar */}
-      <form
-        // Keeps the panel's act/provision and tag filters: they are explicit
-        // choices sitting in view, so a keyword search narrows within them
-        // rather than silently discarding them.
-        onSubmit={(e) => { e.preventDefault(); runSearch(); }}
-        className="flex flex-col gap-2 sm:flex-row"
-      >
+  const filterStack = (
+    <>
+      <SourcePanel
+        sources={sources}
+        selected={selected}
+        onToggleSource={(k) =>
+          setSelected((s) => (s.size === 0 ? new Set(allKeys.filter((x) => x !== k)) : toggle(s, k)))
+        }
+        onSetSources={setSources_}
+      />
+      <SpecificSearch
+        legal={legal}
+        onLegalChange={applyLegal}
+        tags={activeTags}
+        onTagsChange={applyTags}
+      />
+    </>
+  );
+
+  const dateControls = (
+    <>
+      <UnderlineField label="Frá">
         <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder='Leitaðu að lögum („vaxtalög“, „38/2001“, „gdpr“) eða úrlausnum — texta, málsnúmeri (22/2023), aðila, "orðrétt", AND / OR / NOT…'
-          className="w-full rounded-lg border border-line bg-white px-4 py-2.5 text-[15px] placeholder:text-inkSoft/60"
-          lang="is"
+          type="date"
+          value={dateFrom}
+          onChange={(e) => setDateFrom(e.target.value)}
+          aria-label="Frá dagsetningu"
+          className="w-[110px] border-0 bg-transparent text-[12.5px] text-text outline-none"
         />
-        <button
-          type="submit"
-          disabled={loading || sources.length === 0}
-          className="rounded-lg bg-ink px-6 py-2.5 font-medium text-white transition-colors hover:bg-inkSoft disabled:cursor-not-allowed disabled:bg-line disabled:text-inkSoft"
+      </UnderlineField>
+      <UnderlineField label="Til">
+        <input
+          type="date"
+          value={dateTo}
+          onChange={(e) => setDateTo(e.target.value)}
+          aria-label="Til dagsetningar"
+          className="w-[110px] border-0 bg-transparent text-[12.5px] text-text outline-none"
+        />
+      </UnderlineField>
+      <UnderlineField label="Ár">
+        <input
+          type="number"
+          value={year}
+          onChange={(e) => setYear(e.target.value)}
+          placeholder="2024"
+          aria-label="Ár"
+          className="w-[52px] border-0 bg-transparent text-[12.5px] text-text outline-none placeholder:text-textMuted"
+        />
+      </UnderlineField>
+      <UnderlineField label="Raða">
+        <select
+          value={sort}
+          onChange={(e) => setSort(e.target.value as typeof sort)}
+          aria-label="Raða eftir"
+          className="border-0 bg-transparent text-[12.5px] text-text outline-none"
         >
-          {loading ? "Searching…" : "Search"}
-        </button>
-      </form>
+          <option value="relevance">Vægi</option>
+          <option value="newest">Nýjast fyrst</option>
+          <option value="oldest">Elst fyrst</option>
+        </select>
+      </UnderlineField>
+    </>
+  );
 
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-inkSoft">
-        {selected.size === 0 && <span>No sources ticked — searching will use all of them.</span>}
-        <button onClick={() => setShowFilters(!showFilters)} className="hover:text-ink">
-          {showFilters ? "▾ Hide filters" : "▸ Date & sort filters"}
+  return (
+    <>
+      {/* ---- Filter bar ------------------------------------------------ */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-line bg-white px-4 py-2.5 text-[12.5px] lg:px-[30px]">
+        <button
+          type="button"
+          onClick={() => setDrawerOpen(true)}
+          className="inline-flex items-center gap-2 rounded-[3px] border border-lineStrong px-2.5 py-1 text-xs text-ink transition-colors hover:bg-glacier lg:hidden"
+        >
+          <FiltersIcon className="h-3.5 w-3.5 text-inkSoft" />
+          Síur
         </button>
+
+        {searchingAll ? (
+          <span className="text-textMuted">
+            Leitað í öllum heimildum · {allKeys.length || "…"}
+          </span>
+        ) : (
+          <span className="text-[10px] uppercase tracking-[.14em] text-textMuted">Heimildir</span>
+        )}
+
+        {groupChips.map((chip) => (
+          <FilterPill
+            key={chip.label}
+            label={chip.label}
+            tone="solid"
+            onRemove={() => setSources_(chip.keys, false)}
+          />
+        ))}
+        {shownSingles.map((chip) => (
+          <FilterPill
+            key={chip.keys[0]}
+            label={chip.label}
+            onRemove={() => setSources_(chip.keys, false)}
+          />
+        ))}
+        {hiddenSingles.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setChipsExpanded(true)}
+            className="inline-flex items-center gap-1.5 rounded-full border border-lineStrong px-3 py-1 text-xs text-inkSoft transition-colors hover:bg-glacier"
+          >
+            + {hiddenSingles.length} fleiri
+            <ChevronDownIcon className="h-3 w-3" />
+          </button>
+        )}
+        {chipsExpanded && singleChips.length > CHIP_LIMIT && (
+          <button
+            type="button"
+            onClick={() => setChipsExpanded(false)}
+            className="text-xs text-textMuted underline underline-offset-[3px] hover:text-ink"
+          >
+            Sýna færri
+          </button>
+        )}
+
+        {legal.map((l) => (
+          <FilterPill
+            key={`${l.kind}-${l.id}`}
+            label={l.label}
+            onRemove={() => applyLegal(legal.filter((x) => x.id !== l.id))}
+          />
+        ))}
+        {activeTags.map((t) => (
+          <FilterPill key={t} label={t} onRemove={() => removeTag(t)} />
+        ))}
+
+        {(dateFrom || dateTo) && (
+          <FilterPill
+            label={`${dateFrom || "…"} – ${dateTo || "…"}`}
+            tone="moss"
+            onRemove={() => {
+              setDateFrom("");
+              setDateTo("");
+            }}
+          />
+        )}
+        {year && <FilterPill label={year} tone="moss" onRemove={() => setYear("")} />}
+
+        {dirty && (
+          <button
+            type="button"
+            onClick={clearAll}
+            className="text-xs text-textMuted underline underline-offset-[3px] hover:text-ink"
+          >
+            Hreinsa allt
+          </button>
+        )}
+
+        <div className="ml-auto hidden items-center gap-4 text-textMuted lg:flex">
+          {dateControls}
+        </div>
       </div>
 
-      {showFilters && (
-        <div className="mt-2 flex flex-wrap items-end gap-4 rounded-lg border border-line bg-white p-3 text-sm">
-          <label className="flex flex-col gap-1 text-xs text-inkSoft">
-            From date
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded border border-line px-2 py-1 text-sm text-ink" />
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-inkSoft">
-            To date
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded border border-line px-2 py-1 text-sm text-ink" />
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-inkSoft">
-            Year
-            <input type="number" placeholder="2024" value={year} onChange={(e) => setYear(e.target.value)} className="w-24 rounded border border-line px-2 py-1 text-sm text-ink" />
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-inkSoft">
-            Sort by
-            <select value={sort} onChange={(e) => setSort(e.target.value as any)} className="rounded border border-line px-2 py-1 text-sm text-ink">
-              <option value="relevance">Relevance</option>
-              <option value="newest">Newest first</option>
-              <option value="oldest">Oldest first</option>
-            </select>
-          </label>
-        </div>
-      )}
-
-      <div className="mt-4 flex flex-col gap-5 lg:flex-row">
-        {/* Sidebar: source selection for keyword search, and — alongside it,
-            not replacing it — the act/provision lookup. */}
-        <div className="w-full shrink-0 space-y-4 lg:w-72">
-          <SourcePanel
-            sources={sources}
-            selected={selected}
-            onToggleSource={(k) => setSelected((s) => toggle(s, k))}
-            onSetSources={(keys, on) =>
-              setSelected((s) => {
-                const next = new Set(s);
-                keys.forEach((k) => (on ? next.add(k) : next.delete(k)));
-                return next;
-              })
-            }
-          />
-          <SpecificSearch
-            legal={legal}
-            onLegalChange={applyLegal}
-            tags={activeTags}
-            onTagsChange={applyTags}
-          />
-        </div>
+      {/* ---- Body ------------------------------------------------------ */}
+      <div className="flex items-start gap-[26px] bg-paper px-4 pb-[26px] pt-[22px] lg:px-[30px]">
+        <aside className="hidden w-[262px] shrink-0 flex-col gap-[18px] lg:flex">{filterStack}</aside>
 
         <section className="min-w-0 flex-1">
           <div ref={resultsTopRef} className="scroll-mt-4" />
 
-          {/* The law itself, above everything — including the chips saying
-              which sources are being searched. Those are the state of the
+          {/* The law itself, above everything: the chips are the state of the
               query; this is its answer. */}
           <ActResults
             acts={actHits}
@@ -327,7 +497,7 @@ function SearchPageInner() {
                   kind: "act",
                   id: act.id,
                   actId: act.id,
-                  label: act.title,
+                  label: act.fullLabel,
                   sublabel: act.citation,
                   path: act.path,
                   jurisdiction: act.jurisdiction,
@@ -343,55 +513,16 @@ function SearchPageInner() {
                   kind: "provision",
                   id: provision.id,
                   actId: provision.actId,
-                  label: provision.displayLabel,
-                  sublabel: `${provision.actTitle} (${provision.citation})`,
+                  label: provision.fullLabel,
+                  sublabel: provision.actTitle,
                   path: provision.path,
                 },
               ])
             }
           />
 
-          {(selected.size > 0 || activeTags.length > 0 || legal.length > 0) && (
-            <div className="mb-3 flex flex-wrap items-center gap-1.5">
-              {legal.map((l) => (
-                <button
-                  key={`${l.kind}-${l.id}`}
-                  onClick={() => applyLegal(legal.filter((x) => x.id !== l.id))}
-                  className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-white hover:opacity-80"
-                  title="Remove this act/provision filter"
-                >
-                  {l.kind === "provision" ? l.label : l.sublabel} ✕
-                </button>
-              ))}
-              {activeTags.map((t) => (
-                <button
-                  key={t}
-                  onClick={() => removeTag(t)}
-                  className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-white hover:opacity-80"
-                  title="Remove this tag filter"
-                >
-                  Tag: {t} ✕
-                </button>
-              ))}
-              <span className="text-xs text-inkSoft">Searching:</span>
-              {Array.from(selected).map((k) => (
-                <button
-                  key={k}
-                  onClick={() => setSelected((s) => toggle(s, k))}
-                  className="rounded-full bg-ink px-2.5 py-0.5 text-xs font-medium text-white hover:opacity-80"
-                  title="Remove this source"
-                >
-                  {sources.find((s) => s.key === k)?.name ?? k} ✕
-                </button>
-              ))}
-              <button onClick={() => setSelected(new Set())} className="text-xs text-accent hover:underline">
-                Clear all
-              </button>
-            </div>
-          )}
-
           {error && (
-            <div className="rounded-lg border border-accent/40 bg-accentSoft p-3 text-sm">
+            <div className="mb-3 rounded-[3px] border border-lineStrong bg-white p-3 text-sm text-text">
               {error}
             </div>
           )}
@@ -399,51 +530,146 @@ function SearchPageInner() {
           {!results && !error && <HomeCases />}
 
           {results && (
-            <>
-              <p className="mb-2 text-xs text-inkSoft">
-                {results.total === 0 ? (
-                  "No results"
-                ) : (
-                  <>
-                    Showing <span className="font-medium text-ink">{firstOnPage.toLocaleString("is-IS")}–{lastOnPage.toLocaleString("is-IS")}</span>{" "}
-                    of {results.total.toLocaleString("is-IS")}
-                    {results.totalIsCapped && "+"} result{results.total === 1 ? "" : "s"}
-                  </>
-                )}
-                {searchedQuery && <> for <span className="font-medium text-ink">{searchedQuery}</span></>}
-                {activeTags.length > 0 && (
-                  <> tagged <span className="font-medium text-ink">{activeTags.join(" + ")}</span></>
-                )}
-                {legal.length > 0 && (
-                  <>
-                    {" "}citing{" "}
-                    <span className="font-medium text-ink">
-                      {legal.map((l) => (l.kind === "provision" ? l.label : l.sublabel)).join(" + ")}
-                    </span>
-                  </>
-                )}
-              </p>
-              <div className={`flex flex-col gap-3 ${loading ? "opacity-50 transition-opacity" : ""}`}>
+            <div className="rounded-[3px] border border-line bg-white">
+              <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-5 py-3">
+                <p className="text-[12.5px] text-textMuted">
+                  {results.total === 0 ? (
+                    "Engar úrlausnir"
+                  ) : (
+                    <>
+                      Sýni{" "}
+                      <span className="font-semibold text-text">
+                        {firstOnPage.toLocaleString("is-IS")}–{lastOnPage.toLocaleString("is-IS")}
+                      </span>{" "}
+                      af{" "}
+                      <span className="font-semibold text-text">
+                        {results.total.toLocaleString("is-IS")}
+                        {results.totalIsCapped && "+"}
+                      </span>{" "}
+                      úrlausnum
+                    </>
+                  )}
+                  {searchedQuery && (
+                    <>
+                      {" "}
+                      fyrir <span className="font-semibold text-text">{searchedQuery}</span>
+                    </>
+                  )}
+                  {legal.length > 0 && (
+                    <>
+                      {" "}
+                      sem vísa í{" "}
+                      <span className="font-semibold text-text">
+                        {legal.map((l) => l.label).join(" + ")}
+                      </span>
+                    </>
+                  )}
+                </p>
+                <span className="text-[11px] uppercase tracking-[.1em] text-textMuted">
+                  Leitað í {searchedSources.toLocaleString("is-IS")} heimildum
+                </span>
+              </div>
+
+              <div className={loading ? "opacity-50 transition-opacity" : undefined}>
                 {results.hits.map((h) => (
                   <ResultCard key={h.id} hit={h} query={searchedQuery} />
                 ))}
                 {results.hits.length === 0 && (
-                  <p className="rounded-lg border border-line bg-white p-6 text-sm text-inkSoft">
-                    No matches in the selected sources. Try fewer words, a broader date range, or additional sources.
+                  <p className="px-5 py-6 text-sm text-textMuted">
+                    Engar úrlausnir fundust í völdum heimildum. Reyndu færri orð, víðara tímabil
+                    eða fleiri heimildir.
                   </p>
                 )}
               </div>
+
               <Pagination
                 page={results.page}
                 totalPages={results.totalPages}
                 disabled={loading}
                 onPageChange={goToPage}
               />
-            </>
+            </div>
           )}
         </section>
       </div>
-    </main>
+
+      {/* ---- Filter drawer, below the sidebar breakpoint ---------------- */}
+      {drawerOpen && (
+        <div
+          className="fixed inset-0 z-40 flex justify-end bg-[rgba(15,42,68,.55)] lg:hidden"
+          onClick={(e) => e.target === e.currentTarget && setDrawerOpen(false)}
+        >
+          <div className="flex h-full w-[320px] max-w-full flex-col gap-[18px] overflow-y-auto bg-paper p-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-heading text-[15px] font-medium text-ink">Síur</h2>
+              <button
+                type="button"
+                onClick={() => setDrawerOpen(false)}
+                className="text-sm text-textMuted hover:text-ink"
+              >
+                Loka
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-4 rounded-[3px] border border-line bg-white p-3 text-textMuted">
+              {dateControls}
+            </div>
+            {filterStack}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * A date or sort control: a label and its field over one hairline, with no
+ * box. They sit in the filter bar rather than behind a disclosure, where a
+ * date range nobody could see was silently narrowing people's results.
+ */
+function UnderlineField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-baseline gap-[7px] border-b border-lineStrong pb-0.5">
+      <span className="text-[11px]">{label}</span>
+      {children}
+    </span>
+  );
+}
+
+/**
+ * One active filter. Navy when it stands for a whole category, glacier for a
+ * single source or selection, moss for the date and year — the same three
+ * meanings the panel beside it uses.
+ */
+function FilterPill({
+  label,
+  onRemove,
+  tone = "glacier",
+}: {
+  label: string;
+  onRemove: () => void;
+  tone?: "solid" | "glacier" | "moss";
+}) {
+  const tones = {
+    solid: "bg-ink text-white",
+    glacier: "bg-glacier text-ink",
+    moss: "bg-[#DCE5DC] text-mossText",
+  } as const;
+  return (
+    <span
+      className={`inline-flex max-w-full items-center gap-2 rounded-full py-1 pl-3 pr-2 text-xs ${tones[tone]} ${
+        tone === "solid" ? "font-medium" : ""
+      }`}
+    >
+      <span className="truncate">{label}</span>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Fjarlægja ${label}`}
+        className={tone === "solid" ? "text-[#9BB0C4] hover:text-white" : "text-inkSoft hover:text-ink"}
+      >
+        ✕
+      </button>
+    </span>
   );
 }
 

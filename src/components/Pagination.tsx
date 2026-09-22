@@ -38,17 +38,20 @@ export function Pagination({ page, totalPages, disabled, onPageChange }: Props) 
   const items = pageItems(page, totalPages);
 
   const arrowClass =
-    "rounded border border-line px-2.5 py-1 text-xs text-inkSoft transition-colors hover:border-ink hover:text-ink disabled:cursor-not-allowed disabled:border-line disabled:text-line";
+    "rounded-[3px] border border-line px-[11px] py-[5px] text-xs text-inkSoft transition-colors hover:border-ink hover:text-ink disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-line disabled:hover:text-inkSoft";
 
   return (
-    <nav className="mt-5 flex flex-wrap items-center justify-center gap-1.5" aria-label="Search result pages">
+    <nav
+      className="flex flex-wrap items-center justify-center gap-1.5 p-4"
+      aria-label="Síður niðurstaðna"
+    >
       <button
         type="button"
         onClick={() => onPageChange(page - 1)}
         disabled={disabled || page <= 1}
         className={arrowClass}
       >
-        ← Previous
+        ← Fyrri
       </button>
 
       {items.map((item, i) =>
@@ -63,11 +66,11 @@ export function Pagination({ page, totalPages, disabled, onPageChange }: Props) 
             onClick={() => onPageChange(item)}
             disabled={disabled}
             aria-current={item === page ? "page" : undefined}
-            aria-label={`Page ${item}`}
+            aria-label={`Síða ${item}`}
             className={
               item === page
-                ? "min-w-[2rem] rounded border border-ink bg-ink px-2 py-1 text-xs font-semibold text-white"
-                : "min-w-[2rem] rounded border border-line px-2 py-1 text-xs text-inkSoft transition-colors hover:border-ink hover:text-ink disabled:cursor-not-allowed"
+                ? "min-w-[30px] rounded-[3px] border border-ink bg-ink px-[9px] py-[5px] text-xs font-semibold text-white"
+                : "min-w-[30px] rounded-[3px] border border-line px-[9px] py-[5px] text-xs text-inkSoft transition-colors hover:border-ink hover:text-ink disabled:cursor-not-allowed"
             }
           >
             {item}
@@ -81,7 +84,7 @@ export function Pagination({ page, totalPages, disabled, onPageChange }: Props) 
         disabled={disabled || page >= totalPages}
         className={arrowClass}
       >
-        Next →
+        Næsta →
       </button>
     </nav>
   );

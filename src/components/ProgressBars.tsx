@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 interface SourceProgress {
   key: string;
@@ -99,9 +100,55 @@ function Bar({
 }
 
 /**
- * Front-page widget: overall ingestion progress, then a bar per source,
- * grouped the way the source panel groups them. Collapsible, because it sits
- * above the case list and had grown past the point of being glanceable.
+ * The one line the search page carries about how complete the corpus is.
+ *
+ * It used to be a card above the results — the first thing on the page, and
+ * the thing a reader looking for a judgment cares least about. Here it is a
+ * footer line, and the detail it replaced is a click away under "Um
+ * gagnasafnið". The disclaimer sits beside it because both answer the same
+ * question: how far to trust what is on the screen.
+ */
+export function IngestionStatusLine() {
+  const [data, setData] = useState<ProgressData | null>(null);
+
+  useEffect(() => {
+    fetch("/api/progress")
+      .then((r) => r.json())
+      .then(setData)
+      .catch(() => {
+        // A footer line is not worth an error state; it simply does not
+        // appear, and the disclaimer beside it still does.
+      });
+  }, []);
+
+  const pct =
+    data && data.total != null && data.total > 0 ? (data.ingested / data.total) * 100 : null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line bg-white px-4 py-[11px] text-[11px] text-textMuted lg:px-[30px]">
+      {data && data.ingested > 0 && (
+        <>
+          <span>
+            Söfnun heimilda
+            {pct != null && <> {pct.toFixed(1).replace(".", ",")}%</>} · {nf(data.ingested)}
+            {data.total != null && <> / {nf(data.total)}</>} skjöl
+          </span>
+          <span aria-hidden className="hidden h-3 w-px bg-line sm:block" />
+        </>
+      )}
+      <span>Óopinbert rannsóknartæki. Staðfestu ávallt texta við opinbera heimild.</span>
+      <Link href="/admin/ingestion" className="ml-auto text-inkSoft hover:text-ink">
+        Um gagnasafnið
+      </Link>
+    </div>
+  );
+}
+
+/**
+ * The detailed view: overall ingestion progress, then a bar per source,
+ * grouped the way the source panel groups them. It sat above the case list
+ * until the redesign; it now lives on /admin/ingestion, behind the footer's
+ * "Um gagnasafnið".
  */
 export function ProgressBars() {
   const [data, setData] = useState<ProgressData | null>(null);

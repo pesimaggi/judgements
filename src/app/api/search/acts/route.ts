@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSearchProvider } from "@/lib/search";
-import { parseActScope } from "@/lib/acts";
+import { actFullLabel, parseActScope, provisionFullLabel } from "@/lib/acts";
 import { rankActMatches, type ActMatchQuality } from "@/lib/act-match";
 import { parseProvisionQuery } from "@/lib/provision-query";
 
@@ -85,6 +85,9 @@ export async function GET(req: Request) {
       jurisdiction: act.jurisdiction,
       title: act.title,
       citation: act.citation,
+      // The act named in full, for the filter chip this becomes when the
+      // reader narrows to it — see components/SpecificSearch.
+      fullLabel: actFullLabel(act),
       path: act.path,
       provisionCount: act.provisionCount,
       citingCases: citingCases.get(act.id) ?? 0,
@@ -131,6 +134,9 @@ export async function GET(req: Request) {
           id: p.id,
           actId: p.actId,
           displayLabel: p.displayLabel,
+          // "13. gr. laga nr. 37/1993" — the citation as a judgment writes
+          // it. `displayLabel` alone is "13. gr.", which names no act.
+          fullLabel: provisionFullLabel(p.displayLabel, p.act),
           heading: p.heading,
           snippet: p.paragraphs[0]?.text.slice(0, 400) ?? p.fullText.slice(0, 400),
           citation: act?.citation ?? "",

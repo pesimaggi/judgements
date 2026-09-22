@@ -208,6 +208,15 @@ export function WellChat({ enabled }: { enabled: boolean }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
+  // The help dialog offers "Opna Brunninn" from the masthead, which is a page
+  // away from this component's own launcher. An event rather than lifted state
+  // because the launcher belongs to the layout and the dialog does not.
+  useEffect(() => {
+    const onAsk = () => setOpen(true);
+    window.addEventListener("logbrunnur:open-well", onAsk);
+    return () => window.removeEventListener("logbrunnur:open-well", onAsk);
+  }, []);
+
   const ask = useCallback(
     async (question: string) => {
       const trimmed = question.trim();

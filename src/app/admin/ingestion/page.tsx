@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { ProgressBars } from "@/components/ProgressBars";
 
 interface Run {
   id: string; startedAt: string; finishedAt: string | null; status: string;
@@ -59,6 +60,13 @@ export default function IngestionPage() {
       </p>
       {error && <p className="mt-3 text-sm text-accent">{error}</p>}
       {loading && <p className="mt-3 text-sm text-inkSoft">Loading…</p>}
+
+      {/* The overall progress bars, which used to sit above the search
+          results. The search page now carries one line of this and links
+          here for the rest — see IngestionStatusLine. */}
+      <div className="mt-4">
+        <ProgressBars />
+      </div>
 
       {/* A court in the feed that maps to no source of ours. Every case from
           it is being dropped, and it belongs to none of the blocks below —

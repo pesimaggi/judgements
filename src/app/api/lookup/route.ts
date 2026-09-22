@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSearchProvider } from "@/lib/search";
 import { parseProvisionQuery, formatArticleLabel } from "@/lib/provision-query";
-import { actCitation, actPath, parseActScope } from "@/lib/acts";
+import { actFullLabel, actPath, parseActScope, provisionFullLabel } from "@/lib/acts";
 
 export const dynamic = "force-dynamic";
 
@@ -47,8 +47,13 @@ export async function GET(req: Request) {
           kind: "act" as const,
           id: a.id,
           actId: a.id,
-          label: a.title,
-          sublabel: a.citation,
+          // The label is what becomes a chip, and a chip has to survive being
+          // read on its own: "Almenn hegningarlög" is a different claim from
+          // "Almenn hegningarlög nr. 19/1940" once there are three of them in
+          // a row. The short names go underneath, where they help someone
+          // confirm they picked the act they were thinking of.
+          label: actFullLabel(a),
+          sublabel: a.aliases?.length ? a.aliases.join(", ") : a.citation,
           path: a.path,
           // What the EES tag beside the suggestion is drawn from — see
           // lib/eea-tag.ts. Null throughout on the Icelandic side.
@@ -68,7 +73,7 @@ export async function GET(req: Request) {
         articleNumber: parsed.articleNumber,
         articleLetter: parsed.articleLetter,
       },
-      include: { act: true },
+      include: { act: true, _count: { select: { caseLinks: true } } },
     });
 
     const order = new Map(acts.map((a, i) => [a.id, i]));
@@ -79,8 +84,11 @@ export async function GET(req: Request) {
         kind: "provision" as const,
         id: p.id,
         actId: p.actId,
-        label: `${p.displayLabel}${p.heading ? ` — ${p.heading}` : ""}`,
-        sublabel: `${p.act.title} (${actCitation(p.act)})`,
+        // "4. gr." on its own was the bug this label fixes: picked from the
+        // list it became a chip that named no act, and two provisions of two
+        // different acts made two identical chips.
+        label: provisionFullLabel(p.displayLabel, p.act),
+        sublabel: provisionMeta(p),
         path: `${actPath(p.act)}#${p.anchor}`,
         jurisdiction: p.act.jurisdiction,
         eeaRelevant: p.act.eeaRelevant,
@@ -94,8 +102,8 @@ export async function GET(req: Request) {
               kind: "act" as const,
               id: a.id,
               actId: a.id,
-              label: a.title,
-              sublabel: `${a.citation} — ${formatArticleLabel(parsed)} fannst ekki`,
+              label: actFullLabel(a),
+              sublabel: `${formatArticleLabel(parsed)} fannst ekki`,
               path: a.path,
               jurisdiction: a.jurisdiction,
               eeaRelevant: a.eeaRelevant ?? false,
@@ -107,4 +115,30 @@ export async function GET(req: Request) {
     console.error("Lookup failed:", e);
     return NextResponse.json({ error: "Lookup failed." }, { status: 500 });
   }
+}
+
+/**
+ * The second line under a provision suggestion: which act it belongs to, what
+ * the article is called, and how much case law turns on it.
+ *
+ * The count is the deciding piece when an article number resolves to several
+ * acts — "312 úrlausnir" against "engar úrlausnir" says which one the reader
+ * meant far more reliably than the act titles do.
+ */
+function provisionMeta(provision: {
+  heading: string | null;
+  act: Parameters<typeof actFullLabel>[0];
+  _count: { caseLinks: number };
+}): string {
+  const parts = [actFullLabel(provision.act)];
+  if (provision.heading) parts.push(provision.heading);
+  const n = provision._count.caseLinks;
+  if (n > 0) {
+    parts.push(
+      n === 1
+        ? "1 úrlausn vísar til ákvæðisins"
+        : `${n.toLocaleString("is-IS")} úrlausnir vísa til ákvæðisins`
+    );
+  }
+  return parts.join(" · ");
 }
