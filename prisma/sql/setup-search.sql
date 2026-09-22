@@ -63,6 +63,24 @@ UPDATE "Document"
    SET search_vector = document_search_vector(title, case_name, case_number, parties, full_text)
  WHERE search_vector IS NULL;
 
+-- Every index below is *also* declared in prisma/schema.prisma, and a new one
+-- added here needs the same treatment. `prisma db push` drops any index it does
+-- not find in the schema, and db:deploy runs push before this script: an
+-- undeclared index is therefore dropped and rebuilt on every single deploy,
+-- inside the pre-deploy window, over the whole corpus. The declarations are
+-- what stop that; the CREATE INDEX IF NOT EXISTS statements here then find the
+-- indexes already in place and do nothing.
+--
+-- Three exceptions, all deliberate. document_source_date_idx below sorts
+-- NULLS LAST, which Prisma cannot express, so it stays undeclared and keeps
+-- being rebuilt — cheap, as it is a btree. The expression indexes
+-- (acts_aliases_trgm_idx, acts_citation_trgm_idx) index a function call, which
+-- Prisma cannot express either, but push does not drop what it cannot express.
+-- case_provision_links_provision_idx at the foot of this file needs nothing:
+-- CaseProvisionLink already declares @@index([provisionId, matchType]), and
+-- push matches an index by its columns, so it sees this one as that index
+-- under another name and leaves it. (It also means the table carries the same
+-- btree twice, under both names — harmless, but not intended.)
 CREATE INDEX IF NOT EXISTS document_search_vector_idx ON "Document" USING GIN (search_vector);
 
 -- Superseded by document_search_vector_idx: same lookups, but this one also

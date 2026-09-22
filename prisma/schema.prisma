@@ -1,10 +1,23 @@
 generator client {
-  provider = "prisma-client-js"
+  // postgresqlExtensions is what lets the datasource block below name the
+  // extensions this schema depends on. It changes nothing about the generated
+  // client; it exists purely so `prisma db push` installs pg_trgm before it
+  // tries to build a gin_trgm_ops index.
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+
+  // prisma/sql/setup-search.sql creates both of these, but it runs *after*
+  // `prisma db push` in `db:deploy`. Now that the trigram indexes are declared
+  // in this file, push builds them itself, and `gin_trgm_ops` does not exist
+  // until pg_trgm does — a push against a brand-new database failed outright
+  // without this line. Extensions that are installed but not named here are
+  // left alone, so listing these two claims ownership of nothing else.
+  extensions = [pg_trgm, unaccent]
 }
 
 /// One normalized Icelandic court judgment.
@@ -65,7 +78,35 @@ model Document {
   @@index([date])
   @@index([year])
   @@index([citationScanHash])
+  // The indexes below are created by prisma/sql/setup-search.sql and
+  // prisma/sql/setup-lemmas.sql; they are declared here only so that
+  // `prisma db push` recognises them. Push drops every index it does not find
+  // in this file, so before they were declared each Railway deploy dropped
+  // them and the setup SQL rebuilt them seconds later — a full GIN rebuild
+  // over the whole corpus, inside the pre-deploy window, on every deploy.
+  //
+  // Each declaration has to generate exactly what the SQL creates, or push
+  // drops and recreates the index anyway and we are back where we started.
+  // `map:` pins the name, `raw(...)` pins the operator class.
+  //
+  // document_source_date_idx is deliberately *not* declared: the SQL creates
+  // it as (source, date DESC NULLS LAST) and Prisma can only express
+  // `date DESC`, which in Postgres means NULLS FIRST. Declaring it would leave
+  // a fresh database with an ordering that the `d.date DESC NULLS LAST` sorts
+  // in src/lib/search/postgres.ts cannot walk. The expression indexes in
+  // setup-search.sql (acts_aliases_trgm_idx, acts_citation_trgm_idx) are
+  // undeclared for a different reason: Prisma cannot express an index over a
+  // function call, but it does not drop what it cannot express either.
+  @@index([searchVector(ops: raw("tsvector_ops"))], type: Gin, map: "document_search_vector_idx")
   @@index([lemmaVector(ops: raw("tsvector_ops"))], type: Gin, map: "document_lemma_vector_idx")
+  // Fuzzy matching of Icelandic spelling variants and case numbers; these back
+  // the `%` operator the fuzzy fallback in src/lib/search/postgres.ts uses.
+  @@index([caseNumber(ops: raw("gin_trgm_ops"))], type: Gin, map: "document_case_number_trgm_idx")
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "document_title_trgm_idx")
+  @@index([caseName(ops: raw("gin_trgm_ops"))], type: Gin, map: "document_case_name_trgm_idx")
+  @@index([parties(ops: raw("gin_trgm_ops"))], type: Gin, map: "document_parties_trgm_idx")
+  // Tag browsing (`/?tag=…`) filters with subject_tags @> ARRAY[…].
+  @@index([subjectTags], type: Gin, map: "document_subject_tags_idx")
 }
 
 /// Application data only. Clerk owns identities, sessions and credentials.
@@ -251,6 +292,10 @@ model Act {
   @@index([lagastodScanHash])
   @@index([jurisdiction, eeaRelevant])
   @@index([jurisdiction, textStatus])
+  // Backs the act type-ahead's fuzzy title match. Declared for the same reason
+  // as the Document indexes: prisma/sql/setup-search.sql owns it, and an
+  // undeclared index is one `prisma db push` drops on every deploy.
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "acts_title_trgm_idx")
   @@map("acts")
 }
 
@@ -339,6 +384,10 @@ model Provision {
   @@unique([actId, anchor])
   @@index([actId, ordering])
   @@index([actId, articleNumber, articleLetter])
+  // Both vectors are maintained by SQL triggers and both indexes are created by
+  // the setup scripts; declaring them keeps `prisma db push` from dropping and
+  // rebuilding them on every deploy. See the note in Document.
+  @@index([searchVector(ops: raw("tsvector_ops"))], type: Gin, map: "provision_search_vector_idx")
   @@index([lemmaVector(ops: raw("tsvector_ops"))], type: Gin, map: "provision_lemma_vector_idx")
   @@map("provisions")
 }

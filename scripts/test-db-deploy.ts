@@ -9,6 +9,38 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "pg";
 
+/// Indexes that prisma/sql/*.sql creates and prisma/schema.prisma also
+/// declares. The declarations earn their keep only if `prisma db push` then
+/// leaves them alone: push drops every index missing from the schema, so an
+/// undeclared one was dropped and rebuilt on every Railway deploy — a full GIN
+/// rebuild of the corpus inside the pre-deploy window. Comparing pg_class OIDs
+/// across two deploys is what catches a regression, because a drop followed by
+/// setup-search.sql putting the same name back looks identical otherwise.
+///
+/// document_source_date_idx is absent on purpose. Prisma cannot express its
+/// `NULLS LAST`, and a declaration would not even churn it — push accepts the
+/// SQL's index as matching — but on a fresh database push would build it first,
+/// as NULLS FIRST, and setup-search.sql's CREATE INDEX IF NOT EXISTS would then
+/// leave that wrong ordering in place. So it stays undeclared, and stays one
+/// btree that each deploy drops and rebuilds. See the note in schema.prisma.
+const SQL_OWNED_INDEXES = [
+  "document_search_vector_idx",
+  "provision_search_vector_idx",
+  "document_case_number_trgm_idx",
+  "document_title_trgm_idx",
+  "document_case_name_trgm_idx",
+  "document_parties_trgm_idx",
+  "document_subject_tags_idx",
+  "acts_title_trgm_idx",
+  "document_lemma_vector_idx",
+  "provision_lemma_vector_idx",
+  "bin_lemma_lemmas_idx",
+];
+
+/// bin_lemma itself is a table rather than an index: PR #70's concern was the
+/// dictionary rows, not just the index over them.
+const PRESERVED_RELATIONS = ["bin_lemma", ...SQL_OWNED_INDEXES];
+
 function command(executable: string, args: string[]) {
   const result = spawnSync(executable, args, {
     encoding: "utf8",
@@ -45,17 +77,44 @@ async function main() {
     );
     assert.equal(existing.rowCount, 0, "Use a fresh database, never existing application data");
 
-    // Recreate the schema before Prisma knew about the SQL-managed lemma data.
-    // The unchanged setup SQL then creates the exact legacy table/column types.
     const schema = readFileSync("prisma/schema.prisma", "utf8");
-    const legacySchema = schema
+    const prisma = ["node_modules/prisma/build/index.js", "db", "push", "--skip-generate"];
+
+    // A brand-new database has to come up from the schema alone, before any of
+    // our SQL has run. That is not free now that the trigram indexes are
+    // declared: `gin_trgm_ops` does not exist until pg_trgm does, so the push
+    // fails outright unless the datasource declares the extension. This is the
+    // README's quick start and every new Railway environment.
+    run(process.execPath, [...prisma]);
+    const created = await client.query(
+      `SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname = ANY($1)`,
+      [SQL_OWNED_INDEXES],
+    );
+    assert.equal(created.rowCount, SQL_OWNED_INDEXES.length,
+      "A push against an empty database must create every declared SQL-owned index");
+    await client.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
+
+    // Recreate the schema before Prisma knew about the SQL-managed lemma data
+    // or about the indexes setup-search.sql creates — which is what production
+    // looks like today. The unchanged setup SQL then creates the exact legacy
+    // table/column types, and the indexes below are the SQL's own, so the
+    // deploys that follow are proving push leaves *those* in place.
+    const legacySchema = SQL_OWNED_INDEXES.reduce(
+      (text, index) => text.replace(new RegExp(`^  @@index\\([^\\n]*"${index}"\\)\\n`, "m"), ""),
+      schema,
+    )
       .replace(/^  lemmaVector\s+Unsupported\("tsvector"\)\?[^\n]*\n/gm, "")
-      .replace(/^  @@index\(\[lemmaVector[^\n]*\n/gm, "")
+      .replace(/^  extensions = \[[^\n]*\n/m, "")
       .replace(/model BinLemma \{[\s\S]*?\n\}/, "");
     assert.notEqual(legacySchema, schema);
+    // Every mapped @@index in the schema is a SQL-owned one, so none may survive
+    // the strip. This doubles as the tripwire for the list above: declare a new
+    // index in schema.prisma without adding it here and this fails, rather than
+    // the index quietly going untested.
+    assert.ok(!/@@index\([^\n]*map:/.test(legacySchema),
+      "Every mapped @@index belongs in SQL_OWNED_INDEXES");
     const legacyPath = join(dir, "schema.prisma");
     writeFileSync(legacyPath, legacySchema);
-    const prisma = ["node_modules/prisma/build/index.js", "db", "push", "--skip-generate"];
     run(process.execPath, [...prisma, "--schema", legacyPath]);
     run("npm", ["run", "db:setup-search"]);
     run("npm", ["run", "db:setup-lemmas"]);
@@ -87,13 +146,13 @@ async function main() {
       const saved = await client.query("SELECT * FROM saved_documents ORDER BY clerk_user_id, document_id");
       // These indexes are expensive to rebuild in the real corpus. Comparing
       // OIDs catches drop/recreate even if a setup script puts the names back.
-      const relations = await client.query(`
-        SELECT relname, oid FROM pg_class WHERE relnamespace = 'public'::regnamespace
-          AND relname IN ('bin_lemma', 'bin_lemma_lemmas_idx',
-                          'document_lemma_vector_idx', 'provision_lemma_vector_idx')
-        ORDER BY relname
-      `);
-      assert.equal(relations.rowCount, 4);
+      const relations = await client.query(
+        `SELECT relname, oid FROM pg_class WHERE relnamespace = 'public'::regnamespace
+           AND relname = ANY($1) ORDER BY relname`,
+        [PRESERVED_RELATIONS],
+      );
+      assert.equal(relations.rowCount, PRESERVED_RELATIONS.length,
+        "Every preserved relation must exist before the comparison means anything");
       return { dictionary: dictionary.rows, documents: documents.rows,
         provisions: provisions.rows, saved: saved.rows, relations: relations.rows };
     }
@@ -133,7 +192,7 @@ async function main() {
     `);
     await assertLemmaSearch();
     assert.notDeepEqual(await snapshot(), before, "Updates should refresh search vectors");
-    console.log("Deployment preserves legacy dictionary, vectors, indexes and saved judgments; lemma search and triggers work.");
+    console.log("Deployment preserves legacy dictionary, vectors, SQL-owned indexes and saved judgments; lemma search and triggers work.");
   } finally {
     rmSync(dir, { recursive: true, force: true });
     await client.end();

@@ -2472,6 +2472,19 @@ Results are paginated 15 to a page. Counting stops at 10,000, so very broad quer
 
 If you change `document_search_vector()`, stored vectors are not updated retroactively: run `UPDATE "Document" SET search_vector = NULL;` and then `npm run db:setup-search` to rebuild them.
 
+### The indexes are declared twice, on purpose
+
+`setup-search.sql` creates these indexes, and `prisma/schema.prisma` also declares them. That is not a duplicate: `prisma db push` drops every index it does not find in the schema, and `db:deploy` runs `push` *before* the setup SQL. Undeclared, the two full-text GIN indexes and the four document trigram indexes were dropped on every deploy and rebuilt seconds later — a full GIN rebuild of the whole corpus inside the pre-deploy window, every time. Declared, push recognises them and leaves them alone; the SQL's `CREATE INDEX IF NOT EXISTS` then finds them already there. The declaration has to generate exactly what the SQL creates, which is what `map:` and `ops: raw(…)` are for.
+
+Two kinds stay undeclared, and both are deliberate:
+
+- **`document_source_date_idx`** is `(source, date DESC NULLS LAST)`, and Prisma can only express `date DESC` — which in Postgres means NULLS FIRST. Declaring it would build the wrong index on a fresh database, where push runs first and `CREATE INDEX IF NOT EXISTS` then leaves it. It is one btree, so the rebuild is cheap; the wrong sort order would not be.
+- **The expression indexes** (`acts_aliases_trgm_idx`, `acts_citation_trgm_idx`) index a function call, which Prisma cannot express — but it does not drop what it cannot express either, so they survive a push untouched.
+
+Because the trigram indexes are now part of the schema, `pg_trgm` has to exist before push builds them. `schema.prisma`'s datasource therefore declares `extensions = [pg_trgm, unaccent]` (behind the `postgresqlExtensions` preview feature), so push installs them itself; without that, a push against a brand-new database fails with `operator class "gin_trgm_ops" does not exist`. Extensions installed but not named there are left alone.
+
+`scripts/test-db-deploy.ts` holds all of this down against a real Postgres in CI: it builds a database the way production was built — schema push, then the setup SQL — then runs the real `db:deploy` twice and asserts every one of these indexes has the same `pg_class` OID afterwards. Comparing OIDs rather than names is the point: a drop followed by `setup-search.sql` putting the same name back looks identical from the outside.
+
 ## Tests
 
 ```bash
