@@ -276,3 +276,296 @@ The same three apply to Hrd. 15/2021 and Hrd. 256/2012. Note that A2 did find
 several héraðsdómar, including four from 2025, so first-instance judgments are
 clearly reachable in general — which makes a corpus gap the more likely
 explanation for this particular one, and makes the search worth running first.
+
+## Q3 — A de facto restriction on moving with a disabled child
+
+have a hypothisis that there is a defacto restriction on the free movement of people with disabled children. My theory is this, a state can intoduce a requirement that require some sort of connection to the state, the parent then moves abrod and the child comes along. This leads to the situation that the child does not fulfill the requirements to gain benefits in his new state and also loses the benefits in his home state, ergo there becomes a restriction. Can you check in light of CJEU caselaw and specifically reg 883/2004 if this is a situation that might occur
+
+Asked in English, unlike Q1 and Q2, and answered in English. The first question
+here that is EU/EEA law rather than Icelandic law, and the first with an
+external comparator.
+
+### Evaluation table
+
+Full outputs and reviewer comments are reproduced directly in the table, without
+summaries or collapsed sections. **B1 is not the well.** It is an answer to the
+same question from LegalCode MCP, run by Fordæmi, supplied by the reviewer as a
+comparator. It is recorded in the same table because the comparison is the
+evidence; it is not a run of this application and must not be counted as one in
+any average.
+
+| Question | Run | Full AI output | Comment | Rating (0–10) |
+| --- | --- | --- | --- | --- |
+| Q3 | A1 | Direct answer<br>Yes in principle, but the answer turns entirely on how the benefit is classified under Regulation (EC) No 883/2004, and the sources in this well do not contain the CJEU case law on disability and care benefits for children that would settle it. Where the benefit is a "special non-contributory cash benefit" listed in Annex X, the Regulation itself authorises the residence condition: such benefits are provided "exclusively in the Member State in which the persons concerned reside", and Article 7 (waiving of residence rules) and the other chapters of that Title are disapplied to them6. Where the benefit is *not* an SNCB, or where the coordination provision does not exhaustively govern the situation, the Court of Justice has been willing to go behind the Regulation and require a Member State to take account of the consequences of a move directly under Article 21 TFEU — that is the ratio of C-576/20 *CC v Pensionsversicherungsanstalt*, although the Court attached a condition of exclusive connection with the State concerned19. In the EEA, the EFTA Court has stated the underlying principle plainly: migrant workers must not lose their right to social security benefits or have them reduced because they have exercised their right to free movement, and free movement is impeded if an EEA national is placed at a disadvantage in the State of origin solely for having exercised that right27. (unverified: no retrieved source supports this sentence) The specific scenario you describe — a disabled child accompanying a moving parent, falling between two systems — is not addressed in any source before me, and I say below what would answer it.<br><br>What the Regulation coordinates, and where a disability or care benefit sits<br>Article 3(1) lists the branches covered, including sickness benefits, invalidity benefits and family benefits5. The Regulation applies to general and special schemes, contributory or non-contributory, unless Annex XI provides otherwise, and also to the special non-contributory cash benefits covered by Article 705. It does not apply to social and medical assistance5. For the purposes of Title III, Chapter 1 (sickness, maternity and equivalent paternity benefits), "benefits in kind" was defined by Regulation (EC) No 988/2009 to include long-term care benefits in kind7 — relevant because care provision for a disabled child may fall on either side of the cash/in-kind line. That classification exercise is the first thing a case of this kind turns on, and the sources here give the criteria but no application of them to a child's care allowance.<br><br>The SNCB carve-out: where a residence condition is expressly permitted<br>Article 70 applies to benefits whose legislation has characteristics both of the social security legislation in Article 3(1) and of social assistance6. A benefit is an SNCB only if it cumulatively satisfies three conditions6:<br><br>Condition	Content<br>Purpose	Either supplementary/substitute/ancillary cover guaranteeing a minimum subsistence income, or "solely specific protection for the disabled, closely linked to the said person's social environment in the Member State concerned"6<br>Financing	Exclusively from compulsory taxation for general public expenditure, with grant and calculation not dependent on any contribution in respect of the beneficiary6<br>Listing	Listed in Annex X6<br>Two consequences follow, and both cut against the person moving. Article 70(3) provides that Article 7 and the other chapters of that Title do not apply to SNCBs6. Article 70(4) provides that they are to be provided exclusively in the Member State of residence, in accordance with its legislation, by and at the expense of the institution of the place of residence6. So for a listed SNCB, the very outcome described in the question — loss on departure, with the host State becoming the only debtor — is the design of the Regulation, not a defect in it. Note that the second limb of Article 70(2)(a) expressly contemplates benefits giving "solely specific protection for the disabled, closely linked to the said person's social environment"6. Disability-specific benefits are therefore one of the two categories the SNCB regime was written for, which is why the Annex X listing question is decisive rather than incidental. The classification also has knock-on effects elsewhere: in C-151/24 the Court held that Article 12(1)(e) of Directive 2011/98 does not apply to a benefit that is an SNCB within the meaning of Article 70 of Regulation No 883/2004, so that a Member State could make the grant of an old-age social allowance subject to holding an EU long-term residence permit21. That case concerns third-country nationals and equal treatment, not free movement of Union citizens, but it illustrates that the Article 70 label removes a benefit from regimes that would otherwise bite. Because the extract of Article 70 before me is complete for paragraphs 1–4, but Article 7 itself is not among the sources, I cannot set out the content or the limits of the exportability rule that Article 70(3) disapplies. (unverified: no retrieved source supports this sentence)<br><br>The primary-law route: C-576/20 *CC*<br>This is the most directly transferable authority in the pack for the proposition that a gap left by the coordination rules can still be a restriction. The applicant had worked and paid contributions only in Austria, then moved and raised children in Belgium and Hungary. Article 44(2) of Regulation No 987/2009 requires the person to have been pursuing an activity as an employed or self-employed person in the Member State concerned at the date when, under that State's legislation, the child-raising period started to be taken into account; on the relevant Austrian dates she was not19. (unverified: no retrieved source supports this sentence) The Court reformulated the referred question of its own motion so as to bring in Article 21 TFEU, observing that it may interpret all provisions of EU law needed to decide the case even where the referring court has not mentioned them19. It framed the decisive issue as whether Article 44 governs the matter exclusively: if it does, the periods can be taken into account only under it and Article 21 TFEU does not apply; if it does not, the *Reichel-Albert* line — requiring a Member State to take account under Article 21 TFEU of child-raising periods completed in other Member States — may extend to a situation falling within the temporal scope of the implementing Regulation but not satisfying its conditions19. The holding: where the person does not fulfil the Article 44(2) condition, the Member State responsible for the pension is required to take account of those periods pursuant to Article 21 TFEU, provided that the person worked and paid contributions exclusively in that Member State both before and after transferring residence to the other Member State where the child-raising took place19. What that is authority for, and its limits:<br><br>Secondary coordination law is not automatically exhaustive; a condition in the Regulation that defeats entitlement does not by itself close the case19.<br>A disadvantage suffered because the person moved can engage Article 21 TFEU directly19.<br>But the remedy was conditioned on an exclusive connection with the paying State — the Court did not announce a free-standing rule that any loss on moving must be made good19.<br>It is a pension/child-raising-periods case, not a disability or care benefit case, and it concerns the *former* State being obliged to take a cross-border fact into account, not a claimant falling between two systems.<br>The EEA dimension<br>Regulation (EC) No 883/2004, Regulation (EC) No 988/2009 and Regulation (EC) No 987/2009 were incorporated into Annex VI to the EEA Agreement by EEA Joint Committee Decision No 76/201114. In E-3/23 *A v Arbeids- og velferdsdirektoratet* the EFTA Court set out the governing principles at some length. EEA law coordinates rather than harmonises: in the absence of harmonisation it is for each EEA State's legislature to determine the conditions on which social security benefits are granted, but in exercising that power the States must comply with EEA law27. The objective pursued by Article 29 EEA entails that migrant workers must not lose their right to social security benefits or have the amount of those benefits reduced because they have exercised their right to free movement, and the right to free movement would be impeded if an EEA national were placed at a disadvantage in his or her State of origin solely for having exercised that right27. The Court also confirmed that invalidity benefits fall within the material scope of the Regulation under Article 3(1)(c), and that Articles 4 to 6 lay down the key principles of equality of treatment and aggregation of periods27. The actual holding in E-3/23 concerns what constitutes a "minimum benefit" under Article 5827, so those passages are reasoning of general application rather than a ruling on the present problem. E-26/25 *Mohr-Egger* adds that Title II is a complete and uniform system of conflict rules intended not only to prevent the simultaneous application of several national systems but also to ensure that persons covered by the Regulation are not left without social security cover because there is no legislation which is applicable to them, and that the unrestricted application of the general rule might in certain situations impede freedom of movement26. That reasoning goes to *which* legislation applies, not to whether the applicable legislation's entitlement conditions are satisfied. On the latter, recital 17a inserted by Regulation (EC) No 988/2009 states that once a Member State's legislation becomes applicable under Title II, the conditions for affiliation and entitlement to benefits are to be defined by the legislation of the competent Member State "while respecting Community law"7 — the qualification is the hook for any de facto restriction argument.<br><br>Adjacent route: cross-border healthcare<br>Directive 2011/24/EU is a different instrument and applies without prejudice to Regulation No 883/200413. It provides that the Member State of affiliation may decide to reimburse other related costs, such as accommodation and travel, "or extra costs which persons with disabilities might incur due to one or more disabilities when receiving cross-border healthcare", in accordance with national legislation and subject to sufficient documentation13 — a discretion, not an obligation. It also provides that conditions and formalities imposed by the State of affiliation may not be discriminatory or constitute an obstacle to the free movement of patients, services or goods unless objectively justified on planning or cost-control grounds13. This covers healthcare costs, not disability or care allowances, and does not answer the question.<br><br>What the sources do not cover, and what would answer the question<br>Stated plainly, the following limbs are unanswered by the material before me:<br><br>No case on a disabled child's care or disability benefit. None of the nine decisions concerns disability allowances, care allowances, or children at all as beneficiaries; the CJEU decisions here concern A1 certificates and the dialogue and conciliation procedure1723, child-raising periods for a pension19, currency conversion of child allowance25, and an old-age social allowance for a third-country national21.<br>No treatment of derived rights of family members. Whether a child can rely on a parent's insurance in the competent State, and the interaction with Article 70's residence rule, is simply not in the sources. (unverified: no retrieved source supports this sentence)<br>Article 7, Annex X and the family-benefits chapter are not before me. I have Article 70's cross-reference to Article 76 and the amendment of Article 63 restricting Article 7 in the unemployment chapter12, but not the text of Article 7, Article 67, or any Annex X entry.<br>No "genuine link" / residence-condition case law. The proportionality test applied to home-State residence or connection requirements is not represented.<br>To answer the question properly, the searches worth running are: Article 7 and Annex X of Regulation (EC) No 883/2004 (exportability and the SNCB list); Article 67 and the family-benefits chapter; CJEU case law classifying care allowances as sickness benefits in cash rather than SNCBs; case law on derived entitlement of family members of an insured person; and Article 21 TFEU / Article 45 TFEU case law on home-State residence and connection conditions and their justification. The EFTA Court's *Einarsdóttir* judgment, cited in E-3/23 for the proposition that a person must not be disadvantaged in the State of origin for having moved27, is a further obvious target for the EEA side of the analysis. | Reviewer: "A super strange thing here is that they cite that E-3/23 refers to Einarsdóttir judgement (E-5/21). It feels very strange." Supplied B1 alongside, with: "this is an answwer that I got from LegalCode MCP run by Fordæmi … could be a very good start to a reasurch session - but our project is realy moveing in the right direction." | |
+| Q3 | B1 | a loss of support of that kind can occur, and the CJEU has recognised closely related barriers. But the existence of a benefit gap does not, by itself, establish an unlawful restriction. The decisive questions are what kind of benefit is involved, which State remains responsible, and whether the connection requirement survives the coordination and free-movement rules.<br>Your hypothesis is therefore plausible, but its starting premise needs qualification: a State cannot simply impose any residence or connection requirement it chooses.<br>How Regulation 883/2004 addresses the gap<br>"Disability benefits" are not a single category under the Regulation. Depending on their purpose and eligibility conditions, support can constitute sickness benefits, invalidity benefits, family benefits, special non-contributory cash benefits, or assistance outside the Regulation.<br>The relevant safeguards in Regulation 883/2004 are:<br>Provision	Significance for your hypothesis<br>Article 4 — equal treatment	A migrant within the Regulation's scope generally has the same benefit rights as nationals, subject to applicable exceptions.<br>Article 5 — assimilation of facts and events	A requirement linked to a particular event may require recognition of an equivalent event occurring in another Member State.<br>Article 6 — aggregation	Where entitlement depends on insurance, employment or residence periods, relevant periods completed under another Member State's legislation generally must count. A territorial waiting period cannot simply be assumed valid.<br>Article 7 — waiver of residence rules	Covered cash benefits generally cannot be withdrawn merely because the beneficiary or family members live in another Member State.<br>Article 70 — special non-contributory cash benefits	A significant exception: qualifying benefits listed in Annex X are generally payable only in the State of residence, under its legislation.<br><br>Two qualifications matter particularly.<br>First, Article 7 is not a guarantee that the original State remains responsible forever. A move accompanied by a change of employment or insurance can change the applicable legislation. Withdrawal solely because of residence abroad must be distinguished from entitlement ending following a lawful change of competent State.<br>Second, Article 70 does not disapply Article 6. Consequently, even where the original benefit is non-exportable, a host-State qualifying-period requirement still needs examination under aggregation rules. "Non-contributory" also does not automatically mean "non-exportable": the Article 70 conditions, including Annex X listing, must be satisfied.<br>The closest cases<br>1. Stewart, C-503/09: a disabled daughter moves abroad with her parents<br>This is particularly close to your factual hypothesis. Lucy Stewart, who had Down's syndrome, moved from the UK to Spain with her parents. When she reached 16, her claim for UK incapacity benefit in youth was refused because she did not satisfy the territorial presence conditions.<br>The Court held that:<br>- The benefit was an invalidity benefit, despite its "short-term" label.<br>- The ordinary-residence requirement was precluded by Regulation 1408/71, the predecessor to Regulation 883/2004.<br>- A past-presence condition was disproportionate because it excluded other ways of establishing a genuine connection.<br>Crucially, the Court treated her parents' pensions and previous links to the UK social-security system as relevant to her own connection, alongside her existing entitlements and residence history: paragraphs 95-104, particularly 100-102. EUR-Lex<br>For your argument, that means a disabled child's connection cannot necessarily be assessed in isolation from the parents. However, Stewart concerned entitlement against the State of origin, not a general obligation on every destination State to pay immediately.<br>2. Städteregion Aachen, C-257/24, judgment of 10 July 2025: disability support and the parent's worker status<br>In this judgment, a disabled child lived in Belgium, attended school in Germany, and had a mother working in Germany. German authorities refused school assistance because the child resided abroad.<br>The Court held that the assistance fell outside Regulation 883/2004, given its individual needs assessment. Nevertheless, the residence requirement infringed Article 7(2) of Regulation 492/2011, governing workers' social advantages.<br>The reasoning is directly relevant:<br>- Paragraphs 44-45: the requirement constituted indirect discrimination and a restriction on workers' free movement.<br>- Paragraphs 49-50: the parent's employment and tax/social contributions supplied a genuine and sufficient connection.<br>- Paragraph 52: the child's residence requirement was disproportionate.<br>This directly supports the proposition that a restriction imposed on a disabled child's support can restrict the parent's free movement. Its factual limit is that the parent continued working—and the child attended school—in the State providing assistance.<br>3. Hendrix, C-287/05: non-exportability does not end the analysis<br>In Hendrix, the Court accepted that a benefit for disabled young people was a special non-contributory benefit, generally subject to residence.<br>Nevertheless, its application remained subject to workers' free-movement rights. The national court had to examine proportionality, particularly the claimant's continuing economic and social links to the paying State: paragraphs 51-58.<br>Thus, an exception to exportability under the coordination Regulation is not automatically a complete defence to a free-movement challenge.<br>*4. A (Assistance for a disabled person), C-679/16: protection outside the Regulation*<br>In this case, personal assistance supporting a severely disabled person's higher education fell outside Regulation 883/2004. Nevertheless, Articles 20-21 TFEU prevented refusal merely because he studied in another Member State: paragraphs 69-79.<br>The qualification is important: he retained residence in his Finnish home municipality and returned regularly. This does not establish an unrestricted right to export all personal assistance following permanent relocation.<br>Where your theory encounters a legal limit<br>The principal counterauthority is von Chamier-Glisczinski, C-208/07, particularly paragraphs 84-89.<br>The Court explained that EU law coordinates rather than harmonises social-security systems. Moving abroad need not be financially neutral. In that case, the interaction between German and Austrian care systems left the claimant worse off, but EU citizenship did not oblige Germany to fund equivalent institutional care abroad outside the coordination mechanisms.<br>That distinction produces three possible outcomes:<br>Cause of the gap	Likely legal analysis<br>The original State withdraws an exportable cash benefit solely because the child moves	Potential breach of Article 7 and the relevant benefit-specific rules.<br>The destination State refuses support because it ignores foreign qualifying periods or insists on an excessive territorial connection	Potential breach of Articles 4-6 and/or free-movement law.<br>The original benefit is lawfully non-exportable, while the destination State has no equivalent entitlement under otherwise lawful rules	A real gap can remain; EU law does not generally guarantee equivalent replacement support.<br><br>The parent's status also matters. A worker has particularly strong protection through Article 45 TFEU and Regulation 492/2011. For an economically inactive family, entitlement can be affected by lawful-residence conditions: Dano, C-333/13, confirms that Article 4 of Regulation 883/2004 does not invariably overcome those conditions for special non-contributory benefits.<br>My assessment is that your strongest argument concerns the interaction of specific territorial conditions, rather than a general claim that any reduction in disability support violates free movement. Stewart and Städteregion Aachen give substantial support where authorities disregard the family's actual connections or impose a residence requirement that unnecessarily deters the parent's movement.<br>To determine whether your exact "neither State pays" scenario is lawful, the next step is to identify the two States, the particular benefit or service, and whether the parent moves to work. Without those details, the cases establish the possibility of a gap and strong grounds for challenging certain causes of it—but not that both refusals would survive EU-law scrutiny. | Comparator, not a run of this app. Reviewer: "this is what I would like, and could be a very good start to a reasurch session". | n/a |
+
+### Evaluation context
+
+| Field | Value |
+| --- | --- |
+| Rating status | A1 awaits rating. B1 is a comparator and is not rated on this scale |
+| Actual test dates | Not supplied for A1. Logged 23 September 2026 |
+| Model / configuration / application commit | Not supplied. A1 cites 27 sources, which is above the quick-mode `maxSources` default of 14 and consistent with the deep path's 28 (`src/lib/ask/config.ts`), so A1 was almost certainly a deep research run |
+| Retrieved source texts and citation URLs | Not supplied; numeric citation markers are preserved as pasted. A1's own text identifies the retrieved set well enough to reason about it: Reg. 883/2004 Arts 3 and 70, Reg. 988/2009, Reg. 987/2009, Directive 2011/24, EEA JCD 76/2011, EFTA Court E-3/23 and E-26/25, and nine CJEU decisions of which it names C-576/20 and C-151/24 |
+| Verified reference answer | None supplied. B1 stands in for one, and is itself unverified — see the verification list below |
+| Diagnostic status | **Partly verified.** C-257/24 confirmed against external sources; the Einarsdóttir cross-reference is unresolved and is the open item |
+
+### Why this entry is different
+
+Q1 and Q2 were diagnosed by reading the code after the fact. Q3 comes with a
+second answer to the same question from a different system, which is a better
+instrument than either: it separates *the well cannot reason about this* from
+*the well was not handed the material*. The answer, clearly, is the second, and
+that is the most useful thing this run establishes.
+
+Stated once, plainly, because everything below is a gloss on it: **A1 is the
+better answer on the legislation and the worse answer on the case law, and it is
+not close in either direction.** A1 reads Article 70 and finds the limb of it
+that decides the question; it has the EEA layer, which B1 lacks entirely. B1 has
+five decisions squarely on the reviewer's facts; A1 has none. A merge of the two
+is the answer the reviewer asked for, and the half that is missing is a
+retrieval and coverage problem, not a reasoning one.
+
+### What A1 got right
+
+Worth recording in as much detail as the defects, because the temptation after
+reading B1 is to conclude the whole pipeline underperforms, and that is not what
+the evidence shows.
+
+- **It read the legislation, and B1 did not.** A1's account of Article 70 is
+  built from the text of the Article: the three cumulative conditions, the
+  disapplication in Article 70(3), the residence rule in Article 70(4). B1
+  presents Articles 4, 5, 6, 7 and 70 as a five-row summary table with no text
+  quoted from any of them. On statute this application is the better instrument,
+  and this is the second question running where that has been true.
+- **It found the limb of Article 70 that decides the question.** A1 notices that
+  Article 70(2)(a)'s second branch — *"solely specific protection for the
+  disabled, closely linked to the said person's social environment in the Member
+  State concerned"* — means that disability benefits are one of the two
+  categories the SNCB regime was drafted for, so the Annex X listing question is
+  decisive rather than incidental. That is the sharpest single observation in
+  either answer, and B1 does not make it: B1 lists Article 70 as "a significant
+  exception" and moves on.
+- **It handled C-576/20 *CC* properly, including what it is not authority for.**
+  A1 gets the reformulation under Article 21 TFEU, the exhaustiveness question,
+  the *Reichel-Albert* line, the holding, and then says explicitly that the
+  remedy was conditioned on exclusive connection and that the case is about the
+  former State taking a cross-border fact into account rather than a claimant
+  falling between two systems. B1 does not have C-576/20 at all. Reading a case
+  for its limits is the harder half of the job and A1 did it.
+- **The EEA layer is entirely A1's.** JCD 76/2011, Article 29 EEA, E-3/23,
+  E-26/25 *Mohr-Egger*, and recital 17a of Regulation 988/2009 with its
+  "while respecting Community law" qualifier — which A1 correctly identifies as
+  the hook for a de facto restriction argument. B1 has no EFTA Court, no EEA
+  Agreement and no Icelandic dimension whatever. For this product that is the
+  point of the product, and it is the one axis on which A1 is unambiguously
+  ahead.
+- **The gap list is nearly the right research plan.** A1's closing list of
+  searches names Annex X, Article 7, Article 67 and the family-benefits chapter,
+  case law classifying care allowances as sickness benefits in cash rather than
+  SNCBs, derived rights of family members, and Article 21/45 TFEU residence and
+  connection conditions. Four of those five headings lead to *Stewart*,
+  *Hendrix* and *Städteregion Aachen*. A1 knew what it was missing and named it
+  accurately. It simply did not go and get it, which is the defect below.
+
+### What B1 had that A1 did not
+
+- **Case law, and the gap is total.** B1 names six decisions on or near the
+  facts — C-503/09 *Stewart*, C-257/24 *Städteregion Aachen*, C-287/05
+  *Hendrix*, C-679/16 *A (Assistance for a disabled person)*, C-208/07 *von
+  Chamier-Glisczinski* and C-333/13 *Dano*. A1 names none of them and says, of
+  the nine decisions it did retrieve, that none concerns disability, care
+  benefits, or children as beneficiaries at all.
+- **C-257/24 is the reviewer's hypothesis as a decided case.** Confirmed
+  externally, 23 September 2026: judgment of 10 July 2025, a minor German-Irish
+  national resident with her parents in Belgium with a disability requiring
+  specific care, mother a German national working in Germany, Städteregion
+  Aachen refusing school assistance for 2021/2022 on the ground of ordinary
+  residence in Belgium. B1's account that the benefit fell outside Regulation
+  883/2004 on an individual-needs-assessment analysis and that the residence
+  requirement nonetheless offended Article 7(2) of Regulation 492/2011 matches
+  the external summaries; B1's paragraph numbers are not verified. This is the
+  case the question was asking for, it is from 2025, and A1 did not surface it.
+- **Article 6 aggregation against the host State.** B1's *"Article 70 does not
+  disapply Article 6"* is the best doctrinal point in either answer, and it goes
+  to the half of the reviewer's hypothesis A1 never analysed. A1 worked through
+  losing the benefit at home and stopped; the claim that the child *"does not
+  fulfill the requirements to gain benefits in his new state"* is an aggregation
+  question against the host State, and A1 had Article 3 and Article 70 in front
+  of it and never asked it. This is a reasoning gap, not a retrieval gap, and
+  it is the one place where A1 is worse for a reason retrieval would not fix.
+- **Counter-authority.** B1 names *von Chamier-Glisczinski* for the proposition
+  that coordination is not harmonisation and a move need not be financially
+  neutral — the case that most directly defeats the reviewer's theory. An answer
+  that does not name what is against you is an advocacy memo. A1 has no
+  counter-authority because it had no cases.
+- **Shape.** B1 answers the question that was asked. Its three-outcome table is
+  keyed to the *cause* of the gap — exportable benefit withdrawn on departure;
+  host State ignoring foreign periods or demanding excessive connection; a
+  lawfully non-exportable benefit with no host-State equivalent — and only the
+  third is a gap EU law tolerates. That taxonomy is the deliverable. A1
+  organises by source and answers "what do my sources say", which is a different
+  and lesser question. B1 also closes by naming the three facts that would
+  settle it (which two States, which benefit, does the parent move to work);
+  A1 closes with a list of database searches, which is useful to an engineer and
+  not to a lawyer.
+
+### Four defects in A1
+
+**D1 — nine decisions retrieved, zero relevant.** The decisions A1 got are about
+A1 certificates and the dialogue and conciliation procedure, child-raising
+periods for a pension, currency conversion of child allowance, and an old-age
+social allowance for a third-country national. That is the shape of a result set
+retrieved on the *instrument* — "Regulation 883/2004" — rather than on the
+*facts*. Nothing in the set suggests a search was ever run for a disabled child,
+a care allowance, a residence condition or a genuine link, even though A1's own
+closing paragraph names all four as what it would need.
+
+**D2 — C-257/24 is the test case for whether this is coverage or retrieval.**
+The CJEU adapter sweeps newest case year first from a cursor
+(`src/ingestion/adapters/cjeu.ts`), which is the right default and means the
+corpus fills in from 2026 backwards. On that design the 2025 judgments are the
+*most* likely to be held, not the least — and A1 did cite C-151/24, so the
+2024–2025 vintage is clearly present. So either C-257/24 is in the corpus and
+retrieval missed it, or it is absent for some other reason. Those are different
+bugs with different fixes, and one query separates them. Note also that
+newest-first predicts exactly the shape of B1's advantage: *Hendrix* (2007),
+*von Chamier-Glisczinski* (2009), *Stewart* (2011), *Dano* (2014) and C-679/16
+(2018) all sit in the years the sweep has not yet reached. If the query comes
+back "C-257/24 present, the rest absent", both diagnoses are true at once.
+
+**D3 — the unverified marker fired on the wrong sentences.** This is the
+defect the reviewer felt without naming, and it is the most serious one here,
+because it inverts a guarantee the product makes rather than merely failing to
+find something.
+
+| Sentence | Marked unverified? | Carries a citation? |
+| --- | --- | --- |
+| The EFTA Court principle passage from E-3/23 | yes | yes, `27` |
+| C-576/20's Article 44(2) condition | yes | yes, `19` |
+| The Article 7 / Annex X limitation | yes | no, correctly |
+| Derived rights of family members not in the sources | yes | no, correctly |
+| *"The EFTA Court's Einarsdóttir judgment, cited in E-3/23 for the proposition that a person must not be disadvantaged in the State of origin for having moved"* | **no** | yes, `27` |
+
+Two sentences that are cited are marked unverified, and the one sentence a
+reader would most want checked — an assertion about what one judgment says about
+another — is not. Whatever the validator is keying on, it is not tracking the
+claim a citation is being offered for. Worth reading `src/lib/ask/citations.ts`
+and the answer validator against these five sentences specifically.
+
+**D4 — `find_citing_cases` existed and was not used.** The research loop has a
+tool whose description is precisely this job: *"Decisions whose text cites a case
+number — what a court did with an earlier ruling, and whether an EFTA Court
+advisory opinion has been applied by an Icelandic court since"*, with `"E-5/21"`
+as its worked example (`src/lib/ask/tools.ts`). A1 asserted a citing relationship
+between two EFTA Court judgments in prose and never called the one tool that
+would have made it a citable fact with a document behind it.
+
+### The Einarsdóttir cross-reference — the reviewer's flag
+
+**Unresolved, and it should be resolved before anything else here.** The
+reviewer's instinct deserves the weight it is given; the answer is that the
+claim is plausible but was not verifiable from the answer, which is itself the
+problem.
+
+Plausible, because:
+
+- E-5/21 *Anna Bryndís Einarsdóttir v the Icelandic Treasury* (29 July 2022) is
+  Articles 6 and 21 of Regulation 883/2004, migrant worker, equality of
+  treatment, calculation of maternity benefit.
+- E-3/23 *A v Arbeids- og velferdsdirektoratet* (18 April 2024) is Article 58 of
+  the same Regulation, minimum benefit, invalidity benefits, calculation,
+  equality of treatment.
+- The proposition attributed to it — a person must not be disadvantaged in the
+  State of origin solely for having exercised free movement — is standing EFTA
+  Court language in social security coordination cases, and E-5/21 is the
+  Court's most recent statement of it before E-3/23.
+
+A court citing its own two-year-old judgment in the same branch of the same
+Regulation for its own settled formula is unremarkable. That is why it should
+not have felt strange, and the reason it did is that nothing in the answer let
+the reviewer check it.
+
+Not verified, because it could not be from a session container: the EFTA Court's
+judgment PDFs answer `"You don't have permission to download this file"`, and
+there is no `DATABASE_URL` here. **The application can settle it in one call.**
+Run `find_citing_cases({ caseNumber: "E-5/21" })` against production:
+
+- E-3/23 comes back → the claim is true, and the defect is only that A1 asserted
+  it instead of citing E-3/23's own paragraph, which is D4.
+- E-3/23 does not come back → the model invented a citing relationship between
+  two real judgments. That is a far more serious class of error than a missing
+  case, because it is the class the grounding discipline exists to make
+  impossible, and it would mean the failure is inside the answer stage rather
+  than in retrieval.
+
+Until that query is run, treat the sentence as **flagged, not refuted**.
+
+### What to verify before treating any of this as settled
+
+Neither answer is a verified legal conclusion, and B1 least of all — it is an
+uncited comparator with paragraph numbers that no one has checked.
+
+| Claim | Source | Status |
+| --- | --- | --- |
+| C-257/24 *Städteregion Aachen*, 10 July 2025, disabled child resident in Belgium, mother working in Germany, residence condition on school assistance | B1 | Facts and date confirmed externally 23 Sept 2026; the Art. 7(2) Reg. 492/2011 holding matches published summaries; paragraph numbers 44–45, 49–50, 52 unverified |
+| E-3/23 cites E-5/21 *Einarsdóttir* | A1 | **Unresolved.** See above |
+| *Stewart* C-503/09 paragraphs 95–104 / 100–102 | B1 | Unverified |
+| *Hendrix* C-287/05 paragraphs 51–58 | B1 | Unverified |
+| C-679/16 paragraphs 69–79 | B1 | Unverified |
+| *von Chamier-Glisczinski* C-208/07 paragraphs 84–89 | B1 | Unverified |
+| A1's account of Arts 3 and 70, recital 17a, JCD 76/2011, Directive 2011/24 | A1 | Cited to retrieved text; consistent with the instruments as A1 quotes them |
+
+### Next steps, in order of value per hour
+
+1. **Run `find_citing_cases("E-5/21")` against production.** One query. It
+   decides whether there is a grounding bug or only a citation-hygiene bug, and
+   nothing else on this list should be prioritised above knowing which.
+2. **Check the corpus for the six decisions B1 named**, by CELEX or case number:
+   C-503/09, C-287/05, C-208/07, C-679/16, C-333/13, C-257/24. Three possible
+   readings, each with its own fix: all absent → coverage; C-257/24 present and
+   the rest absent → coverage *and* retrieval, the prediction in D2; all present
+   → retrieval alone, and the plan stage is the thing to fix.
+3. **If coverage: seed a priority CELEX list into the CJEU adapter.** Newest-first
+   is the right default for a 33,000-judgment archive, but landmark case law is
+   not uniformly distributed by date, and the EEA-relevant free movement and
+   social security canon is a few dozen judgments from 1998–2018 that the sweep
+   will not reach for a long time. A `CJEU_PRIORITY_CELEX` list drained before
+   the year sweep is cheap — tens of documents — and is plausibly the single
+   change with the largest effect on answers of this kind. The gap ledger the
+   adapter already keeps is the natural place to put them.
+4. **If retrieval: make the plan stage generate fact queries as well as
+   instrument queries.** The A1 result set is what an instrument-shaped query
+   returns. A question that supplies facts — disabled child, parent moves,
+   residence condition, benefit lost in both States — should produce at least one
+   search in those terms, in the corpus's language, alongside the searches on
+   "Regulation 883/2004". This is testable without a model call by asserting on
+   the planned query terms.
+5. **Make Q3 a research-loop fixture.** The known gap recorded in `CLAUDE.md` —
+   *"the research loop has no offline evaluation at all"*, because `eval:ask`
+   replays a recorded retrieval and so switches deep research off — is what makes
+   every question above unmeasurable between runs. Q3 is an unusually good
+   candidate: the target set is six named decisions, "did it find C-257/24" is a
+   boolean, and it exercises the EU/EEA corpus in English rather than the
+   Icelandic path everything else tests.
+6. **Answer shape: ask for the taxonomy.** B1's advantage in structure is not
+   about retrieval and could be had now. On a question of the form "can X
+   happen?", an answer organised by *cause and legal consequence* beats one
+   organised by *source*, and naming the counter-authority is part of the job.
+   Worth a look at whether the answer-stage prompt asks for a conclusion or asks
+   for a report on the sources.
+7. **The citator (roadmap §6, not started).** This run is the best argument for
+   it yet made. The reviewer's question was a citator question — *does E-3/23
+   really cite Einarsdóttir?* — and the fact that a competent reader could not
+   check it without leaving the application is the product gap this run exposes
+   most clearly. `find_citing_cases` is already the engine; what is missing is
+   surfacing it to the reader rather than only to the loop.
+
+### One correction to the roadmap while it is in view
+
+*well-roadmap.md* §3.4 records the retrieval budgets as "not started, with one
+exception": `maxCandidates` 30, `maxSources` 10, evidence 1,200, provisions
+2,400. `src/lib/ask/config.ts` now defaults to `maxCandidates` 60, `maxSources`
+14, evidence 2,400 and provisions 12,000, with the deep path at 28 sources,
+3,000 evidence and 16,000 provisions. The budgets were raised; that table is
+stale, and A1's 27 sources are evidence of it. Q3's problem is not budget.
