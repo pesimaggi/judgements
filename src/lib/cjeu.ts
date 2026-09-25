@@ -85,6 +85,46 @@ export function parseCaseCelex(raw: string): ParsedCaseCelex | null {
   };
 }
 
+/**
+ * The CELEX of a judgment cited by its case number: "C-503/09" → "62009CJ0503".
+ *
+ * The inverse of parseCaseCelex, and it exists because a priority list is
+ * written the way a lawyer cites a case, not the way the Publications Office
+ * files it. Nobody remembers that Stewart is 62009CJ0503; everybody remembers
+ * C-503/09.
+ *
+ * THE TWO-DIGIT YEAR IS THE ONLY GUESS HERE. A case number states the year in
+ * two digits and the Court's first judgments are from 1954, so "09" is 2009
+ * and "96" is 1996: at or above 54 it is the twentieth century, below it the
+ * twenty-first. The rule is exact until 2054, by which time this line is
+ * somebody else's problem — and it is stated here rather than inferred at each
+ * call site so that there is one place to change it.
+ *
+ * Note which year it is. A case number's year is the year the case was
+ * *lodged*, not the year it was decided: C-503/09 was decided in 2011 and is
+ * filed under 2009 in both notations. That is why the conversion is arithmetic
+ * rather than a lookup.
+ *
+ * Returns null for anything that is not a case number of the two courts
+ * carried here — an EFTA Court "E-5/21", a joined-case string, a stray "P" for
+ * an appeal — because a list that quietly dropped a malformed entry would
+ * simply never fetch that judgment and never say so.
+ */
+const CASE_NUMBER_RE = /^([CT])-(\d{1,4})\/(\d{2})$/i;
+
+export function caseCelexFromNumber(raw: string): string | null {
+  const m = CASE_NUMBER_RE.exec(raw.trim().toUpperCase());
+  if (!m) return null;
+  const letters = m[1] === "C" ? "CJ" : "TJ";
+  const number = Number(m[2]);
+  // The sequence number is four digits in a CELEX; nothing has ever reached
+  // 10,000 in a year, but a number that would not fit is not a case number.
+  if (number < 1 || number > 9999) return null;
+  const yy = Number(m[3]);
+  const year = yy >= 54 ? 1900 + yy : 2000 + yy;
+  return `6${year}${letters}${String(number).padStart(4, "0")}`;
+}
+
 export interface ParsedCaseTitle {
   /** "Tele2 Sverige AB v Post- och telestyrelsen and Secretary of State …" */
   parties: string | null;

@@ -769,16 +769,53 @@ npm run ingest -- --adapter=cjeu                       # their text
   held. No document fetches at all. The row carries EUR-Lex's *raw* title, not
   the composed one: composing it early would throw the referring court and the
   index terms away before the fetch pass could read them.
-- **the default pass** — the ledger and nothing else: one Cellar request per
-  outstanding judgment until `INGEST_MAX_CASES` (default 200) is spent, first
-  attempts and re-attempts in one queue ordered by how often they have failed,
-  so a judgment that keeps failing cannot monopolise a run. Text under 900
-  characters is recorded as a gap rather than stored, because Cellar answers a
-  throttled request with a short body and a 2xx.
+- **the default pass** — the priority list (below), then the ledger and nothing
+  else: one Cellar request per outstanding judgment until `INGEST_MAX_CASES`
+  (default 200) is spent, first attempts and re-attempts in one queue ordered by
+  how often they have failed, so a judgment that keeps failing cannot monopolise
+  a run. Text under 900 characters is recorded as a gap rather than stored,
+  because Cellar answers a throttled request with a short body and a 2xx.
 
 About 33,000 judgments is days of polite fetching, which is why the listing
 sweeps newest-first: the case law anyone is looking for arrives first and the
 1950s arrive last.
+
+#### The priority list
+
+Newest-first is right on average and wrong about the canon. The judgments an
+EEA argument is actually built from — Cassis de Dijon, Bosman, Molenaar,
+Stewart, Dano — are mostly older than the sweep has reached, and a corpus that
+holds every judgment of 2026 but none of them answers badly in a way no budget
+raise fixes. That is not a hypothesis: it was measured. Asked whether a parent
+moving abroad with a disabled child can fall between two social security
+systems, the well returned nine judgments and said itself that none concerned
+disability, care benefits or children; a comparator answered with *Stewart*,
+*Hendrix*, *von Chamier-Glisczinski*, *A* and *Dano*, every one of them from
+2007–2018 — precisely the years the sweep had not reached. See Q3 in
+[docs/ai-answer-evaluation.md](docs/ai-answer-evaluation.md).
+
+So `src/ingestion/cjeu-priority.ts` names the judgments worth a request now, in
+three groups — social security coordination, free movement and citizenship, and
+the internal market fundamentals — and the fetch pass drains them before the
+ledger. It is a queue-jumping list, not a second corpus: every judgment on it
+would arrive eventually, and once held it costs one indexed lookup a run and no
+request at all.
+
+Each entry is written as the Court cites the case (`C-503/09`), which
+`caseCelexFromNumber` turns into the CELEX EUR-Lex files it under
+(`62009CJ0503`) — note that a case number states the year the case was *lodged*,
+not the year it was decided. Each entry also carries a distinctive fragment of
+the party name, and a judgment is fetched only if EUR-Lex's own title contains
+it. That check is the whole reason the name is there: a case number is four
+digits and a year, a typo in one produces a *different real judgment*, and
+storing that judgment's text under the expected name is an error nobody would
+ever find by reading the corpus. A disagreement is logged and the judgment left
+alone.
+
+To add one, write the case number and say in the note what it is authority for.
+`src/ingestion/cjeu-priority.test.ts` holds down what the endpoint cannot: that
+every number parses and round-trips, that no judgment is listed twice, and that
+the list stays weighted towards the years the sweep has not reached.
 
 ### EFTA Surveillance Authority
 
@@ -2540,6 +2577,8 @@ What is covered, and why those:
 | `lib/sources.ts`, `lib/adr-boards.ts` | registry invariants: unique keys, every board a source, Félagsdómur not among the boards, exotic `Committee=` values surviving URL encoding |
 | `lib/source-tree.ts` | that the hierarchy the source panel renders still covers every live source exactly once — a source added to the registry and forgotten here simply cannot be ticked — and that a whole category collapses to one filter chip while a partial one names its sources |
 | `lib/yfirskattanefnd.ts` | that the two eras of the tax archive are told apart — the bold paragraph that is a summary in one and a keyword list in the other, the ruling number that is not the case number, and the opening formula only the newer rulings carry |
+| `lib/cjeu.ts` | that a case number and a CELEX are inverses, and that a two-digit year is read against the Court's own lifetime — `C-120/78` is 1978 and `C-13/24` is 2024, and getting it backwards fetches a real judgment a century from the one asked for |
+| `ingestion/cjeu-priority.ts` | the failures a list of data has: that every case number on the priority list parses and round-trips, that no judgment is listed twice, and that the list stays weighted towards the years the newest-first sweep has not reached |
 | `search-eval/metrics.ts` | the ranking metrics themselves |
 | `lib/ask/llm.ts` | which provider answers and on which model — configuration flipped on a dashboard, whose failure modes (a silent fallback to the other provider, a launcher with no key behind it) are quiet ones |
 | `lib/ask/plan.ts` | that a plan is sanitised before it reaches the search, and that a planning failure degrades to keywords instead of failing the question |
@@ -2757,7 +2796,7 @@ src/
     lagastod.ts                  a regulation's "sett samkvæmt …" clause → the act
                                  and articles it names
     eur-lex.ts                   CELEX identity + EU act HTML → articles (three layouts)
-    cjeu.ts                      case CELEX → C-203/15; EUR-Lex's five-field case title
+    cjeu.ts                      case CELEX ↔ C-203/15; EUR-Lex's five-field case title
     eea-tag.ts                   the one definition of EES / EES? / no tag
     act-match.ts                 whether a query genuinely names an act
     legal-citations.ts           recognises act/regulation citations in judgment text
@@ -2786,6 +2825,8 @@ src/
     adapter.ts                   adapter interface, polite fetch, save/upsert
     run.ts                       CLI runner, records IngestionRun rows
     eurlex-sparql.ts             the SPARQL layer the EU adapters share
+    cjeu-priority.ts             the judgments the year sweep must not be waited
+                                 on for, and why each one is on the list
     adapters/
       icelandic-courts.ts        GraphQL + embedded PDF/rich text; scheduled incremental
       lagasafn.ts                in-force Icelandic acts; incremental by codex + parse version
@@ -2798,7 +2839,8 @@ src/
                                  catalogue / text / retry / EEA-links passes, and the
                                  purge of families no longer ingested
       cjeu.ts                    Court of Justice and General Court judgments, from
-                                 the same endpoint: a listing pass and a text pass
+                                 the same endpoint: a listing pass, then a text pass
+                                 that drains the priority list before the ledger
       eea-joint-committee.ts     EEA Joint Committee decisions (their own text),
                                  worked off the gap ledger; also purges the
                                  withdrawn EEA-Lex acts register

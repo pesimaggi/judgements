@@ -427,3 +427,69 @@ ORDER BY ?celex LIMIT ${PAGE_SIZE} OFFSET ${offset}`);
 
   return Array.from(byCelex.values());
 }
+
+/**
+ * How many judgments one metadata query names at a time.
+ *
+ * Same reasoning as LINK_BATCH above: the endpoint refuses a deep OFFSET, and
+ * naming the works avoids needing one at all. The priority list is a few dozen
+ * judgments, so in practice this is one request.
+ */
+const CELEX_BATCH = 200;
+
+/**
+ * The same metadata listJudgments reads, for a named set of judgments rather
+ * than a year of them.
+ *
+ * The priority list names the judgments the well cannot answer without, and
+ * they have to arrive carrying what a year sweep would have given them. That
+ * is not a nicety: the fetch pass reads the parties, the referring court and
+ * the Court's own index terms off this title, so a judgment stored without one
+ * lands with its case number for a title and no subject tags — present in the
+ * corpus and close to unfindable, which is the failure this list exists to
+ * prevent.
+ *
+ * A CELEX with no row back is a CELEX EUR-Lex does not publish an English
+ * judgment for: either the case number was wrong, or the judgment was never
+ * translated. Both are the caller's to report — this returns what it found and
+ * says nothing about what it did not.
+ */
+export async function listJudgmentsByCelex(celexes: string[]): Promise<JudgmentListing[]> {
+  const byCelex = new Map<string, JudgmentListing>();
+
+  for (let i = 0; i < celexes.length; i += CELEX_BATCH) {
+    const values = celexes
+      .slice(i, i + CELEX_BATCH)
+      .map((celex) => `"${celex.toUpperCase()}"^^xsd:string`)
+      .join(" ");
+    const rows = await sparql(`${PREFIXES}
+SELECT ?celex ?title ?date ?ecli WHERE {
+  VALUES ?celex { ${values} }
+  ?w cdm:resource_legal_id_celex ?celex ;
+     cdm:work_has_resource-type <http://publications.europa.eu/resource/authority/resource-type/JUDG> ;
+     cdm:work_date_document ?date .
+  OPTIONAL { ?w cdm:case-law_ecli ?ecli }
+  ?e cdm:expression_belongs_to_work ?w ;
+     cdm:expression_uses_language <http://publications.europa.eu/resource/authority/language/ENG> ;
+     cdm:expression_title ?title .
+}`);
+
+    for (const row of rows) {
+      const celex = (row.celex ?? "").toUpperCase();
+      const title = (row.title ?? "").replace(/\s+/g, " ").trim();
+      if (!celex || !title) continue;
+      // Longest title wins, as in listJudgments and for the same reason: a
+      // shortened one drops the fields this app reads off it.
+      const held = byCelex.get(celex);
+      if (held && held.title.length >= title.length) continue;
+      byCelex.set(celex, {
+        celex,
+        title,
+        date: toDate(row.date),
+        ecli: row.ecli ?? held?.ecli ?? null,
+      });
+    }
+  }
+
+  return Array.from(byCelex.values());
+}
