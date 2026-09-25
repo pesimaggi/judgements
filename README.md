@@ -2290,6 +2290,43 @@ variable below is also in `.env.example`.
 | `ASK_MODEL_ANTHROPIC` | `claude-opus-5` | Model on the Anthropic side. |
 | `ASK_MODEL` | — | Overrides whichever of those two is active. Set the per-provider pair once and flip `ASK_PROVIDER`; use this for a quick one-off. |
 
+#### What the research loop costs, and why it is cached
+
+Deep research is a tool loop, and the API is stateless: every round resends the
+whole conversation. Round 12 pays for rounds 1 to 11 again. What a run costs is
+therefore not the size of the transcript but the sum of its prefixes — roughly
+`results × rounds²/2` — and the terms being squared are large, because a
+`read_provision` result is capped at `ASK_DEEP_PROVISION_CHARS` (16,000).
+
+So `runTools` in `lib/ask/llm.ts` sets a top-level `cache_control` breakpoint in
+addition to the explicit one on the system prompt. Every round after the first
+reads the preceding transcript back at a tenth of the input price and writes
+only its own new turn. On the arithmetic above that is **2.6× less input spend
+at eight rounds and 4.6× at twenty**, which sits inside the 2.5–3.7× Anthropic
+measured on its own agent loops.
+
+It works only because the loop is **append-only** — nothing is ever inserted or
+rewritten behind the newest turn. Two things would break it, and neither is
+worth the saving it appears to offer:
+
+- **Changing `effort` or `thinking` mid-run.** Either invalidates the messages
+  cache and hands back the whole win. They are constant for the life of a run
+  on purpose.
+- **Context editing** (`clear_tool_uses`). It sounds like the obvious lever for
+  a loop that accumulates bulky results, and it is not: every clearing pass
+  rewrites the cached conversation, and in Anthropic's measured run it cost
+  more than it saved. It is a context-window tool, not a cost one.
+
+To check it is actually working rather than merely requested, run
+`scripts/cache-probe.ts` — it drives the real loop with a fixture tool and
+prints the per-round cache meters. It makes real model calls, so it costs real
+money (cents, not pounds).
+
+One knob is worth knowing about before you reach for `ASK_EFFORT` to save
+money: in deep mode the answer stage takes `max(chosen, ASK_DEEP_ANSWER_EFFORT)`
+(`lib/ask/answer.ts`), and that variable defaults to `high`. Lowering
+`ASK_EFFORT` alone therefore does **not** lower the deep answer.
+
 #### One thing the two providers do not do equally
 
 While the well works it shows what it is doing — the stage, the search terms,
