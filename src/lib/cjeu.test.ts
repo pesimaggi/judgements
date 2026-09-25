@@ -9,7 +9,13 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { parseCaseCelex, parseCaseTitle, composeCaseTitle, caseLawUrl } from "@/lib/cjeu";
+import {
+  parseCaseCelex,
+  parseCaseTitle,
+  composeCaseTitle,
+  caseLawUrl,
+  caseCelexFromNumber,
+} from "@/lib/cjeu";
 
 describe("case CELEX numbers", () => {
   test("reads the court, the year and the case number", () => {
@@ -120,5 +126,44 @@ describe("the stored title", () => {
 
   test("falls back to the case number alone when the parties are not stated", () => {
     assert.equal(composeCaseTitle("C-203/15", parseCaseTitle("Judgment of the Court.")), "C-203/15");
+  });
+});
+
+describe("case numbers back to CELEX", () => {
+  test("round-trips every case number parseCaseCelex composes", () => {
+    // The two functions are inverses and the priority list depends on it: a
+    // case number written the way a lawyer cites it has to reach the same
+    // judgment the year sweep would have queued.
+    for (const celex of ["62015CJ0203", "62009CJ0503", "61978CJ0120", "62015TJ0001"]) {
+      const parsed = parseCaseCelex(celex);
+      assert.ok(parsed, celex);
+      assert.equal(caseCelexFromNumber(parsed.caseNumber), celex);
+    }
+  });
+
+  test("reads a two-digit year against the Court's own lifetime", () => {
+    // At or above 54 is the twentieth century, below it the twenty-first.
+    // Getting this backwards would fetch a judgment a century away from the
+    // one asked for, and both CELEX numbers are well-formed, so nothing
+    // downstream would notice.
+    assert.equal(caseCelexFromNumber("C-120/78"), "61978CJ0120");
+    assert.equal(caseCelexFromNumber("C-160/96"), "61996CJ0160");
+    assert.equal(caseCelexFromNumber("C-215/99"), "61999CJ0215");
+    assert.equal(caseCelexFromNumber("C-333/13"), "62013CJ0333");
+    assert.equal(caseCelexFromNumber("C-257/24"), "62024CJ0257");
+  });
+
+  test("pads the sequence number to the four digits a CELEX states", () => {
+    assert.equal(caseCelexFromNumber("C-6/64"), "61964CJ0006");
+    assert.equal(caseCelexFromNumber("T-45/98"), "61998TJ0045");
+  });
+
+  test("refuses what is not a case number of these two courts", () => {
+    // An EFTA Court number, a joined-case string, an appeal suffix, a
+    // four-digit year and an empty sequence. A priority list entry that
+    // silently parsed to something would be fetched as some other judgment.
+    for (const raw of ["E-5/21", "C-203/15 and C-698/15", "C-203/15 P", "C-203/2015", "C-0/15", "203/15"]) {
+      assert.equal(caseCelexFromNumber(raw), null, raw);
+    }
   });
 });
