@@ -32,15 +32,23 @@
  *
  * ── Access ─────────────────────────────────────────────────────────────────
  *
- * Alþingi's `/altext/` tree is served through Cloudflare and has refused every
- * request from the development sandbox this adapter was written in, while
- * `/lagas/` from the same machine answers fine — so the parser was built
- * against pages recovered from the Internet Archive. Whether the scheduled
- * ingest can reach the live tree is a question only a run can answer, which is
- * why the first thing this adapter does is say what happened: a 403 on the
- * first fetch is logged as a blocked source rather than as one act's error, so
- * the run's log distinguishes "Alþingi will not serve us" from "this bill is
+ * Alþingi's `/altext/` tree is served through Cloudflare and refuses every
+ * datacenter this has run from — the development sandbox it was written in and
+ * the Railway ingest both — while `/lagas/` from the same machines answers
+ * fine, so the parser was built against pages recovered from the Internet
+ * Archive. The first version of this comment left that as a question only a
+ * scheduled run could answer; the runs have answered it, identically, on every
+ * firing since. Which is what the reporting below is for: a 403 on the first
+ * fetch is logged as a blocked source rather than as one act's error, so the
+ * run's log distinguishes "Alþingi will not serve us" from "this bill is
  * missing".
+ *
+ * The adapter stays in the schedule to notice the day that changes, and the
+ * corpus has to arrive another way. It needs no index and no crawl — only
+ * `Act.billUrl` out of the database — so the same run from a network
+ * Cloudflare serves fills the same rows; see docs/regulations-and-travaux.md
+ * §2.2.1 for the command, and for the other way out, which is asking Alþingi
+ * to undo what looks like bot-management collateral rather than policy.
  */
 import { prisma } from "@/lib/db";
 import { parseThingskjal, parseThingskjalUrl } from "@/lib/thingskjal";

@@ -3100,14 +3100,23 @@ navigation — the fjárlagafrumvarp is one. Those are recorded as a gap rather
 than stored empty, so the shortfall is visible and countable rather than
 silently becoming a corpus of menus.
 
-**Access is the open question.** Alþingi serves `/altext/` through Cloudflare,
-and it has refused every request from the development environment this was
-built in, while `/lagas/` from the same machine answers fine — which is why the
-parser was built against pages recovered from the Internet Archive (see the
-fixture manifest). Whether the scheduled ingest can reach the live tree is
-something only a run answers, so the adapter says which it is: ten refusals in
-a row are reported once as a blocked source and the run stops, rather than nine
-hundred identical errors burying everything else in the log.
+**Access is settled, and the answer is no.** Alþingi serves `/altext/` through
+Cloudflare, and it refuses the scheduled ingest exactly as it refuses the
+development environment: every run since this adapter shipped has logged ten
+403s and stored nothing, while `/lagas/` from the same machines answers fine.
+That is why the parser was built against pages recovered from the Internet
+Archive (see the fixture manifest), and why the adapter distinguishes the two
+failures rather than burying the run in nine hundred identical errors: ten
+refusals in a row are reported once as a blocked source and the run stops.
+
+The bill index at `/thingstorf/…/lagafrumvorp/?lthing=N` is *not* blocked, but
+an index is the one thing this adapter never needed — every row's way into the
+mál is the ferill page, which is blocked, and the text is under `/altext/`,
+which is blocked too. What is left is a harvest from a network Cloudflare
+serves — the adapter needs no crawl, only a `DATABASE_URL`, because the bill
+URLs come from the acts — or an allowlist from Alþingi, whose own robots.txt
+directs automated collection at the very service its bot rule refuses. Both are
+written up in *docs/regulations-and-travaux.md* §2.2.1.
 
 ### Lagastoð
 

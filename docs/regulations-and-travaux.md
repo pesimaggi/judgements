@@ -422,45 +422,132 @@ Two things the build found that the research did not:
   want one — now costs one constant instead of a manual `LAGASAFN_FORCE=1` run
   somebody has to remember.
 
-### 2.2 Blocker: `www.althingi.is/altext/**` returns 403 from here
+### 2.2 Blocker: `www.althingi.is/altext/**` returns 403 — from production too
 
-Measured today, from this environment:
+Measured 2026-09-15 from the development sandbox, and re-measured **2026-09-25**
+from the sandbox and, for the þingskjöl themselves, from the Railway ingest:
 
 | URL | |
 |---|---|
-| `/lagasafn/nuna/` | **200** |
-| `/lagas/nuna/1991091.html` | **200** |
-| `/altext/115/s/0072.html` (a þingskjal) | **403** |
-| `/altext/stjt/1993.133.html` | **403** |
+| `/lagasafn/nuna/`, `/lagas/nuna/1991091.html` | **200** |
+| `/thingstorf/thingmalalistar-eftir-thingum/lagafrumvorp/?lthing=N` | **200** |
+| `/thingstorf/thingmalin/?ltg=154&mnr=2` | **200** |
+| `/thingstorf/thingmalin/erindi/?ltg=154&mnr=2` | **200** |
+| `/thingstorf/…/ferill/154/2/` | **403** |
+| `/altext/154/s/0002.html` (a þingskjal) | **403** |
+| `/altext/pdf/154/s/0002.pdf` | **403** |
 | `/altext/xml/thingmalalisti/?lthing=154` | **403** |
-| `/thingstorf/…/ferill/?ltg=115&mnr=71` | **403** |
+| `/altext/stjt/1993.133.html` | **403** |
 
 The 403 is Cloudflare's block page, and it is **path-based, not User-Agent
-based** — a full browser fingerprint (Chrome UA, `Accept`, `Accept-Language`,
-a same-site `Referer`) makes no difference, while Lagasafn paths serve 200 to a
-bare curl on the same connection.
+based** — a full browser fingerprint (Chrome UA, `Accept`, `Accept-Language`, a
+same-site `Referer`) makes no difference, while Lagasafn paths serve 200 to a
+bare curl on the same connection. Nor are the 200s a caching artefact, which
+would have been the comfortable explanation: `?lthing=113` served 200 on a
+`cf-cache-status: MISS`, so the origin answered it.
 
-Which is odd, because Althingi's own `robots.txt` says:
+**Open question 1 — does it 403 from the Railway egress too? — is answered:
+yes.** The `frumvorp` adapter has been in the three-hourly schedule since it
+shipped, and every run since has logged the same three lines:
 
 ```
-# Fyrir sjálfvirka gagnasöfnun, notið XML-vefþjónustuna: https://www.althingi.is/altext/xml/
+[frumvorp] 200 act(s) link a bill this database does not hold
+[frumvorp]   Alþingi refused the request for
+             https://www.althingi.is/altext/157/s/0964.html (Error: HTTP 403 …)
+[frumvorp]   Giving up after 10 refusals; nothing was stored.
 ```
 
-— *for automated data collection, use the XML web service* — and the XML web
-service is one of the things returning 403.
+(Railway, the `ingestion of cases` service, every run from at least
+2026-09-24T04:34Z to 2026-09-25T19:27Z — eight runs a day, ten refused requests
+each.) So this was never one sandbox address on a blocklist. Two networks, two
+countries, the same answer: **the corpus cannot be fetched from a server**, and
+no amount of adapter design changes that.
 
-So this is very likely bot-management collateral rather than policy. Two things
-to establish before designing around it:
+**The bill index is reachable, and is still not a way in.** The listing at
+`/thingstorf/thingmalalistar-eftir-thingum/lagafrumvorp/?lthing=N` answers 200
+for every þing from the 20th (1907) to the current one, and gives per bill: mál
+number, date, title, sponsor. But each row's only link into the mál is the
+ferill page, which is 403, and the text is under `/altext/`, which is 403. It
+is an *index* — and an index is the one thing this adapter has never needed,
+because `Act.billUrl` already names the þingskjal for every act in force. Worth
+building later for two things neither the acts nor the archive give us: a
+denominator, so "how much of this corpus do we hold" has an answer, and the
+amending bills of §2.3, which no act in force links. Worth nothing for text.
 
-1. **Does it 403 from the Railway egress IP too?** This container's address may
-   simply be on a datacenter blocklist. One request from the production ingest
-   settles it, and the answer changes everything downstream.
-2. If it does, **ask Alþingi.** A site whose robots.txt invites automated
-   collection through a service that blocks automated collection has a
-   misconfiguration, and they are the ones who can fix it.
+**The Internet Archive is not the fallback either.** The fixtures in
+`src/lib/__fixtures__/` came from it, which is why there is a tested parser
+waiting for a corpus, but it is a stale mirror of a live source and
+`web.archive.org` is not currently reachable from this environment at all (the
+connection is reset). Two frozen pages for the parser tests is the right amount
+of Wayback to depend on.
 
-Do not design a workaround until (1) is answered. Note also that the 403 does
-*not* block §2.1 — the links live on Lagasafn pages, which serve fine.
+### 2.2.1 Two ways in, and neither of them is code
+
+**One: harvest once from a network Cloudflare serves.** The adapter crawls
+nothing — it reads `Act.billUrl` out of the database and fetches those URLs —
+so it runs anywhere there is a `DATABASE_URL`, a laptop on a domestic line
+included. The block follows the address, not the request, and an ordinary
+Icelandic connection is very likely served where a datacenter is not.
+
+```bash
+DATABASE_URL='<production>' FRUMVORP_MAX_BILLS=1000 \
+  npm run ingest -- --adapter=frumvorp
+```
+
+Nine hundred bills at the crawl-delay Alþingi publishes is a little over an
+hour, unattended, and it is resumable the same way the scheduled run is:
+`ctx.isKnown` skips what is already stored, so an interrupted harvest is picked
+up by the next one rather than restarted. What it does not do is stay current.
+Every act passed after the harvest arrives with a bill URL the scheduled run
+will go on being refused, so this buys the back catalogue and not the feed —
+which is most of the value, since what a court quotes is rarely last month's
+greinargerð.
+
+Note `status: "pilot"` on `althingi-frumvorp` in `src/lib/sources.ts`: until it
+is flipped to live the bills are invisible to search and to the well. That is
+the right order — harvest, read what landed, then publish — and §2.4's warning
+about travaux reading as authority is the reason not to rush the flip.
+
+**Two: ask Alþingi.** A robots.txt that says *"for automated data collection,
+use the XML web service"* directly above a service that answers 403 to
+automated data collection is a misconfiguration, and their web desk is the only
+party who can fix it. It costs one email, and if it works it replaces the
+harvest with a source that stays current:
+
+```
+Efni: Sjálfvirk gagnasöfnun — 403 frá /altext/ og XML-vefþjónustunni
+
+Góðan dag.
+
+Ég stend að leitarvef fyrir íslenskar réttarheimildir — dóma, lagasafnið,
+reglugerðir og EES-gerðir — og vildi gjarnan bæta frumvörpum og
+greinargerðum við, enda eru þau lykilgögn við skýringu laga.
+
+Í robots.txt Alþingis stendur: „Fyrir sjálfvirka gagnasöfnun, notið
+XML-vefþjónustuna: https://www.althingi.is/altext/xml/". Sú þjónusta, og allt
+annað undir /altext/ (bæði HTML og PDF), skilar hins vegar 403 frá Cloudflare
+þegar beðið er um hana frá hýsingarþjónustu. Sömu vélar fá 200 frá /lagas/,
+/lagasafn/ og þingmálalistunum undir /thingstorf/, og svarið breytist ekki
+þótt fyrirspurnin líti út eins og venjulegur vafri — þetta virðist því vera
+sjálfvirk botavörn fremur en ákvörðun um aðgang.
+
+Söfnunin yrði hógvær: ein fyrirspurn í einu, minnst 5 sekúndur á milli eins
+og Crawl-delay segir til um, og User-Agent sem segir hver við erum og
+hvernig má ná í okkur.
+
+Er hægt að undanskilja XML-vefþjónustuna (eða /altext/) frá botavörninni,
+eða setja IP-tölu okkar á lista yfir leyfðar? Ég sendi hana um hæl ef það
+hentar betur.
+
+Bestu kveðjur,
+[nafn]
+[netfang] · [vefslóð]
+```
+
+Send it to the address on Alþingi's own contact page rather than a guessed
+one, and record the answer here — a "no" is as useful to this file as a yes,
+because it closes the second way in and leaves the harvest as the only one.
+
 
 ### 2.3 What "preparatory works" actually means here
 
@@ -519,7 +606,9 @@ Two things this must get right:
    Lagasafn parse, and show them on the act reader.~~ **Shipped.** Zero new
    fetches; the one cost is a single ~900-act re-fetch when `PARSE_VERSION`
    rolls, which the run announces before it starts.
-2. Settle the 403 from production (§2.2).
+2. ~~Settle the 403 from production (§2.2).~~ **Settled, and the answer is
+   no:** Railway is refused exactly as the sandbox is. §2.2.1 has what is
+   left — a harvest from an unblocked network, an email to Alþingi, or both.
 3. Ingest the ~900 original bills; link act → bill; render on the act reader.
 4. Parse *"athugasemdir við einstakar greinar"* into per-article sections; link
    provision → commentary through the footnote chain in §2.1. This is the step
@@ -627,9 +716,11 @@ unsolved.
 2. **Structure coverage:** is a searchable-but-unstructured three-quarters of
    the regulation corpus acceptable, given it means no provision-level case
    linking there? (§1.3)
-3. **Althingi 403:** can someone run one request to `/altext/xml/` from the
-   production ingest? Everything in §2 downstream of §2.5 step 1 depends on the
-   answer. (§2.2)
+3. ~~**Althingi 403:** can someone run one request to `/altext/xml/` from the
+   production ingest?~~ **Answered 2026-09-25: it is refused there too**, and
+   has been on every scheduled run. The question that replaces it: harvest the
+   back catalogue from an unblocked network now, or write to Alþingi first and
+   see whether the feed can be had at all? (§2.2, §2.2.1)
 4. **Travaux scope:** original bills only to start, or original + amending
    bills? The second is where the volume and most of the interpretive value
    both are. (§2.3)
@@ -653,7 +744,13 @@ curl -s 'https://www.reglugerd.is/reglugerdir/allar/nr/0359-1993' | grep -c 'Sec
 curl -s 'https://www.althingi.is/lagas/nuna/1991091.html' | grep -o 'Ferill málsins á Alþingi'
 curl -s 'https://www.althingi.is/lagas/nuna/1991091.html' | grep -oE 'L\. [0-9]{1,3}/[0-9]{4}, [0-9]{1,3}\. gr\.' | wc -l   # → 236
 
-# The 403, and that it is path-based
-curl -s -o /dev/null -w '%{http_code}\n' 'https://www.althingi.is/lagas/nuna/1991091.html'   # 200
-curl -s -o /dev/null -w '%{http_code}\n' 'https://www.althingi.is/altext/115/s/0072.html'    # 403
+# The 403, and that it is path-based rather than a cache or a User-Agent
+A=https://www.althingi.is
+curl -s -o /dev/null -w '%{http_code}\n' "$A/lagas/nuna/1991091.html"                         # 200
+curl -s -o /dev/null -w '%{http_code}\n' "$A/altext/115/s/0072.html"                          # 403
+curl -s -o /dev/null -w '%{http_code}\n' "$A/altext/xml/thingmalalisti/?lthing=154"           # 403
+curl -s -o /dev/null -w '%{http_code}\n' "$A/thingstorf/thingmalalistar-eftir-thingum/ferill/154/2/"  # 403
+# …while the bill index answers, and from the origin, not the edge cache:
+curl -s -D- -o /dev/null "$A/thingstorf/thingmalalistar-eftir-thingum/lagafrumvorp/?lthing=113" \
+  | grep -iE '^(HTTP|cf-cache-status)'                                              # 200, MISS
 ```
