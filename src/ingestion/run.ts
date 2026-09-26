@@ -38,6 +38,7 @@ import { reglugerdAdapter } from "./adapters/reglugerd";
 import { lagastodAdapter } from "./adapters/lagastod";
 import { frumvorpAdapter } from "./adapters/frumvorp";
 import { eurLexAdapter } from "./adapters/eur-lex";
+import { treatiesAdapter } from "./adapters/treaties";
 import { cjeuAdapter } from "./adapters/cjeu";
 import { citationsAdapter } from "./citations";
 
@@ -60,6 +61,7 @@ const ADAPTERS: Record<string, IngestionAdapter> = {
   lagastod: lagastodAdapter,
   frumvorp: frumvorpAdapter,
   "eur-lex": eurLexAdapter,
+  treaties: treatiesAdapter,
   cjeu: cjeuAdapter,
   citations: citationsAdapter,
 };

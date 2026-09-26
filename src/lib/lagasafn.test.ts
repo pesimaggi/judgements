@@ -24,6 +24,7 @@ import {
   actUrl,
   normalizeLawText,
   type ParsedAct,
+  type ParsedProvision,
 } from "@/lib/lagasafn";
 
 const FIXTURES = join(process.cwd(), "src/lib/__fixtures__/lagasafn");
@@ -368,5 +369,108 @@ describe("parseFerillUrl", () => {
     for (const bad of ["", "/ferill/?ltg=115", "https://www.althingi.is/lagas/nuna/1991091.html"]) {
       assert.equal(parseFerillUrl(bad), null, bad);
     }
+  });
+});
+
+describe("an annexed treaty (lög nr. 2/1993, which prints the EEA Agreement)", () => {
+  const act = fixture("1993002.html.gz");
+
+  test("the act's own articles are unaffected", () => {
+    const own = act.provisions.filter((p) => p.kind === "article");
+    assert.equal(own.length, 5);
+    assert.equal(own[0].anchor, "G1");
+    // 2. gr. is the one that gives the Agreement lagagildi, and the reason this
+    // act is where the Icelandic text lives.
+    assert.match(own[1].fullText, /Meginmál EES-samningsins skal hafa lagagildi/);
+  });
+
+  /** Fylgiskjal I — the Agreement's own main text, and what the fix is about. */
+  const inAnnexOne = (p: ParsedProvision) =>
+    p.kind === "annex" &&
+    p.chapterIndex !== null &&
+    /^Fylgiskjal I(?![IVXLCDM])/.test(act.chapters[p.chapterIndex]?.label ?? "");
+
+  test("the annexed text has text", () => {
+    // It did not. Lagasafn prints the paragraph marker inside a fylgiskjal with
+    // no id, and a paragraph with no anchor was dropped along with everything in
+    // it — so all 129 articles of the Agreement were stored as bare labels.
+    const agreement = act.provisions.filter(inAnnexOne);
+    assert.ok(agreement.length >= 129, `only ${agreement.length} articles in fylgiskjal I`);
+    assert.deepEqual(
+      agreement.filter((p) => p.fullText.trim().length === 0).map((p) => p.displayLabel),
+      []
+    );
+    assert.ok(
+      agreement.reduce((n, p) => n + p.fullText.length, 0) > 50_000,
+      "the annexed text is too short to be the Agreement"
+    );
+  });
+
+  test("and is therefore no longer shown as repealed", () => {
+    // `isRepealed` is computed from an empty body, because an empty body is how
+    // Lagasafn writes a repealed provision. With the text dropped, every annexed
+    // article qualified — the reader showed the whole EEA Agreement as struck
+    // out.
+    assert.deepEqual(
+      act.provisions.filter(inAnnexOne).filter((p) => p.isRepealed).map((p) => p.displayLabel),
+      []
+    );
+  });
+
+  test("an article the fylgiskjal does not reproduce is still elided", () => {
+    // Two provisions of fylgiskjal V — the protocol amending the Agreement — are
+    // printed as a bare "…" with a footnote saying what they were about. That is
+    // Lagasafn stating the text is not reproduced, and it must keep reading as
+    // elided: the paragraph-anchor fix recovers text that was there, and must
+    // not invent text that is not.
+    const elided = act.provisions
+      .filter((p) => p.kind === "annex" && p.fullText.trim().length === 0)
+      .map((p) => p.displayLabel);
+    assert.deepEqual(elided, ["2.–7. gr.", "15. gr."]);
+    const first = act.provisions.find((p) => p.displayLabel === "2.–7. gr.");
+    assert.equal(first?.isRepealed, true);
+    assert.deepEqual(first?.footnotes, ["1) Ákvæði um breytingar á EES-samningi."]);
+  });
+
+  test("every annexed paragraph has an anchor of its own", () => {
+    // Synthesised, and unique within the provision: ProvisionParagraph is keyed
+    // (provisionId, anchor), so a repeated anchor is a write that fails at the
+    // database rather than a rendering nobody notices.
+    for (const p of act.provisions) {
+      const anchors = p.paragraphs.map((par) => par.anchor);
+      assert.equal(new Set(anchors).size, anchors.length, `${p.displayLabel} repeats an anchor`);
+      for (const anchor of anchors) {
+        assert.match(anchor, /^[A-Z][A-Z0-9]*M\d+$/, `${p.displayLabel}: ${anchor}`);
+      }
+    }
+  });
+
+  test("the annex keeps its own divisions, under the fylgiskjal they are in", () => {
+    // The Agreement divides itself into hluti and kaflar, and an arabic
+    // "1. kafli." is not how Lagasafn numbers an act's chapters — so these
+    // rules cannot reach the act's own structure. The label carries the
+    // fylgiskjal because "1. kafli" read as a chapter of lög nr. 2/1993 would
+    // be a claim about the act that is not true.
+    assert.ok(act.chapters.some((c) => /^Fylgiskjal I$/.test(c.label)));
+    assert.ok(
+      act.chapters.some((c) => c.label === "Fylgiskjal I — I. hluti"),
+      act.chapters.slice(0, 5).map((c) => c.label).join(" | ")
+    );
+    assert.ok(act.chapters.some((c) => c.label === "Fylgiskjal I — II. hluti — 1. kafli"));
+    // Fylgiskjal II is bókun 1, whose articles are numbered from 1 like the
+    // Agreement's: they must not end up under fylgiskjal I.
+    assert.ok(act.chapters.some((c) => /^Fylgiskjal II\b/.test(c.label)));
+  });
+
+  test("an annexed article is still not an article of the act", () => {
+    // `articleNumber` stays null on annexed material, which is what stops the
+    // citation linker resolving "5. gr. laga nr. 2/1993" to the fifth article
+    // of the Agreement. The Agreement's own articles are reachable through the
+    // treaty row instead — see src/lib/treaties.ts.
+    const annex = act.provisions.filter((p) => p.kind === "annex");
+    assert.deepEqual(
+      annex.filter((p) => p.articleNumber !== null).map((p) => p.displayLabel),
+      []
+    );
   });
 });

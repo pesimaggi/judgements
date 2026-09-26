@@ -43,8 +43,31 @@ describe("corpusFilter", () => {
     assert.ok(!/doc_type/.test(sql), sql);
   });
 
-  test("the unfiltered corpus filters nothing", () => {
-    assert.match(sqlText(corpusFilter("all") as never), /TRUE/);
+  test("the unfiltered corpus filters no corpus, but still shows one text per instrument", () => {
+    // "all" used to be `TRUE`. It cannot be any more: an instrument stored in two
+    // languages — the EEA Agreement — would appear twice in a listing that
+    // filtered nothing, under two labels, with the judgments citing each article
+    // split between the copies. What "all" means is "every corpus", not "every
+    // row".
+    const sql = sqlText(corpusFilter("all") as never);
+    assert.ok(!/jurisdiction/.test(sql), sql);
+    assert.match(sql, /is_canonical/);
+  });
+
+  test("every corpus keeps to the canonical text", () => {
+    // In one place, on purpose: a listing that forgets this shows a duplicate,
+    // and for the well two rows of one article are two sources for one
+    // proposition. See corpusFilter's comment.
+    for (const corpus of ["is", "is-reg", "eu", "treaty", "all"] as const) {
+      assert.match(sqlText(corpusFilter(corpus) as never), /is_canonical/, corpus);
+    }
+  });
+
+  test("the treaties are a corpus of their own", () => {
+    const sql = sqlText(corpusFilter("treaty") as never);
+    assert.match(sql, /'treaty'/);
+    // Not by docType: an instrument is a treaty because of the corpus it is in.
+    assert.ok(!/doc_type/.test(sql), sql);
   });
 
   test("takes the table alias it is given", () => {

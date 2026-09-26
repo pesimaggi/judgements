@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { actCitation, actDisplayTitle, actPath, parseActRef } from "@/lib/acts";
+import { actCitation, actDisplayTitle, actPath, actTreaty, parseActRef } from "@/lib/acts";
 import { parseFerillUrl } from "@/lib/lagasafn";
+import { treatyAnnexedTo, treatyPath } from "@/lib/treaties";
 
 export const dynamic = "force-dynamic";
 
@@ -19,32 +20,114 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
     return NextResponse.json({ error: "Malformed act reference." }, { status: 400 });
   }
 
-  // "38-2001" is an Icelandic act, "32016R0679" an EU one — one route, two
-  // corpora, because they are one table and one reader. See parseActRef().
-  const act = await prisma.act.findUnique({
-    where:
-      ref.jurisdiction === "eu"
-        ? { celex: ref.celex }
-        : {
-            jurisdiction_docType_actNumber_year: {
-              jurisdiction: "is",
-              // From the slug: "38-2001" is an act, "rg-300-2020" a
-              // regulation. Pinning "act" here served a regulation's URL the
-              // act of the same number, silently.
-              docType: ref.docType,
-              actNumber: ref.actNumber,
-              year: ref.year,
-            },
-          },
-    include: {
-      chapters: { orderBy: { ordering: "asc" } },
-      provisions: {
-        orderBy: { ordering: "asc" },
-        include: { paragraphs: { orderBy: { ordering: "asc" } } },
-      },
+  const include = {
+    chapters: { orderBy: { ordering: "asc" } },
+    provisions: {
+      orderBy: { ordering: "asc" },
+      include: { paragraphs: { orderBy: { ordering: "asc" } } },
     },
-  });
+  } as const;
+
+  // "38-2001" is an Icelandic act, "32016R0679" an EU one, "ees" a treaty —
+  // one route, three corpora, because they are one table and one reader. See
+  // parseActRef().
+  //
+  // A treaty is the one of the three that can be asked for in a language.
+  // `?lang=` picks the text; anything but a text this instrument actually has
+  // falls back to the one that governs here rather than 404-ing, because a
+  // link to `/log/tfeu?lang=is` is a reader asking for something that does not
+  // exist, and the answer to that is the treaty, not an error.
+  const requested = new URL(_req.url).searchParams.get("lang");
+  const act =
+    ref.jurisdiction === "treaty"
+      ? ((await prisma.act.findFirst({
+          where: {
+            jurisdiction: "treaty",
+            textGroup: ref.treaty.slug,
+            ...(requested === "is" || requested === "en" ? { language: requested } : {}),
+          },
+          // The governing text first, so a fallback lands on it.
+          orderBy: [{ isCanonical: "desc" }],
+          include,
+        })) ??
+        (await prisma.act.findFirst({
+          where: { jurisdiction: "treaty", textGroup: ref.treaty.slug },
+          orderBy: [{ isCanonical: "desc" }],
+          include,
+        })))
+      : await prisma.act.findUnique({
+          where:
+            ref.jurisdiction === "eu"
+              ? { celex: ref.celex }
+              : {
+                  jurisdiction_docType_actNumber_year_language: {
+                    jurisdiction: "is",
+                    // From the slug: "38-2001" is an act, "rg-300-2020" a
+                    // regulation. Pinning "act" here served a regulation's URL
+                    // the act of the same number, silently.
+                    docType: ref.docType,
+                    actNumber: ref.actNumber,
+                    year: ref.year,
+                    language: "is",
+                  },
+                },
+          include,
+        });
   if (!act) return NextResponse.json({ error: "Act not found." }, { status: 404 });
+
+  // The instrument's other texts, for the reader's language control. A query
+  // rather than the registry, because what matters is which texts have actually
+  // been ingested: offering English before the English text is stored would be
+  // a control that leads to an empty page.
+  const otherTexts = act.textGroup
+    ? (
+        await prisma.act.findMany({
+          where: { textGroup: act.textGroup, id: { not: act.id } },
+          select: { language: true, isCanonical: true },
+        })
+      ).map((other) => ({
+        language: other.language,
+        isCanonical: other.isCanonical,
+        path: `${actPath(act)}?lang=${other.language}`,
+      }))
+    : [];
+
+  // A treaty whose text has lagagildi here, and the act that gave it: the one
+  // line that explains why an international agreement is in a library of
+  // Icelandic law. Null for the TEU and the TFEU, which have no such act.
+  const treaty = actTreaty(act);
+  const forceOfLaw =
+    treaty?.icelandicText && act.language === "is"
+      ? {
+          article: treaty.icelandicText.forceOfLawArticle,
+          citation: actCitation({
+            jurisdiction: "is",
+            docType: "act",
+            citation: null,
+            actNumber: treaty.icelandicText.actNumber,
+            year: treaty.icelandicText.year,
+          }),
+          path: actPath({
+            jurisdiction: "is",
+            docType: "act",
+            celex: null,
+            actNumber: treaty.icelandicText.actNumber,
+            year: treaty.icelandicText.year,
+          }),
+          annex: treaty.icelandicText.annex,
+        }
+      : null;
+
+  // The other direction: an act that prints a treaty as a fylgiskjal. The
+  // reader shows the annexed text where it is printed — some readers get to the
+  // Agreement through the act that enacted it, and 129 articles with a "go
+  // elsewhere" notice instead of the text would be the worst of both — and
+  // links to the treaty's own page, which is where its article numbers are
+  // searchable and where the judgments citing them are counted.
+  const annexedTreaty =
+    act.jurisdiction === "is" && act.docType === "act"
+      ? treatyAnnexedTo(act.actNumber, act.year)
+      : null;
 
   // Distinct judgments per provision, not link rows. There is one link per
   // citing passage, and a judgment routinely cites the same provision more
@@ -200,6 +283,25 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
       ferill: act.ferillUrl ? parseFerillUrl(act.ferillUrl) : null,
       aliases: act.aliases,
       actCaseCount,
+      // ---- One instrument, more than one text --------------------------------
+      /** Language of the text below (ISO 639-1). */
+      language: act.language,
+      /** The instrument, where this is one text of it: the registry slug. */
+      textGroup: act.textGroup,
+      /** Its other stored texts, for the reader's language control. */
+      otherTexts,
+      /** The Icelandic act that gave this treaty the force of law, if any. */
+      forceOfLaw,
+      /** The treaty this act prints as a fylgiskjal, if any. */
+      annexedTreaty: annexedTreaty
+        ? {
+            slug: annexedTreaty.slug,
+            title: annexedTreaty.titleIs,
+            citation: annexedTreaty.citationIs,
+            annex: annexedTreaty.icelandicText?.annex ?? null,
+            path: treatyPath(annexedTreaty.slug),
+          }
+        : null,
       // EU acts. Null or empty throughout on the Icelandic side, which is
       // what the reader keys its EEA panel off.
       celex: act.celex,

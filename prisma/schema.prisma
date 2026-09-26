@@ -133,6 +133,9 @@ model SavedDocument {
 model Act {
   id                String   @id @default(cuid())
   /// "is" — an Icelandic act from Lagasafn. "eu" — an EU act from EUR-Lex.
+  /// "treaty" — a founding treaty: the EEA Agreement, the TEU, the TFEU. See
+  /// src/lib/treaties.ts, and scopeFilter() in src/lib/acts.ts, which is the one
+  /// condition that decides whether any of them is visible to a search at all.
   jurisdiction      String   @default("is")
   /// The instrument: "act" for lög, "regulation" for an Icelandic reglugerð
   /// and for an EU regulation, and "directive" | "decision" for the other two
@@ -172,6 +175,32 @@ model Act {
   /// Hash of the law's normalized body, for skipping unchanged acts on the
   /// roughly-daily Lagasafn updates.
   sourceHash        String   @map("source_hash")
+
+  // ---- One instrument, more than one text -----------------------------------
+  // The treaties are the reason these exist: the EEA Agreement is one
+  // instrument with two authentic texts, and the reader has to be able to show
+  // either. The alternative — a translation table hanging off Provision —
+  // would have needed a second tsvector, its own trigger and its own index to
+  // be searchable at all, where a second Act row is searched, lemmatised and
+  // rendered by everything that already exists.
+
+  /// Language of the stored text (ISO 639-1). Document.language has always
+  /// existed; Act's absence of one was an omission that only became visible
+  /// when one instrument arrived in two languages. EU acts are "en".
+  language          String   @default("is")
+  /// The instrument this row is *a text of*: the treaty registry's slug. Two
+  /// rows sharing it are two languages of one instrument, not two instruments.
+  /// Null for everything with only one text, which is every act and regulation.
+  textGroup         String?  @map("text_group")
+  /// Whether this row owns the instrument's identity — its URL, the citation
+  /// links from judgments, the "úrlausnir vísa til þessa ákvæðis" counts.
+  ///
+  /// True for everything except a secondary-language text. It is enforced in
+  /// exactly one place, `corpusFilter()` in src/lib/acts.ts, because a listing
+  /// that forgets it shows the same article twice under two labels with its
+  /// citation count split between the copies — and for the well, two rows of
+  /// one article are two sources for one proposition.
+  isCanonical       Boolean  @default(true) @map("is_canonical")
 
   /// Which release of the Lagasafn parser produced the stored structure.
   ///
@@ -286,7 +315,12 @@ model Act {
   /// As an act: the regulations made under it.
   regulationsUnder RegulationBasis[] @relation("EnablingAct")
 
-  @@unique([jurisdiction, docType, actNumber, year])
+  // `language` is part of the identity because one instrument can arrive in
+  // more than one authentic text: the Icelandic and English EEA Agreement are
+  // both (treaty, treaty, 1, 1992) and would collide without it. Every act and
+  // regulation is "is" and nothing about them changes.
+  @@unique([jurisdiction, docType, actNumber, year, language])
+  @@index([textGroup])
   @@index([status])
   @@index([jurisdiction, docType])
   @@index([lagastodScanHash])

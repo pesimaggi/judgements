@@ -120,6 +120,13 @@ export interface ParsedAct {
 const ROMAN = "IVXLCDM";
 
 /**
+ * Marks a paragraph anchor this parser invented, until the provision it belongs
+ * to has an anchor to build the real one from. Never survives the parse — see
+ * the hk.jpg branch in walk() and the settling loop at the end.
+ */
+const SYNTHETIC_PARAGRAPH = "?M";
+
+/**
  * Unicode-normalizes and collapses whitespace. NFC matters because Lagasafn's
  * Icelandic characters are not consistently composed — "ð" arriving as d +
  * combining stroke would not equal a composed "ð" in a search index or a
@@ -261,6 +268,19 @@ export function parseLagasafnHtml(html: string): ParsedAct {
   /** Set when a chapter heading has been seen but its title has not. */
   let chapterAwaitingTitle = false;
 
+  /**
+   * The open annex divisions, outermost first: the fylgiskjal, the hluti, the
+   * kafli.
+   *
+   * An annexed treaty divides itself, and it does not use the act's own words
+   * for it: lög nr. 2/1993 prints "I. hluti." and "1. kafli." where an act
+   * prints "II. kafli.". Those divisions are recorded like any other, but their
+   * label carries the fylgiskjal they are in — "Fylgiskjal I — II. hluti" —
+   * because "1. kafli" read as a chapter of lög nr. 2/1993 would be a claim
+   * about the act that is not true. Empty outside an annex.
+   */
+  const annexPath: string[] = [];
+
   let current: ParsedProvision | null = null;
   let pendingAnchor: string | null = null;
   let paragraphAnchor: string | null = null;
@@ -311,6 +331,21 @@ export function parseLagasafnHtml(html: string): ParsedAct {
     pendingAnchor = null;
   };
 
+  /** Opens an annex division at the given depth, closing anything deeper. */
+  const startAnnexDivision = (label: string, depth: number) => {
+    flushProvision();
+    annexPath.length = depth;
+    annexPath[depth] = label;
+    chapters.push({
+      numeral: null,
+      letter: null,
+      label: annexPath.filter(Boolean).join(" — "),
+      title: null,
+    });
+    chapterIndex = chapters.length - 1;
+    chapterAwaitingTitle = true;
+  };
+
   const walk = (node: Cheerio<AnyNode>) => {
     for (const el of node.contents().toArray()) {
       if (el.type === "text") {
@@ -337,13 +372,27 @@ export function parseLagasafnHtml(html: string): ParsedAct {
           startProvision();
           continue;
         }
-        // hk.jpg marks a paragraph, and carries its anchor.
-        if (src.includes("hk.jpg") && id && /M\d+$/.test(id)) {
+        // hk.jpg marks a paragraph, and in the act's own body it carries the
+        // anchor.
+        if (src.includes("hk.jpg")) {
           flushParagraph();
-          paragraphAnchor = id;
-          // Recover a temporary provision's anchor from its first paragraph.
-          if (current && !current.anchor) {
-            current.anchor = id.replace(/M\d+$/, "");
+          if (id && /M\d+$/.test(id)) {
+            paragraphAnchor = id;
+            // Recover a temporary provision's anchor from its first paragraph.
+            if (current && !current.anchor) {
+              current.anchor = id.replace(/M\d+$/, "");
+            }
+          } else if (current) {
+            // Inside a fylgiskjal Lagasafn prints the same marker with no id at
+            // all, and a paragraph with no anchor used to be dropped along with
+            // everything in it. That silently emptied every annexed text in the
+            // corpus: lög nr. 2/1993 stored the 129 articles of the EEA
+            // Agreement as labels with no body, and — because an empty body is
+            // how Lagasafn writes a repealed provision — the act reader showed
+            // the whole Agreement as repealed. lög nr. 62/1994 did the same to
+            // the ECHR. So the anchor is synthesised, and settled once the
+            // provision's own anchor is known below.
+            paragraphAnchor = `${SYNTHETIC_PARAGRAPH}${current.paragraphs.length + 1}`;
           }
           continue;
         }
@@ -363,6 +412,30 @@ export function parseLagasafnHtml(html: string): ParsedAct {
         // Take the text without any nested <sup>, so a chapter title does not
         // come out as "Jarðir í sameign.1)".
         const text = cleanText($el);
+
+        // "Fylgiskjal I." — the start of annexed material, and everything from
+        // here to the next one belongs to it rather than to the act.
+        if (/^Fylgiskjal\b/i.test(text)) {
+          startAnnexDivision(text.replace(/\.$/, ""), 0);
+          continue;
+        }
+
+        // Inside a fylgiskjal only: the annexed text's own divisions. "hluti"
+        // never appears in an act's own structure, and an arabic "1. kafli."
+        // does not either — Lagasafn numbers an act's chapters in roman — so
+        // neither rule can reach into the act body above.
+        if (annexPath.length > 0) {
+          const hluti = new RegExp(`^([${ROMAN}]+|\\d+)\\.?\\s*hluti\\.?$`, "i").exec(text);
+          if (hluti) {
+            startAnnexDivision(text.replace(/\.$/, ""), 1);
+            continue;
+          }
+          const annexChapter = /^(\d+)\.?\s*kafli\.?$/i.exec(text);
+          if (annexChapter) {
+            startAnnexDivision(text.replace(/\.$/, ""), 2);
+            continue;
+          }
+        }
 
         const chapterMatch = new RegExp(
           `^([${ROMAN}]+)\\.?\\s*kafli\\.?\\s*([A-Z]?)\\.?$`,
@@ -453,6 +526,15 @@ export function parseLagasafnHtml(html: string): ParsedAct {
   }
 
   for (const p of provisions) {
+    // Settle the anchors the annex walk had to invent, now that the provision
+    // has one of its own: "?M2" on the provision that became X7 is "X7M2".
+    if (p.paragraphs.some((par) => par.anchor.startsWith(SYNTHETIC_PARAGRAPH))) {
+      p.paragraphs = p.paragraphs.map((par, i) =>
+        par.anchor.startsWith(SYNTHETIC_PARAGRAPH)
+          ? { ...par, anchor: `${p.anchor}M${i + 1}` }
+          : par
+      );
+    }
     p.fullText = p.paragraphs.map((x) => x.text).join("\n\n");
     // A provision whose whole body is Lagasafn's "…" placeholder has been
     // repealed; its text is gone but its number stays, so judgments citing it

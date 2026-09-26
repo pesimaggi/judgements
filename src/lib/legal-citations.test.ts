@@ -12,6 +12,8 @@ import {
   citedCaseNumbers,
   extractActCitations,
   extractProvisionCitations,
+  extractTreatyCitations,
+  extractTreatyMentions,
   maskLegislationCitations,
   normalizeSpacesPreservingOffsets,
   sentenceAround,
@@ -233,5 +235,77 @@ describe("sentenceAround", () => {
   test("is bounded when the text has no usable punctuation", () => {
     const text = "orð ".repeat(500);
     assert.ok(sentenceAround(text, 1000, 200).length <= 401);
+  });
+});
+
+describe("treaty citations", () => {
+  /** The slug and article of every reference found, for compact assertions. */
+  const found = (text: string) =>
+    extractTreatyCitations(text).map(
+      (c) =>
+        `${c.slug} ${c.articleNumber}${c.articleLetter ?? ""}${
+          c.paragraphNumber !== null ? `(${c.paragraphNumber})` : ""
+        }`
+    );
+
+  test("reads the Icelandic form, declined as judgments decline it", () => {
+    assert.deepEqual(found("Samkvæmt 28. gr. EES-samningsins er frelsið tryggt."), ["ees 28"]);
+    assert.deepEqual(found("Í 1. mgr. 31. gr. EES-samningsins."), ["ees 31(1)"]);
+    assert.deepEqual(found("sbr. 4. gr. samningsins um Evrópska efnahagssvæðið"), ["ees 4"]);
+  });
+
+  test("reads the English form, which is the one two of these courts use", () => {
+    // The EFTA Court, the CJEU and ESA write it this way, and they are exactly
+    // the bodies that cite these treaties most. A recogniser that knew only the
+    // Icelandic form would link almost nothing.
+    assert.deepEqual(found("It follows from Article 34 EEA that…"), ["ees 34"]);
+    assert.deepEqual(found("Article 101(1) TFEU prohibits…"), ["tfeu 101(1)"]);
+    assert.deepEqual(found("See Article 267 of the Treaty on the Functioning of the European Union."), [
+      "tfeu 267",
+    ]);
+    assert.deepEqual(found("Article 28 of the EEA Agreement mirrors Article 45 TFEU."), [
+      "ees 28",
+      "tfeu 45",
+    ]);
+  });
+
+  test("a citation naming several articles links each of them", () => {
+    assert.deepEqual(found("Under Articles 53 and 54 EEA the Authority has competence."), [
+      "ees 53",
+      "ees 54",
+    ]);
+    // And the "a" of "and" is not an article letter, which is what it looked
+    // like while the letter was allowed to stand off from the number.
+    assert.deepEqual(found("Articles 61 and 62 EEA"), ["ees 61", "ees 62"]);
+  });
+
+  test("the whole citation is kept as written, under every article it names", () => {
+    const hits = extractTreatyCitations("Under Articles 53 and 54 EEA the Authority…");
+    assert.deepEqual(new Set(hits.map((h) => h.text)), new Set(["Articles 53 and 54 EEA"]));
+  });
+
+  test("an instrument named with no article is not a provision citation", () => {
+    // It is a link to the treaty, not to an article of it — see
+    // extractTreatyMentions, which is what the act-level link is built from.
+    assert.deepEqual(found("Skýra skal lög til samræmis við EES-samninginn."), []);
+  });
+
+  test("does not read an act's number as a treaty's", () => {
+    assert.deepEqual(found("Í 3. gr. laga nr. 2/1993 er kveðið á um þetta."), []);
+  });
+
+  test("mentions are matched on names that can only mean the instrument", () => {
+    assert.deepEqual(
+      extractTreatyMentions("Skýra skal lög til samræmis við EES-samninginn.").map((m) => m.slug),
+      ["ees"]
+    );
+    assert.deepEqual(
+      extractTreatyMentions("Article 4(3) TEU requires…").map((m) => m.slug),
+      ["teu"]
+    );
+    // A bare "EEA" is the area, the States, EEA law and the Agreement by turns,
+    // and in an EFTA Court judgment it is on every page. Linking on it would
+    // claim that every judgment in the corpus cites the Agreement.
+    assert.deepEqual(extractTreatyMentions("The EEA States and EEA law generally."), []);
   });
 });

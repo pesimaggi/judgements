@@ -7,7 +7,11 @@ and how to put them in this app. Measured on **2026-09-26** against
 are listed in *Re-running the measurements* at the end so they can be checked
 rather than believed.
 
-Nothing here has been built yet. This is the plan and the evidence for it.
+**All of this has shipped**, in one pass rather than the four stages §9 proposed.
+What the build changed about the plan is recorded in §10 at the end; the rest of
+this document is the plan as it was written, and the measurements are what it was
+decided on. `README.md` documents what now exists, under *The founding
+treaties*.
 
 | | What | Recommendation |
 |---|---|---|
@@ -658,3 +662,48 @@ curl -sSL -o ees-isl.pdf \
    code.
 3. **Is the SCA in or out of the first registry?** It is the same work, and our
    EFTA Court corpus cites it more often than it cites the TEU.
+
+
+---
+
+## §10 What the build changed
+
+Written after the fact, as the record of where the plan was wrong. The staging in
+§9 was dropped — it was built in one pass — and four things turned out
+differently.
+
+**The annexed text stays readable in lög nr. 2/1993** (§4.2 as amended). The plan
+had it stored once, on the treaty row, and the act keeping empty labels. That was
+the wrong trade: readers do navigate to the Agreement through the act that
+enacted it. Both are rendered, and the duplication is paid for with a rule
+instead — the treaty row owns the article, the annex is a rendering of it, and
+annex provisions stay out of provision search and the citation index. `kind =
+'article'` already arranged it; the work was not undoing it.
+
+**The EEA Agreement's English text needed three more fixes than the plan
+found.** §0.2 knew about the adoption formula. It did not know that the
+Agreement's divisions print several to a line ("PART III FREE MOVEMENT OF
+PERSONS, SERVICES AND CAPITAL CHAPTER 1 WORKERS AND SELF-EMPLOYED PERSONS"), that
+Articles 63, 72 and 77 are each a single sentence beginning "Annex XV contains…"
+which the annex-heading rule read as a heading — leaving all three empty — or
+that everything after Article 129 was being appended to it, giving that article
+83 paragraphs where it has three. Two of those three were wrong for every legacy
+EU act in the library, not just for this one.
+
+**A treaty has to be identifiable from the narrow act identity**, not only from
+`textGroup` (§1.1). The well's tool layer, the lookup route and the Meilisearch
+sync all pass around jurisdiction, number and year and nothing else, and without
+a fallback every treaty link through one of them was `/log/1-1992` — a 404.
+`treatyByIdentity()` resolves it from the ordinal and the year, which the table's
+own uniqueness constraint already guarantees are unique. Nothing in
+`src/lib/ask/` was touched.
+
+**`SCAN_VERSION` was not optional** (§6 hoped it could be a later refinement).
+The citation job's watermark asks whether the *judgment* changed; adding patterns
+changes us, so without a version in the watermark the treaty patterns would have
+linked only judgments ingested afterwards and would have looked broken. It is in
+the watermark now, and bumping it is the whole of a backfill.
+
+Three things in §8 stayed out, as planned: the protocols, the annexes, and the
+SCA. The tab is labelled **Alþjóðasamningar**, which is one string in
+`src/app/log/page.tsx` if you want the other word.

@@ -4,7 +4,7 @@ An MVP search engine for **Icelandic court judgments only** — Hæstiréttur Í
 
 > **Disclaimer shown throughout the app:** This is an unofficial research tool. Always verify text against the official source.
 
-The three Icelandic courts published at [island.is/domar](https://island.is/domar), searched properly — plus Endurupptökudómur and [Félagsdómur](https://felagsdomur.is/domar-og-urskurdir/), the EFTA Court, the Court of Justice of the European Union and its General Court, Umboðsmaður Alþingis, the 40 administrative appeal boards that publish at [stjornarradid.is](https://www.stjornarradid.is/gogn/urskurdir-og-alit-/), the EEA law in force — the [EEA Joint Committee decisions](https://www.efta.int/about-efta/legal-documents/adopted-joint-committee-decisions) that bring EU acts into the EEA Agreement, and the [EFTA Surveillance Authority](https://www.eftasurv.int/esa-at-a-glance/publications/public-access-to-documents/public-documents) documents enforcing them — and two peer-reviewed Icelandic legal journals for the commentary on them. Alongside the case law sits the legislation it applies: the in-force text of Icelandic law from Lagasafn, and the EU regulations and directives in force from [EUR-Lex](https://eur-lex.europa.eu) — with an EES/ESB toggle that decides whether the EU library is limited to what may be part of EEA law or opened to all of it.
+The three Icelandic courts published at [island.is/domar](https://island.is/domar), searched properly — plus Endurupptökudómur and [Félagsdómur](https://felagsdomur.is/domar-og-urskurdir/), the EFTA Court, the Court of Justice of the European Union and its General Court, Umboðsmaður Alþingis, the 40 administrative appeal boards that publish at [stjornarradid.is](https://www.stjornarradid.is/gogn/urskurdir-og-alit-/), the EEA law in force — the [EEA Joint Committee decisions](https://www.efta.int/about-efta/legal-documents/adopted-joint-committee-decisions) that bring EU acts into the EEA Agreement, and the [EFTA Surveillance Authority](https://www.eftasurv.int/esa-at-a-glance/publications/public-access-to-documents/public-documents) documents enforcing them — and two peer-reviewed Icelandic legal journals for the commentary on them. Alongside the case law sits the legislation it applies: the in-force text of Icelandic law from Lagasafn, the EU regulations and directives in force from [EUR-Lex](https://eur-lex.europa.eu) — with an EES/ESB toggle that decides whether the EU library is limited to what may be part of EEA law or opened to all of it — and the founding treaties themselves, the EEA Agreement in both its Icelandic and its English authentic text.
 
 ## What's in the MVP
 
@@ -25,7 +25,8 @@ The three Icelandic courts published at [island.is/domar](https://island.is/doma
 - **Provision-level case linking** — each provision shows how many decisions cite it ("12 úrlausnir vísa til þessa ákvæðis"), expanding to the citing cases with the sentence the citation was found in, so you can see *why* a case matched before opening it.
 - **EU acts (ESB-gerðir)** — the regulations and directives in force, from EUR-Lex, parsed into the same chapter / article / paragraph structure and read in the same act reader at `/log/{CELEX}` — `/log/32016R0679` is the GDPR. Each act carries whether EUR-Lex marks it *"(Text with EEA relevance)"* and which decisions of the EEA Joint Committee this database holds that name it. See *EU acts (EUR-Lex)* below.
 - **EES / ESB scope toggle** — one control, in the act catalogue, deciding how much of the EU library an act lookup there sees. (It used to sit beside the specific-search act box too, where it was set on one screen and silently applied on another; the search screen now always uses the default scope.) **EES** (the default) is Icelandic law plus the EU acts that may be part of EEA law — the marked ones and the ones a Joint Committee decision names. **ESB** lifts the limit, which is what you want precisely when an act has *not* been incorporated and you need to establish that. Icelandic law is in both: the toggle never hides lög nr. 91/1991.
-- **Act catalogue** — `/log` lists every ingested act with its provision count and how many judgments cite it, searchable by title, short name or number, and sortable by most-cited. Two tabs: Icelandic acts and EU acts, the second carrying the scope toggle.
+- **The founding treaties (Alþjóðasamningar)** — the EEA Agreement, the TEU and the TFEU, in the same act reader at `/log/ees`, `/log/teu` and `/log/tfeu`. The Agreement is held in **both authentic texts**: the Icelandic one, which has lagagildi here under 2. gr. laga nr. 2/1993 and which Alþingi prints as fylgiskjal I of that act, and the English one the EFTA Court and the CJEU quote — with an ÍSL / ENG / Samhliða control to read either or both. The EU treaties have no authentic Icelandic text and are held in English. See *The founding treaties* below.
+- **Act catalogue** — `/log` lists every ingested act with its provision count and how many judgments cite it, searchable by title, short name or number, and sortable by most-cited. Four tabs: Icelandic acts, reglugerðir, EU acts — which carries the scope toggle — and the treaties.
 - **The law itself, above the judgments** — the main search box searches the act library as well as the case law. Type `vaxtalög`, `38/2001`, `gdpr` or `2016/679` and the act heads the results, with the judgments below it; type `130. gr. laga nr. 91/1991` and the article heads them, with its text. Each card offers the two things worth doing next — read the text, or narrow the judgments below to the ones citing it. An act is only ever shown when the query genuinely *names* one, so a search for a subject (`gæsluvarðhald`) looks exactly as it did before. See *Searching for a law* below.
 - **Specific search** — alongside the keyword search, two live lookups that narrow the results, each accepting several selections that combine as AND: an act/provision box that takes the citation as it is written ("lög um aðbúnað og hollustuhætti" finds the cases about the act; "57. gr. a. laga um aðbúnað og hollustuhætti" narrows to the cases citing that article), and a subject-tag box. Acts match on title, citation number, or the short names judgments actually use — "vaxtalög" finds lög nr. 38/2001.
 - **Administrative case law** — the úrskurðarnefndir, kærunefndir and ministry appeal desks at stjornarradid.is, each board its own tickable source rather than one undifferentiated pile. For immigration, benefits, tenancy, procurement and freedom of information this is where the case law actually is, and a search of the courts alone would miss it. See *Úrskurðarnefndir og ráðuneyti* below.
@@ -655,10 +656,14 @@ INGEST_MAX_BYTES=536870912 EURLEX_ONLY=32024R0348 npm run ingest -- --adapter=eu
   decision, stored as a document; EUR-Lex says which ones exist.
 - **Not decisions, and not the softer instruments.** Regulations and
   directives (`EURLEX_TYPES=R,L`), and nothing else in the sector: not
-  decisions, opinions, recommendations, treaties or international agreements.
-  See *Why not decisions* below for the first of those; the rest are in
-  EUR-Lex, and they are not what "the EU legal library" means to someone
-  asking whether a rule applies.
+  decisions, opinions or recommendations. See *Why not decisions* below for the
+  first of those; the rest are in EUR-Lex, and they are not what "the EU legal
+  library" means to someone asking whether a rule applies.
+
+  The treaties are not in this sweep either, and for a different reason: there
+  are three of them, they are sector 1 and 2 rather than sector 3, and they are
+  ingested from a registry by the `treaties` adapter instead. See *The founding
+  treaties* below.
 - **Only plain sector-3 CELEX numbers.** Corrigenda (`32016R0679R(01)`) and
   the suffixed forms are skipped: a CELEX is a reliable identity only while it
   is sector, year, type letter and four digits, which together are unique.
@@ -697,6 +702,177 @@ of the kept families, in chunks, from Meilisearch as well as from Postgres:
 It refuses to delete anything when the kept list is empty, so a mistyped
 `EURLEX_TYPES` cannot empty the library. Widening the list again is one env var
 and one catalogue sweep — the acts come back on their own.
+
+### The founding treaties
+
+The EEA Agreement, the Treaty on European Union and the Treaty on the
+Functioning of the European Union — **the EEA Agreement in both authentic
+texts**, Icelandic and English, and the two EU treaties in English.
+
+They are `Act` rows with `jurisdiction = "treaty"`, in the act library beside
+lög nr. 38/2001 and Regulation (EU) 2016/679, because a treaty is the same shape
+as both: a titled instrument with numbered articles whose paragraphs are cited
+by number. They get a tab of their own in `/log` (*Alþjóðasamningar*) and a slug
+of their own — `/log/ees`, `/log/teu`, `/log/tfeu`.
+
+Everything about which three they are, what each is called and how its articles
+are cited in each language is a hand-written registry: `src/lib/treaties.ts`.
+Three instruments that change once a decade are a list, not a sweep.
+
+**Why the EEA Agreement is not foreign law.** Its main text has lagagildi in
+Iceland — 2. gr. laga nr. 2/1993 says so — and Article 129 of the Agreement
+makes every language version equally authentic. So the Icelandic text is not a
+translation of the English one; they are two statements of the same rule, and
+the reader says so rather than offering a "translate" button.
+
+#### Where each text comes from
+
+| | Source | Why that one |
+|---|---|---|
+| EEA Agreement, Icelandic | **Lagasafn**, fylgiskjal I of lög nr. 2/1993 | The text 2. gr. gives lagagildi, maintained by Alþingi at the current codex version, with amendment brackets and footnotes — and on a page this app already fetches daily |
+| EEA Agreement, English | Cellar, CELEX `21994A0103(01)` | The authentic English text, and the wording the EFTA Court and the CJEU quote |
+| TEU | Cellar, CELEX `12016M/TXT` | The consolidated version (OJ C 202, 2016); there has been no re-consolidation since |
+| TFEU | Cellar, CELEX `12016E/TXT` | Same |
+
+The ministry also publishes the Icelandic main text as a PDF
+(`stjornarradid.is/library/?itemid=7321c093…`). It reads cleanly and it is the
+cross-check, not the source: it says "Uppfært 1.8.2016" on every page, and
+nobody attaches a codex version to it.
+
+`12016ME/TXT` is the URL EUR-Lex hands you when you search for either EU treaty,
+and it is deliberately not used: it is both treaties in one document, where
+"Article 3" means two different things.
+
+#### Two things the parsers had to learn
+
+**The treaties are a fourth EUR-Lex layout.** Close enough to the `oj` layout to
+be confusing: an article's container is `div id="001"` rather than
+`div id="art_1"`, its number is in `p.ti-art` rather than `p.oj-ti-art`, and
+PART / TITLE / CHAPTER / SECTION print as flat sibling paragraphs instead of
+nesting the articles they contain. Before that branch existed the TFEU fell
+through to the legacy walk and came out with **1,137 articles instead of 358** —
+because those documents carry all 37 protocols after the treaty text ends, and a
+treaty is wall-to-wall cross-references ("(ex Article 86 TEC)"). The parse stops
+at the `doc-ti` heading reading `PROTOCOLS`, which gives exactly 55 articles for
+the TEU and 358 for the TFEU.
+
+The EEA Agreement is in the *legacy* layout, and parsed to nothing at all: its
+adoption formula is a treaty's ("HAVE DECIDED to conclude the following
+Agreement"), where an act says "HAVE ADOPTED THIS DIRECTIVE". Three further
+things in it were wrong and are worth knowing about, because two were wrong for
+every legacy act in the library:
+
+- Its divisions print as `PART I OBJECTIVES AND PRINCIPLES` on one line, and
+  sometimes several to a line, so each heading was being appended to the end of
+  the article above it.
+- Articles 63, 72 and 77 are each a single sentence beginning "Annex XV contains
+  specific provisions on…", which a case-insensitive annex-heading rule read as a
+  heading — leaving all three articles empty.
+- After Article 129 come the testimonium in thirteen languages, the Final Act,
+  the joint declarations and the list of annexes. All of it belonged to Article
+  129, which came out with 83 paragraphs where the article has three. There is
+  now a closing formula to match, the counterpart of the adoption formula.
+
+**Lagasafn drops the text of a fylgiskjal.** Inside an annex it prints the
+paragraph marker with no id, and a paragraph with no anchor was discarded along
+with everything in it. So lög nr. 2/1993 stored all 129 articles of the
+Agreement as labels with no body — and because an empty body is how Lagasafn
+writes a *repealed* provision, the act reader showed the whole EEA Agreement as
+struck out. lög nr. 62/1994 did the same to the European Convention on Human
+Rights. The paragraph anchor is now synthesised where the source gives none, and
+the annex's own divisions ("I. hluti.", an arabic "1. kafli.") are read as its
+own rather than as chapters of the act.
+
+#### The annexed text stays where it is printed
+
+lög nr. 2/1993 renders its fylgiskjal in full, and the Agreement has its own
+page. Some readers navigate to the Agreement through the act that enacted it,
+and 129 empty articles with a "go elsewhere" notice would be the worst of both.
+
+The cost of storing the text twice is paid with one rule: **the treaty row owns
+the article; the annex is a rendering of it.** Annex provisions stay out of
+provision search and out of the citation job's index, so one article is one
+searchable provision with one "úrlausnir vísa til þessa ákvæðis" count, on the
+Agreement. `Provision.kind` already arranged most of this — provision search
+filters `kind = 'article'` — so the work is not undoing it now that annexed
+provisions finally have text in them.
+
+#### One instrument, two texts
+
+Two `Act` rows joined by `textGroup`, one of them `isCanonical`: Icelandic for
+the Agreement, English for the EU treaties — the text that governs where this
+app is read. The canonical row owns the instrument's URL, the citation links
+from judgments and the counts on its articles; the other is reached from it.
+
+That distinction is enforced in `corpusFilter()` and nowhere else, for the same
+reason `doc_type = 'act'` is written there and nowhere else. A listing that
+forgot it would show Article 28 twice under two labels with the judgments citing
+it split between the copies — and for the well, two rows of one article are two
+sources for one proposition.
+
+The reader carries an **ÍSL / ENG / Samhliða** control, shown only where a
+second text exists. `Samhliða` puts the two texts side by side, article for
+article; they line up because both are keyed on the treaty's own numbering, so
+it is a lookup rather than an alignment guess. Article anchors are ours (`A28`,
+`A28M1`) rather than either source's — EUR-Lex anchors the article `art_28` and
+Lagasafn anchors it `X27`, and with either of those `/log/ees#A28` would land
+somewhere else the moment a reader switched language.
+
+#### Judgments citing a treaty article
+
+`citations` links them like any other provision, from patterns in both
+languages: `28. gr. EES-samningsins` and `1. mgr. 31. gr. EES-samningsins` on the
+Icelandic side, `Article 34 EEA`, `Article 101(1) TFEU` and
+`Articles 53 and 54 EEA` on the English — the EFTA Court, the CJEU and ESA are
+the bodies that cite these treaties most, and they reason in English. A treaty
+named with no article ("samkvæmt EES-samningnum") gets a link to the instrument
+instead, which is the distinction `CaseActLink` already draws beside
+`CaseProvisionLink`.
+
+Two things that would otherwise fail silently, and are tested:
+
+- JavaScript's `\b` does not fire next to Icelandic letters, so the patterns are
+  built on `src/lib/word-boundary.ts`.
+- The scan is incremental on `Document.citationScanHash`, which asks whether the
+  *judgment* changed. New patterns change *us*, so the watermark now carries a
+  `SCAN_VERSION`: bumping it re-reads the corpus on the next run, with no
+  network at all. Without it "28. gr. EES-samningsins" would have linked only
+  judgments ingested afterwards, and the patterns would have looked broken.
+
+Bare `EEA` is deliberately not a name that links anything on its own: in an EFTA
+Court judgment it means the area, the States, EEA law and the Agreement by
+turns, and on every page. It links after an article number, where it can only
+mean the Agreement.
+
+#### Running it
+
+```
+npm run ingest -- --adapter=treaties
+```
+
+Four fetches, seconds, no cursor and nothing to bound — by a wide margin the
+cheapest adapter here. It runs in the scheduled chain right after `lagasafn`
+(whose page it reads for the Icelandic text) and before `citations` (which
+resolves treaty citations against the articles it writes). `Act.parseVersion`
+carries a `PARSE_VERSION`, so improving either parser re-reads the four
+documents on the next scheduled run rather than waiting for a treaty to be
+amended.
+
+Requires `prisma db push` for the three new columns and the widened uniqueness
+constraint — `db:deploy` does it. The run's first statement marks the EU corpus
+`language = "en"`, which is idempotent and is there because that corpus predates
+the column.
+
+#### What is deliberately not here
+
+The protocols and the annexes, to any of the three. The EEA annexes are the
+lists of EU acts taken into the Agreement, which this database already
+approaches from the other end — `eea_incorporated_by` and the Joint Committee's
+decisions — and the protocols are worth nothing until something cites them. The
+Charter of Fundamental Rights and the EFTA Surveillance and Court Agreement are
+the same shape as this work and are the obvious next entries in the registry;
+the SCA especially, since the EFTA Court's own jurisdiction comes from it and
+this corpus cites it more often than it cites the TEU.
 
 ### CJEU case law (EUR-Lex)
 
@@ -2643,16 +2819,26 @@ rather than a look.
 ### Fixtures
 
 `src/lib/__fixtures__/` holds gzipped real responses, recorded in
-`manifest.json` with their URL and capture date — currently two Lagasafn acts
-(38/2001 and 81/2004, chosen between them to carry chapters, lettered
-articles, temporary provisions, an annex and repealed articles). Assertions
-are structural rather than exact: Alþingi amends these acts, and a test
-pinning `provisions.length === 53` fails on the next amendment and trains
-everyone to ignore it. What must not change is the shape the parser recovers,
-and that breaks only when the markup does.
+`manifest.json` with their URL and capture date — three Lagasafn acts (38/2001
+and 81/2004, chosen between them to carry chapters, lettered articles,
+temporary provisions, an annex and repealed articles; and 2/1993, which prints
+the whole EEA Agreement as a fylgiskjal) and five EUR-Lex documents, one per
+layout including the two the treaties needed. Assertions are structural rather
+than exact: Alþingi amends these acts, and a test pinning
+`provisions.length === 53` fails on the next amendment and trains everyone to
+ignore it. What must not change is the shape the parser recovers, and that
+breaks only when the markup does.
 
-**The sixteen ingestion adapters have no fixtures yet, and that is the gap
-worth closing next.** Each wants one frozen listing page and one frozen
+The treaty counts are the exception, and deliberately: 55 articles for the TEU
+and 129 for the EEA Agreement are asserted exactly, because a treaty is amended
+about once a decade and a changed count is a real signal rather than noise. What
+those tests are really holding down is the protocols cut — parsed without it the
+TFEU has 1,137 articles instead of 358, and every one of the extras is real text
+filed under a number that means something else.
+
+**One ingestion adapter has fixtures — `treaties`, whose two conversions are
+tested offline in `src/ingestion/adapters/treaties.test.ts`. The other sixteen
+have none, and that is the gap worth closing next.** Each wants one frozen listing page and one frozen
 document page; `src/lib/lagasafn.test.ts` is the pattern. Both of the
 formatting bugs this repo has fixed by hand — Félagsdómur's letter-spaced
 headings, and the pre-2010 half of that court filing its parties as subject

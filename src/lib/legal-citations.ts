@@ -15,6 +15,9 @@
  * see docs/phase-0-acts-provisions.md.
  */
 
+import { TREATIES } from "./treaties";
+import { AFTER, BEFORE } from "./word-boundary";
+
 /**
  * The "lög" stem in the declined forms judgments actually use, optionally
  * carrying a compound prefix ("hegningarlaga", "einkamálalaga") and up to
@@ -343,6 +346,213 @@ const REGULATION_CITATION_RE = new RegExp(
     String.raw`\s*,?\s*(?:nr\.\s*)?(\d{1,4})\s*\/\s*(\d{2,4})`,
   "giu"
 );
+
+// ---------------------------------------------------------------------------
+// The treaties
+// ---------------------------------------------------------------------------
+
+/** A reference to an article of a founding treaty. */
+export interface TreatyCitation {
+  /** Registry slug of the treaty cited: "ees", "teu", "tfeu". */
+  slug: string;
+  articleNumber: number;
+  articleLetter: string | null;
+  paragraphNumber: number | null;
+  pointNumber: number | null;
+  /** The citation exactly as written. */
+  text: string;
+  index: number;
+  length: number;
+}
+
+/**
+ * The instrument names a citation may use, longest first.
+ *
+ * Longest first is not cosmetic: "EEA" is a prefix of nothing but "EEA
+ * Agreement" is matched by the shorter alternative first if the order is left to
+ * the registry, and the citation would then be stored as "Article 28 EEA" with
+ * " Agreement" dangling outside it. Regex alternation takes the first branch
+ * that matches, not the longest.
+ */
+/**
+ * One article reference in the English form: "101", "101(1)", "101(1)(a)", "7a".
+ *
+ * Unparenthesised, so it can be nested inside the list pattern and re-scanned
+ * afterwards. The bracketed numbers are the EU way of writing what an Icelandic
+ * judgment writes as "a-lið 1. mgr. 101. gr.".
+ *
+ * The letter is tight against the number and may not be followed by another
+ * letter: written loosely, "Articles 53 and 54 EEA" reads as article 53a, because
+ * the "a" of "and" is exactly where an inserted article's letter would be.
+ */
+const EN_ARTICLE = String.raw`\d+(?:[a-z](?![\p{L}]))?(?:\s*\(\d+\))?(?:\s*\([a-z]\))?`;
+
+/**
+ * A run of them: "53", "53 and 54", "9, 10 and 11".
+ *
+ * Ranges ("Articles 61 to 64 EEA") are deliberately left out. The citation does
+ * cover 62 and 63, but this job links only what the text states, and expanding a
+ * range means writing down two references nobody wrote — which is the line this
+ * pipeline draws everywhere else (see the header of src/ingestion/citations.ts on
+ * bare references).
+ */
+const EN_ARTICLE_LIST = String.raw`${EN_ARTICLE}(?:\s*(?:,|and)\s*${EN_ARTICLE})*`;
+
+function namePattern(names: string[]): string {
+  return [...names]
+    .sort((a, b) => b.length - a.length)
+    .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+}
+
+/**
+ * How a judgment cites a treaty article, in each language.
+ *
+ * Icelandic follows the same shape as every other provision citation here —
+ * "1. mgr. 31. gr. EES-samningsins" — so it reuses ARTICLE_PREFIX and ARTICLE
+ * and only the instrument differs.
+ *
+ * English is its own shape, and it has to be: the EFTA Court, the CJEU and ESA
+ * all write "Article 34 EEA" and "Article 101(1) TFEU", where the paragraph is a
+ * bracketed number *after* the article rather than a "1. mgr." in front of it.
+ * Half this corpus reasons in English, and those two courts are exactly the ones
+ * that cite these treaties most, so leaving the English form out would mean
+ * linking almost nothing.
+ *
+ * BEFORE/AFTER rather than `\b`: the Icelandic names end in letters JavaScript's
+ * ASCII word class does not recognise, and a `\b` written here would match
+ * nothing while looking right. See src/lib/word-boundary.ts.
+ */
+function treatyCitationPatterns(): { slug: string; re: RegExp; english: boolean }[] {
+  const patterns: { slug: string; re: RegExp; english: boolean }[] = [];
+  for (const treaty of TREATIES) {
+    if (treaty.citedAs.is.length > 0) {
+      patterns.push({
+        slug: treaty.slug,
+        english: false,
+        re: new RegExp(
+          String.raw`${ARTICLE_PREFIX}${ARTICLE}\s*,?\s*(?:sbr\.\s*)?` +
+            String.raw`(?:${namePattern(treaty.citedAs.is)})${AFTER}`,
+          "giu"
+        ),
+      });
+    }
+    if (treaty.citedAs.en.length > 0) {
+      patterns.push({
+        slug: treaty.slug,
+        english: true,
+        re: new RegExp(
+          // The whole run of article references, then the instrument once at the
+          // end: "Articles 53 and 54 EEA" is one citation of two articles, and
+          // it is how the EFTA Court and ESA write most of their references.
+          // Matching only the single form linked neither of them.
+          String.raw`${BEFORE}Articles?\s+(${EN_ARTICLE_LIST})` +
+            String.raw`\s*(?:of\s+the\s+)?(?:${namePattern(treaty.citedAs.en)})${AFTER}`,
+          "giu"
+        ),
+      });
+    }
+  }
+  return patterns;
+}
+
+const TREATY_CITATION_PATTERNS = treatyCitationPatterns();
+
+/**
+ * Every treaty-article reference in the text, in document order.
+ *
+ * Overlaps are dropped rather than returned twice: "Article 34 of the EEA
+ * Agreement" is matched by the TFEU's patterns not at all and by the EEA's
+ * twice over if two of its names both fit, and a judgment linked twice to one
+ * article would count as two in the badge it feeds.
+ *
+ * Known gap, stated because it is invisible otherwise: "Articles 53 and 54 EEA"
+ * links only Article 53. Handling a list means deciding how far the instrument
+ * name reaches back over conjunctions, which is the kind of guess that produces
+ * wrong links rather than missing ones.
+ */
+export function extractTreatyCitations(text: string): TreatyCitation[] {
+  const out: TreatyCitation[] = [];
+  for (const pattern of TREATY_CITATION_PATTERNS) {
+    for (const m of text.matchAll(pattern.re)) {
+      if (pattern.english) {
+        // Every article in the run, each carrying the whole citation as its
+        // text: "Articles 53 and 54 EEA" is what was written, and it is what a
+        // reader should see quoted under either article.
+        const whole = m[0].replace(/\s+/g, " ").trim();
+        for (const one of m[1].matchAll(new RegExp(EN_ARTICLE, "giu"))) {
+          const parts = /^(\d+)([a-z])?(?:\s*\((\d+)\))?/u.exec(one[0]);
+          if (!parts) continue;
+          out.push({
+            slug: pattern.slug,
+            articleNumber: Number(parts[1]),
+            articleLetter: parts[2] ? parts[2].toLowerCase() : null,
+            paragraphNumber: parts[3] ? Number(parts[3]) : null,
+            pointNumber: null,
+            index: m.index,
+            length: m[0].length,
+            text: whole,
+          });
+        }
+        continue;
+      }
+      out.push({
+        slug: pattern.slug,
+        pointNumber: m[1] ? Number(m[1]) : null,
+        paragraphNumber: m[3] ? Number(m[3]) : null,
+        articleNumber: Number(m[4]),
+        articleLetter: m[5] ? m[5].toLowerCase() : null,
+        index: m.index,
+        length: m[0].length,
+        text: m[0].replace(/\s+/g, " ").trim(),
+      });
+    }
+  }
+
+  // One reference per article per position. Two articles from one citation
+  // ("Articles 53 and 54 EEA") share an offset and both belong; the same article
+  // twice at the same offset is one of this treaty's names matching inside
+  // another, and a judgment linked twice to an article would count as two in the
+  // badge these rows feed.
+  const seen = new Set<string>();
+  return out
+    .sort((a, b) => a.index - b.index || a.articleNumber - b.articleNumber)
+    .filter((c) => {
+      const key = `${c.slug}|${c.articleNumber}|${c.articleLetter ?? ""}|${c.paragraphNumber ?? ""}|${c.index}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+/**
+ * Every place the text names a treaty without naming an article, in document
+ * order.
+ *
+ * What a judgment saying "samkvæmt EES-samningnum" states: this case turns on
+ * the Agreement. That is worth a link to the instrument even when no article is
+ * given, and it is the same distinction `CaseActLink` already draws beside
+ * `CaseProvisionLink` for lög. See TreatyDef.mentionedAs for why this matches a
+ * shorter list of names than a citation does.
+ */
+export function extractTreatyMentions(
+  text: string
+): { slug: string; text: string; index: number; length: number }[] {
+  const out: { slug: string; text: string; index: number; length: number }[] = [];
+  for (const treaty of TREATIES) {
+    if (treaty.mentionedAs.length === 0) continue;
+    const re = new RegExp(`${BEFORE}(?:${namePattern(treaty.mentionedAs)})${AFTER}`, "giu");
+    for (const m of text.matchAll(re)) {
+      out.push({
+        slug: treaty.slug,
+        text: m[0].replace(/\s+/g, " ").trim(),
+        index: m.index,
+        length: m[0].length,
+      });
+    }
+  }
+  return out.sort((a, b) => a.index - b.index);
+}
 
 /** A reference to a regulation, and to an article of it where one is named. */
 export interface RegulationCitation {

@@ -82,6 +82,25 @@
       "via": "https://web.archive.org/web/2021/… — as above.",
       "captured": "2026-09-16",
       "describes": "Fjárlagafrumvarp 2023 — the failure mode. The newer header form ('Þingskjal 1 — 1. mál.' rather than 'Þskj. 1194 — 783. mál.'), a title line that gives the document's category before its name, and no document at all: the text is a 368-page PDF beside the page, leaving several thousand characters of site navigation that a parser must not mistake for a bill."
+    },
+    {
+      "file": "eur-lex/12016M_TXT.html.gz",
+      "url": "https://publications.europa.eu/resource/celex/12016M%2FTXT",
+      "captured": "2026-09-26",
+      "describes": "Consolidated Treaty on European Union (OJ C 202, 2016). The treaty layout: article containers whose id is their ordinal (div id=\"001\"), p.ti-art where the OJ layout writes p.oj-ti-art, p.sti-art carrying the pre-Lisbon numbering, and PART/TITLE/CHAPTER/SECTION as flat sibling paragraphs rather than nesting the articles they contain. Chosen over the TFEU because it is half the size and tests the same thing, including the one that matters: the document carries all 37 protocols after Article 55, so a parse that does not stop at the PROTOCOLS heading returns several hundred articles too many."
+    },
+    {
+      "file": "eur-lex/21994A0103_01.html.gz",
+      "url": "https://publications.europa.eu/resource/celex/21994A0103%2801%29",
+      "captured": "2026-09-26",
+      "describes": "Agreement on the European Economic Area, main part — the English authentic text, and the shape a treaty of 1994 is held in: the legacy layout with no structure at all. Three things in it were parsed wrongly before it was captured. Its adoption formula is a treaty's (\"HAVE DECIDED to conclude the following Agreement\"), so nothing parsed at all; its divisions print as \"PART I OBJECTIVES AND PRINCIPLES\" on one line, so they were appended to the article above; and Articles 63, 72 and 77 are each a single sentence beginning \"Annex XV contains…\", which a case-insensitive annex rule read as a heading and left the articles empty."
+    },
+    {
+      "file": "lagasafn/1993002.html.gz",
+      "url": "https://www.althingi.is/lagas/nuna/1993002.html",
+      "captured": "2026-09-26",
+      "codexVersion": "157c",
+      "describes": "Lög um Evrópska efnahagssvæðið nr. 2/1993 — five articles of its own, and the whole Icelandic main text of the EEA Agreement printed as fylgiskjal I, which 2. gr. gives lagagildi. The annex is the shape this fixture exists for: Lagasafn prints the paragraph marker inside a fylgiskjal with no id, so all 129 of the Agreement's articles were stored as labels with no text — and, because an empty body is how Lagasafn writes a repealed provision, shown to readers as repealed. It also divides itself in words an act does not use: \"I. hluti.\" and an arabic \"1. kafli.\"."
     }
   ]
 }

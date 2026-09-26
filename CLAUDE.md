@@ -41,8 +41,11 @@ default, Meilisearch optional. `query-parser.ts` turns what a user types
 
 **Acts and provisions** — Lagasafn and EUR-Lex acts parsed into
 chapters/provisions/paragraphs, with judgments linked to the articles they cite
-by `src/ingestion/citations.ts`. One `Act` table holds both Icelandic and EU
-acts; `jurisdiction` tells them apart and is what every act query filters on.
+by `src/ingestion/citations.ts`. One `Act` table holds Icelandic acts, Icelandic
+regulations, EU acts and the founding treaties; `jurisdiction` tells them apart
+and is what every act query filters on. A treaty is one instrument with possibly
+two authentic texts — two rows joined by `textGroup`, one `isCanonical` — and
+`corpusFilter()` is the only place that keeps a listing to one of them.
 
 **The well** (`src/lib/ask/`) — the assistant. Stages run in order via
 `pipeline.ts`: plan → retrieve → answer → (optional) verify. With research
@@ -60,6 +63,12 @@ model call behind that seam.
 does not exist is removed and the rest are *not* renumbered (`citations.ts`). In
 the research loop, only a document actually opened with `read_decision` or
 `read_provision` can be cited — searching adds nothing to the source list.
+
+**`scopeFilter()` is the gate for the whole act library.** Every act lookup, the
+act type-ahead, provision search and the well's retrieval reach acts through it,
+so a `jurisdiction` value it does not admit is invisible to the entire
+application — which looks exactly like an ingest that stored nothing. It is why
+adding the treaties was one line there and no lines in `src/lib/ask/`.
 
 **`SOURCES` is live sources only.** `sources.ts` exports `ALL_SOURCES` (including
 `status: "pilot"`) and `SOURCES` (live only). The well's retrieval and tool
@@ -115,11 +124,13 @@ shape the parser recovers.
 
 What earns a test here is a **silent** failure: a citation pattern that stops
 matching produces no link, a mangled board filter returns an empty listing that
-looks exactly like "nothing new". The README's *Tests* section lists what each
+looks exactly like "nothing new", a parse that keeps reading past the end of a
+treaty returns a thousand articles that are all real text filed under the wrong
+numbers. The README's *Tests* section lists what each
 module's tests hold down and why.
 
-Known gap: the ingestion adapters have no fixtures, and the research loop has no
-offline evaluation at all — `eval:ask` replays a recorded retrieval, which
+Known gap: the ingestion adapters have no fixtures except `treaties`, and the
+research loop has no offline evaluation at all — `eval:ask` replays a recorded retrieval, which
 switches deep research off, so the loop only runs under `--live`.
 
 ## Icelandic

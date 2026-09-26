@@ -30,8 +30,12 @@ type Sort = "title" | "number" | "cases" | "provisions";
  * reglugerðir share a jurisdiction and are not the same corpus. The value is
  * sent as `?jurisdiction=` because that is the parameter the API has always
  * taken — see ActCorpus in src/lib/acts.ts.
+ *
+ * "treaty" is three instruments where the others are hundreds or thousands, and
+ * it earns its own tab anyway: the EEA Agreement is neither lög nor a gerð, and
+ * a reader looking for it would not think to look under either.
  */
-type Corpus = "is" | "is-reg" | "eu";
+type Corpus = "is" | "is-reg" | "eu" | "treaty";
 
 const SORT_LABELS: { value: Sort; label: string }[] = [
   { value: "title", label: "Heiti (A–Ö)" },
@@ -65,6 +69,7 @@ export default function ActIndexPage() {
     regulations: 0,
     eu: 0,
     euEea: 0,
+    treaties: 0,
   });
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -117,6 +122,7 @@ export default function ActIndexPage() {
 
   const isEu = corpus === "eu";
   const isRegulations = corpus === "is-reg";
+  const isTreaties = corpus === "treaty";
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-6">
@@ -125,9 +131,21 @@ export default function ActIndexPage() {
       </Link>
 
       <header className="mt-2">
-        <h1 className="font-serif text-2xl font-semibold">{isEu ? "ESB-gerðir" : "Lög"}</h1>
+        <h1 className="font-serif text-2xl font-semibold">
+          {isEu ? "ESB-gerðir" : isTreaties ? "Alþjóðasamningar" : "Lög"}
+        </h1>
         <p className="mt-1 text-sm text-inkSoft">
-          {isRegulations ? (
+          {isTreaties ? (
+            <>
+              Stofnsáttmálarnir sem íslensk lögfræði rekst á: EES-samningurinn, sem hefur lagagildi
+              hér á landi samkvæmt{" "}
+              <Link href="/log/2-1993" className="text-accent hover:underline">
+                2. gr. laga nr. 2/1993
+              </Link>
+              , og sáttmálar Evrópusambandsins, sem dómstólar EFTA og ESB túlka EES-réttinn til
+              samræmis við. Meginmál hvers samnings — bókanir og viðaukar eru ekki hér.
+            </>
+          ) : isRegulations ? (
             <>
               Reglugerðir í gildi, eins og þær standa með áorðnum breytingum, frá{" "}
               <a
@@ -194,6 +212,11 @@ export default function ActIndexPage() {
             { value: "is" as const, label: "Íslensk lög", count: totals.icelandic },
             { value: "is-reg" as const, label: "Reglugerðir", count: totals.regulations },
             { value: "eu" as const, label: "ESB-gerðir", count: totals.eu },
+            // The label: "Alþjóðasamningar" is the ordinary Icelandic for the
+            // category and reads at tab size. "Þjóðaréttarsamningar" is the
+            // precise term if you prefer it — one `r`, since the noun is
+            // *þjóðaréttur* — and nothing but this string depends on the choice.
+            { value: "treaty" as const, label: "Alþjóðasamningar", count: totals.treaties },
           ]).map((tab) => (
             <button
               key={tab.value}
@@ -242,7 +265,9 @@ export default function ActIndexPage() {
             placeholder={
               isEu
                 ? "Heiti, stuttnefni („gdpr“), númer („2016/679“) eða CELEX"
-                : "Heiti, stuttnefni („vaxtalög“) eða númer („38/2001“)"
+                : isTreaties
+                  ? "Heiti eða stuttnefni — „EES“, „TFEU“"
+                  : "Heiti, stuttnefni („vaxtalög“) eða númer („38/2001“)"
             }
             className="mt-1 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none focus:border-ink"
             lang={isEu ? "en" : "is"}
@@ -279,7 +304,7 @@ export default function ActIndexPage() {
       <p className="mt-2 text-xs text-inkSoft">
         {loading
           ? "Sæki…"
-          : `${total.toLocaleString("is-IS")} ${isEu ? "gerðir" : "lög"}${
+          : `${total.toLocaleString("is-IS")} ${isEu ? "gerðir" : isTreaties ? "samningar" : "lög"}${
               totalPages > 1 ? ` · síða ${page} af ${totalPages}` : ""
             }`}
       </p>
