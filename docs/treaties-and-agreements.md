@@ -12,7 +12,7 @@ Nothing here has been built yet. This is the plan and the evidence for it.
 | | What | Recommendation |
 |---|---|---|
 | **§1** | Where they live in the schema | `Act` rows, `jurisdiction = "treaty"`, keyed by a slug from a small registry. Not a new table. |
-| **§2** | The Icelandic text of the EEA Agreement | From **Lagasafn**, fylgiskjal I of lög nr. 2/1993 — not the ministry's PDF. It is the text that has lagagildi, and we already fetch the page daily. |
+| **§2** | The Icelandic text of the EEA Agreement | From **Lagasafn**, fylgiskjal I of lög nr. 2/1993 — not the ministry's PDF. It is the text that has lagagildi, and we already fetch the page daily. It stays readable in that act as well as on the Agreement's own page; §4.2 says who owns the article. |
 | **§3** | Two languages | Two `Act` rows joined by a `textGroup`, one flagged canonical. The catalogue and every search see the canonical one only, through `corpusFilter()`. |
 | **§4** | The parsers | One new EU layout branch (treaties are neither `oj` nor `legacy`), and one fix in the Lagasafn annex walk. Both verified against the real documents. |
 | **§5** | The UI | A fourth tab in `/log`, and an ÍSL/ENG toggle in the act reader that only appears where a second text exists. |
@@ -390,21 +390,34 @@ Two changes in `parseLagasafnHtml()`, both narrow:
    matches. The annex needs its own division rule, and it should not write into
    the act's chapter list.
 
-Then a decision that matters more than either: **the Icelandic annex text is
-stored once, on the treaty row, not twice.** If lög nr. 2/1993 also stored the
-text of its fylgiskjal I, every article of the Agreement would be in provision
-search twice, under two labels, with the badge counts split between them. So
-the annex provisions of 2/1993 stay as they are — labels with no text — and the
-act reader gains a line at the fylgiskjal saying where the text is:
+Then the decision that matters more than either, and it is a product decision
+rather than a parsing one: **the annexed text stays readable where it is
+printed.** Some readers go to the Agreement through the act that gave it legal
+force, and arriving at 129 empty articles is the worst of both worlds. So lög
+nr. 2/1993 renders its fylgiskjal I in full, the Agreement gets its own page,
+and the act reader carries a line at the fylgiskjal pointing at the other one:
 
 > Meginmál samningsins er birt sem fylgiskjal I. **Lesa EES-samninginn →**
 
-The parser change is still needed and still lands in `lagasafn.ts`: the
-`treaties` adapter is what calls it for 2/1993 and routes the result to the
-treaty row. Any other act with a fylgiskjal gains the text in its own reader,
-which is a straightforward improvement — lög nr. 62/1994 (mannréttindasáttmáli
-Evrópu) is the obvious next one, and is the reason to write the fix generally
-rather than for 2/1993 alone.
+That means the Icelandic text is stored twice, and the cost has to be paid
+somewhere: without a rule, every article of the Agreement appears twice in
+provision search under two labels, with the "úrlausnir vísa til þessa ákvæðis"
+counts split between them.
+
+The rule: **the treaty row owns the article; the annex is a rendering of it.**
+Concretely, annex provisions are excluded from provision search and from the
+citation job's index, so one article is one searchable provision with one
+badge, on the Agreement — and the annex copy is a page you can read, not a
+second thing to find. `Provision.kind` already does most of this work for free:
+`searchProvisionsPostgres()` filters `kind = 'article'`, and the annex text
+keeps `kind = 'annex'`, so the exclusion is the behaviour that already exists
+rather than a condition to add. What has to be deliberate is not undoing it —
+it will be tempting to promote annex provisions to `article` once they finally
+have text in them.
+
+The parser fix lands in `lagasafn.ts` and is worth writing generally rather
+than for 2/1993 alone: lög nr. 62/1994 annexes the ECHR the same way and has
+the same 129-empty-articles problem today.
 
 ---
 
@@ -582,9 +595,11 @@ nothing in a parsed provision contains the word PROTOCOL.
 **Stage 2 — the EEA Agreement, both texts.** The Lagasafn annex fix; the
 `language` / `textGroup` / `isCanonical` columns and the `is_canonical`
 condition in `corpusFilter()`; the ÍSL/ENG toggle; the lagagildi line in the
-reader and the pointer from lög nr. 2/1993. Tests: the annex walk recovers text
-for the Agreement's articles, a listing never returns two rows of one
-`textGroup`, and the two texts of an article agree on their paragraph count.
+reader and the pointer from lög nr. 2/1993, which now renders its fylgiskjal in
+full. Tests: the annex walk recovers text for the Agreement's articles, a
+listing never returns two rows of one `textGroup`, an annex provision never
+reaches provision search, and the two texts of an article agree on their
+paragraph count.
 
 **Stage 3 — citations.** Treaty citation patterns in `legal-citations.ts`, a
 treaty index in `citations.ts`, a `SCAN_VERSION` so the rescan is automatic,
