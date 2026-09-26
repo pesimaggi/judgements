@@ -284,6 +284,25 @@ describe("treaty citations", () => {
     assert.deepEqual(new Set(hits.map((h) => h.text)), new Set(["Articles 53 and 54 EEA"]));
   });
 
+  test("reads the Surveillance and Court Agreement, which the EFTA Court cites most", () => {
+    // "Article 34 SCA" is the advisory-opinion procedure — the provision by which
+    // an Icelandic court asks the EFTA Court anything at all — and it is cited
+    // this way in every judgment that turns on one.
+    assert.deepEqual(found("a request under Article 34 SCA"), ["sca 34"]);
+    assert.deepEqual(found("Article 31 of the Surveillance and Court Agreement"), ["sca 31"]);
+    assert.deepEqual(found("Articles 31 and 32 SCA"), ["sca 31", "sca 32"]);
+    assert.deepEqual(found("skv. 34. gr. samningsins um stofnun eftirlitsstofnunar og dómstóls"), [
+      "sca 34",
+    ]);
+  });
+
+  test("does not confuse the two Porto agreements", () => {
+    // Both were signed at Porto on 2 May 1992 and both are cited by bare article
+    // number in the same paragraph of the same judgments. "Article 31 EEA" is the
+    // right of establishment; "Article 31 SCA" is the infringement procedure.
+    assert.deepEqual(found("Article 31 EEA and Article 31 SCA"), ["ees 31", "sca 31"]);
+  });
+
   test("an instrument named with no article is not a provision citation", () => {
     // It is a link to the treaty, not to an article of it — see
     // extractTreatyMentions, which is what the act-level link is built from.
@@ -307,5 +326,8 @@ describe("treaty citations", () => {
     // and in an EFTA Court judgment it is on every page. Linking on it would
     // claim that every judgment in the corpus cites the Agreement.
     assert.deepEqual(extractTreatyMentions("The EEA States and EEA law generally."), []);
+    // Nor is "ESA" a name for the Agreement — it is the Authority the Agreement
+    // establishes, and it appears in every ESA document there is.
+    assert.deepEqual(extractTreatyMentions("ESA opened a case."), []);
   });
 });

@@ -59,7 +59,9 @@ import {
   treatyParagraphAnchor,
   type TreatyDef,
 } from "@/lib/treaties";
-import { politeFetchText } from "../adapter";
+import { parseTreatyText } from "@/lib/treaty-text";
+import { politeFetchBytes, politeFetchText } from "../adapter";
+import { looksLikePdf, pdfText } from "../pdf-text";
 import { saveEuActText } from "./eur-lex";
 import type { IngestContext, IngestStats, IngestionAdapter } from "../adapter";
 
@@ -129,24 +131,66 @@ function reanchor(provision: ParsedEuProvision): ParsedEuProvision | null {
  * produce a treaty that parses — with the wrong articles in it. See the tests.
  */
 export function parseEnglishTreaty(html: string, treaty: TreatyDef): ParsedEuAct {
-  const parsed = parseEuActHtml(html);
+  return keepArticles(parseEuActHtml(html), treaty);
+}
+
+/**
+ * The articles, re-anchored on the treaty's own numbering, and nothing else.
+ *
+ * Annexed material is not stored — see the header. On the EEA Agreement this is
+ * also what drops the three ANNEX entries the legacy walk finds among the
+ * material printed after Article 129.
+ */
+function keepArticles(parsed: ParsedEuAct, treaty: TreatyDef): ParsedEuAct {
   const provisions = parsed.provisions
-    // Annexed material is not stored: see the header. On the EEA Agreement this
-    // is also what drops the three ANNEX entries the legacy walk finds in the
-    // list of annexes printed after Article 129.
     .filter((p) => p.kind === "article")
     .map(reanchor)
     .filter((p): p is ParsedEuProvision => p !== null);
   return { ...parsed, provisions, title: parsed.title ?? treaty.titleEn };
 }
 
+/**
+ * An EFTA treaty, out of the PDF bytes EFTA serves.
+ *
+ * The counterpart of parseEnglishTreaty, and exported for the same reason: what
+ * can go wrong in here is silent — a re-typeset page losing articles, page
+ * furniture landing inside one, a footnote read as text — and it is tested
+ * offline against the frozen PDF.
+ */
+export async function parseEftaTreatyPdf(
+  bytes: Buffer,
+  treaty: TreatyDef
+): Promise<ParsedEuAct> {
+  if (!looksLikePdf(bytes)) {
+    // efta.int answers a moved document with an HTML error page and a 200, which
+    // pdf-parse would read as an empty document — a source that has moved must
+    // not look like a treaty with no articles.
+    throw new Error(`${treaty.slug}: the source did not return a PDF (${bytes.length} bytes)`);
+  }
+  const text = await pdfText(bytes);
+  if (text.trim().length < 5000) {
+    throw new Error(`short PDF text for ${treaty.slug} (${text.trim().length} chars)`);
+  }
+  return keepArticles(parseTreatyText(text), treaty);
+}
+
 async function fetchEnglish(treaty: TreatyDef): Promise<ParsedEuAct> {
-  const html = await politeFetchText(cellarTextUrl(treaty.celexEn), CELLAR_HEADERS);
+  const source = treaty.englishText;
+
+  // EFTA's own agreements: a PDF on efta.int, because that is the whole of what
+  // is published. A real digital PDF rather than a scan, so the text comes out
+  // readable and the parse is a text parse. See src/lib/treaty-text.ts.
+  if (source.kind === "efta-pdf") {
+    const { body } = await politeFetchBytes(source.url);
+    return parseEftaTreatyPdf(body, treaty);
+  }
+
+  const html = await politeFetchText(cellarTextUrl(source.celex), CELLAR_HEADERS);
   // Cellar answers a throttled request with a short body and a 2xx, and a
   // treaty is never short: taking that at face value would store an instrument
   // with no articles and call it done.
   if (html.trim().length < 5000) {
-    throw new Error(`short response for ${treaty.celexEn} (${html.trim().length} bytes)`);
+    throw new Error(`short response for ${source.celex} (${html.trim().length} bytes)`);
   }
   return parseEnglishTreaty(html, treaty);
 }
@@ -224,6 +268,12 @@ async function fetchIcelandic(treaty: TreatyDef): Promise<ParsedEuAct> {
   );
 }
 
+/** The CELEX this row carries, where there is one. See storeText. */
+function celexOf(treaty: TreatyDef, language: "is" | "en"): string | null {
+  if (language !== "en") return null;
+  return treaty.englishText.kind === "cellar" ? treaty.englishText.celex : null;
+}
+
 /** Writes one text of one treaty, and says whether it had to. */
 async function storeText(
   treaty: TreatyDef,
@@ -235,7 +285,9 @@ async function storeText(
   const sourceHash = hashParsed(parsed);
   const currentVersionUrl =
     language === "en"
-      ? euLexUrl(treaty.celexEn)
+      ? treaty.englishText.kind === "cellar"
+        ? euLexUrl(treaty.englishText.celex)
+        : treaty.englishText.url
       : lagasafnActUrl(treaty.icelandicText!.actNumber, treaty.icelandicText!.year);
 
   const identity = {
@@ -264,11 +316,12 @@ async function storeText(
     textGroup: treaty.slug,
     isCanonical: canonical,
     parseVersion: PARSE_VERSION,
-    // Only one row may carry a CELEX — the column is unique — and the English
-    // text is the one that has one. The Icelandic text's identifier is the act
-    // it is printed in, which `currentVersionUrl` already points at.
-    celex: language === "en" ? treaty.celexEn : null,
-    textCelex: language === "en" ? treaty.celexEn : null,
+    // Only one row may carry a CELEX — the column is unique — and only a text
+    // Cellar serves has one at all: the Surveillance and Court Agreement is an
+    // EFTA instrument and has none. The Icelandic text's identifier is the act it
+    // is printed in, which `currentVersionUrl` already points at.
+    celex: celexOf(treaty, language),
+    textCelex: celexOf(treaty, language),
     fetchedAt: new Date(),
   };
 

@@ -371,6 +371,9 @@ export async function saveEuActText(actId: string, parsed: ParsedEuAct, sourceHa
       displayLabel: provision.displayLabel,
       heading: provision.heading,
       fullText: provision.fullText,
+      // Empty for every EU act; an EFTA treaty prints its amendment notes as
+      // footnotes, and they belong in the column Lagasafn's go in.
+      footnotes: provision.footnotes ?? [],
       isRepealed: false,
       ordering: i,
     };

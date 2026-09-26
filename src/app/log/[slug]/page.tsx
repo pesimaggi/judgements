@@ -66,14 +66,22 @@ interface OtherText {
   path: string;
 }
 
-/** The Icelandic act that gave a treaty the force of law here. */
-interface ForceOfLaw {
-  /** "2. gr." — the article that did it. */
-  article: string;
-  citation: string;
-  path: string;
-  /** Which fylgiskjal of that act prints the text. */
-  annex: string;
+/**
+ * How a treaty reaches Icelandic law.
+ *
+ * Three states, and they are three different sentences to a reader:
+ * "force-of-law" — the text was enacted here (the EEA main text, 2. gr. laga nr.
+ * 2/1993); "ratified" — Iceland is a party but the text was not enacted (the
+ * Surveillance and Court Agreement); "not-a-party" — the EU treaties.
+ */
+interface IcelandicLaw {
+  kind: "force-of-law" | "ratified" | "not-a-party";
+  /** "2. gr." / "1. gr." — the article of the act, where there is one. */
+  article: string | null;
+  citation: string | null;
+  path: string | null;
+  /** Which fylgiskjal of that act prints the text, where one does. */
+  annex: string | null;
 }
 
 /** A treaty this act prints as a fylgiskjal. */
@@ -130,7 +138,7 @@ interface Act {
   /** The instrument this is a text of: the treaty registry's slug. */
   textGroup: string | null;
   otherTexts: OtherText[];
-  forceOfLaw: ForceOfLaw | null;
+  icelandicLaw: IcelandicLaw | null;
   annexedTreaty: AnnexedTreaty | null;
 }
 
@@ -469,15 +477,34 @@ export default function ActPage({ params }: { params: { slug: string } }) {
         */}
         {isTreaty && (
           <div className="mt-3 rounded border border-line bg-paper px-3 py-2 text-xs text-inkSoft">
-            {act.forceOfLaw ? (
+            {act.icelandicLaw?.kind === "force-of-law" ? (
               <p>
                 <span className="font-medium text-ink">Hefur lagagildi á Íslandi</span> — meginmál
-                samningsins var lögfest með {act.forceOfLaw.article}{" "}
-                <Link href={act.forceOfLaw.path} className="text-accent hover:underline">
-                  {act.forceOfLaw.citation}
+                samningsins var lögfest með {act.icelandicLaw.article}{" "}
+                <Link href={act.icelandicLaw.path ?? "#"} className="text-accent hover:underline">
+                  {act.icelandicLaw.citation}
                 </Link>
-                , og textinn hér er fylgiskjal {act.forceOfLaw.annex} þeirra laga eins og Alþingi
-                birtir það.
+                {act.icelandicLaw.annex
+                  ? `, og textinn hér er fylgiskjal ${act.icelandicLaw.annex} þeirra laga eins og Alþingi birtir það.`
+                  : "."}
+              </p>
+            ) : act.icelandicLaw?.kind === "ratified" ? (
+              /*
+                The state that is neither of the other two, and the one worth
+                getting right: Iceland is a party, so the agreement binds the
+                State — the EFTA Court's jurisdiction over Iceland comes from it —
+                but its text was never given the force of law here, so it is not
+                Icelandic law and must not be shown as though it were.
+              */
+              <p>
+                <span className="font-medium text-ink">Ísland er aðili — en samningurinn hefur ekki lagagildi</span>{" "}
+                — heimild til að fullgilda hann er í {act.icelandicLaw.article}{" "}
+                <Link href={act.icelandicLaw.path ?? "#"} className="text-accent hover:underline">
+                  {act.icelandicLaw.citation}
+                </Link>
+                , en þau lög lögfestu aðeins meginmál EES-samningsins, bókun 1 og tvö atriði í
+                viðaukum. Samningurinn bindur íslenska ríkið að þjóðarétti og er grundvöllur
+                lögsögu EFTA-dómstólsins hér, en hann er ekki hluti af íslenskum lögum.
               </p>
             ) : (
               <p>
@@ -487,8 +514,12 @@ export default function ActPage({ params }: { params: { slug: string } }) {
                 eini textinn sem er fullgildur að þessu leyti.
               </p>
             )}
-            {act.language === "en" && act.forceOfLaw === null && act.otherTexts.length === 0 && (
-              <p className="mt-1">Enginn íslenskur fullgildur texti er til.</p>
+            {act.language === "en" && act.otherTexts.length === 0 && (
+              <p className="mt-1">
+                {act.icelandicLaw?.kind === "ratified"
+                  ? "Samningurinn var einnig staðfestur á íslensku, sbr. 1. mgr. 53. gr. hans, en sá texti er ekki birtur þar sem safnið nær til hans."
+                  : "Enginn íslenskur fullgildur texti er til."}
+              </p>
             )}
             {showParallel && (
               <p className="mt-1">
@@ -537,11 +568,15 @@ export default function ActPage({ params }: { params: { slug: string } }) {
                 {act.codexVersion ? ` (Lagasafn ${act.codexVersion})` : ""}. Always verify against
                 the official source.
               </>
+            ) : act.celex ? (
+              <>
+                Unofficial reproduction of the text EUR-Lex publishes ({act.celex}). The protocols
+                and annexes are not held here. Always verify against the official source.
+              </>
             ) : (
               <>
-                Unofficial reproduction of the text EUR-Lex publishes
-                {act.celex ? ` (${act.celex})` : ""}. The protocols and annexes are not held here.
-                Always verify against the official source.
+                Unofficial reproduction of the consolidated text EFTA publishes. The protocols are
+                not held here. Always verify against the official source.
               </>
             )
           ) : isEu ? (
@@ -730,11 +765,13 @@ export default function ActPage({ params }: { params: { slug: string } }) {
                           rel="noreferrer"
                           className="text-[11px] text-inkSoft hover:underline"
                         >
-                          {isEu || (isTreaty && act.language === "en")
+                          {isEu || (isTreaty && act.celex)
                             ? "eur-lex.europa.eu ↗"
-                            : isRegulation
-                              ? "reglugerd.is ↗"
-                              : "althingi.is ↗"}
+                            : isTreaty && act.language === "en"
+                              ? "efta.int ↗"
+                              : isRegulation
+                                ? "reglugerd.is ↗"
+                                : "althingi.is ↗"}
                         </a>
                       </div>
 

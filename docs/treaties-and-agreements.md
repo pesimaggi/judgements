@@ -15,7 +15,7 @@ treaties*.
 
 | | What | Recommendation |
 |---|---|---|
-| **§1** | Where they live in the schema | `Act` rows, `jurisdiction = "treaty"`, keyed by a slug from a small registry. Not a new table. |
+| **§1** | Where they live in the schema | `Act` rows, `jurisdiction = "treaty"`, keyed by a slug from a small registry. Not a new table. Four instruments as built, not three — see §10 on the SCA. |
 | **§2** | The Icelandic text of the EEA Agreement | From **Lagasafn**, fylgiskjal I of lög nr. 2/1993 — not the ministry's PDF. It is the text that has lagagildi, and we already fetch the page daily. It stays readable in that act as well as on the Agreement's own page; §4.2 says who owns the article. |
 | **§3** | Two languages | Two `Act` rows joined by a `textGroup`, one flagged canonical. The catalogue and every search see the canonical one only, through `corpusFilter()`. |
 | **§4** | The parsers | One new EU layout branch (treaties are neither `oj` nor `legacy`), and one fix in the Lagasafn annex walk. Both verified against the real documents. |
@@ -704,6 +704,34 @@ changes us, so without a version in the watermark the treaty patterns would have
 linked only judgments ingested afterwards and would have looked broken. It is in
 the watermark now, and bumping it is the whole of a backfill.
 
-Three things in §8 stayed out, as planned: the protocols, the annexes, and the
-SCA. The tab is labelled **Alþjóðasamningar**, which is one string in
-`src/app/log/page.tsx` if you want the other word.
+Two things in §8 stayed out, as planned: the protocols and the annexes. The tab is
+labelled **Alþjóðasamningar**, which is one string in `src/app/log/page.tsx` if
+you want the other word.
+
+**The SCA went in after all**, which §8 had listed as the obvious next entry and
+open question 3 had put to the author. It turned out to need more than a fourth
+registry row, and what it needed is the useful part:
+
+- *EFTA publishes it as a PDF and nothing else.* No content API, no markup — a
+  thirteen-page PDF, which is a third source kind (`englishText.kind` is now
+  `"cellar"` or `"efta-pdf"`) and a text parser of its own,
+  `src/lib/treaty-text.ts`. Rejoining wrapped lines, dropping page furniture,
+  lifting inline footnotes out of the sentences they interrupt and reading part
+  titles printed below their number are each a few lines, and each was a thing
+  the document silently lost without them.
+- *It needed a third answer to "how does this bind Iceland".* The plan had two
+  states, force-of-law and not-a-party, and the SCA is neither: Iceland is a
+  party — 1. gr. laga nr. 2/1993 authorised ratification — and 2. gr. of the same
+  act deliberately did not enact it, so the EFTA Court's jurisdiction over
+  Iceland rests on an agreement that binds the State without being Icelandic law.
+  Collapsing that into either neighbouring state would have the reader make a
+  false statement about Icelandic law, so `icelandicStatus` now has three values
+  and the reader has three sentences.
+- *Its authentic Icelandic text exists and is not reachable.* Article 53(1) of the
+  agreement says it was authenticated in Icelandic; nobody publishes that text
+  where this app can get it, and Alþingi has no reason to maintain it because it
+  was never enacted. So "binds Iceland" and "held in Icelandic" came apart, which
+  is why they are two fields rather than one.
+
+The Icelandic short forms for it — and for the TEU and TFEU — are still the
+author's to confirm; open question 2 stands.

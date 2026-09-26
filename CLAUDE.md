@@ -42,10 +42,17 @@ default, Meilisearch optional. `query-parser.ts` turns what a user types
 **Acts and provisions** — Lagasafn and EUR-Lex acts parsed into
 chapters/provisions/paragraphs, with judgments linked to the articles they cite
 by `src/ingestion/citations.ts`. One `Act` table holds Icelandic acts, Icelandic
-regulations, EU acts and the founding treaties; `jurisdiction` tells them apart
-and is what every act query filters on. A treaty is one instrument with possibly
-two authentic texts — two rows joined by `textGroup`, one `isCanonical` — and
-`corpusFilter()` is the only place that keeps a listing to one of them.
+regulations, EU acts and the four founding treaties; `jurisdiction` tells them
+apart and is what every act query filters on. A treaty is one instrument with
+possibly two authentic texts — two rows joined by `textGroup`, one `isCanonical` —
+and `corpusFilter()` is the only place that keeps a listing to one of them.
+
+How a treaty binds Iceland is a separate question from which of its texts we hold,
+and `src/lib/treaties.ts` keeps them in separate fields because the answers come
+apart: the EEA main text was enacted here, the Surveillance and Court Agreement
+binds Iceland without having been enacted, and the EU treaties bind it not at all.
+Saying any of the three where another is true is a false statement about Icelandic
+law, not a wording choice.
 
 **The well** (`src/lib/ask/`) — the assistant. Stages run in order via
 `pipeline.ts`: plan → retrieve → answer → (optional) verify. With research

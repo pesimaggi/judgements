@@ -236,6 +236,16 @@ export interface ParsedEuProvision {
   chapterIndex: number | null;
   paragraphs: ParsedEuParagraph[];
   fullText: string;
+  /**
+   * Notes the source prints under the provision, as printed.
+   *
+   * Empty for everything EUR-Lex serves: an EU act's amendments are recorded in
+   * its consolidation, not in footnotes. EFTA's consolidated treaties do use
+   * them, and they hold what a reader of an amended article most wants — which
+   * instrument last changed it and when — so they go in the same column
+   * Lagasafn's footnotes go in. See src/lib/treaty-text.ts.
+   */
+  footnotes?: string[];
 }
 
 export interface ParsedEuChapter {

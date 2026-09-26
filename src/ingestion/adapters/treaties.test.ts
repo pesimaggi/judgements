@@ -11,12 +11,16 @@
  * The network is not touched: the fetch is separated from the parse in the
  * adapter precisely so this can run offline, like everything else here.
  */
-import { test, describe } from "node:test";
+import { test, describe, before } from "node:test";
 import assert from "node:assert/strict";
 import { gunzipSync } from "node:zlib";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseEnglishTreaty, parseIcelandicTreaty } from "@/ingestion/adapters/treaties";
+import {
+  parseEftaTreatyPdf,
+  parseEnglishTreaty,
+  parseIcelandicTreaty,
+} from "@/ingestion/adapters/treaties";
 import { treatyBySlug } from "@/lib/treaties";
 
 const FIXTURES = join(process.cwd(), "src/lib/__fixtures__");
@@ -27,6 +31,7 @@ function html(name: string): string {
 
 const ees = treatyBySlug("ees")!;
 const teu = treatyBySlug("teu")!;
+const sca = treatyBySlug("sca")!;
 
 describe("the Icelandic text, out of the fylgiskjal it is printed in", () => {
   const parsed = parseIcelandicTreaty(html("lagasafn/1993002.html.gz"), ees);
@@ -129,3 +134,37 @@ describe("the English text, out of what Cellar serves", () => {
     assert.equal(treaty.layout, "treaty");
   });
 });
+
+describe("an EFTA treaty, which arrives as a PDF", () => {
+  let parsed: Awaited<ReturnType<typeof parsePdfFixture>>;
+
+  before(async () => {
+    parsed = await parsePdfFixture();
+  });
+
+  test("is re-anchored like the others, so nothing about it is special downstream", () => {
+    // The point of putting the text parse behind the same shape: the writer, the
+    // reader, the citation index and the anchors are the ones every treaty uses.
+    assert.equal(parsed.provisions.length, 53);
+    assert.equal(parsed.provisions[0].anchor, "A1");
+    assert.equal(parsed.provisions.at(-1)?.anchor, "A53");
+    const lettered = parsed.provisions.find((p) => p.articleLetter === "a");
+    assert.equal(lettered?.anchor, "A44A");
+    assert.deepEqual(
+      parsed.provisions.find((p) => p.articleNumber === 53)?.paragraphs.map((x) => x.anchor),
+      ["A53M1", "A53M2", "A53M3"]
+    );
+  });
+
+  test("carries its amendment footnotes into the column Lagasafn's go in", () => {
+    assert.ok(parsed.provisions.some((p) => (p.footnotes ?? []).length > 0));
+  });
+});
+
+/** The SCA, through exactly the path the adapter takes once it has the bytes. */
+function parsePdfFixture() {
+  return parseEftaTreatyPdf(
+    gunzipSync(readFileSync(join(FIXTURES, "efta/sca-consolidated.pdf.gz"))),
+    sca
+  );
+}

@@ -1,13 +1,18 @@
 /**
  * The founding treaties, as a hand-written registry.
  *
- * Three instruments, and they are a corpus of their own — `jurisdiction =
+ * Four instruments, and they are a corpus of their own — `jurisdiction =
  * "treaty"` — for the reason the EU acts are one: a question about Icelandic law
- * runs into them constantly, and they are neither lög nor gerðir. The EEA
- * Agreement is the one an Icelandic reader needs most: its main text has
- * lagagildi here (2. gr. laga nr. 2/1993), so it is not foreign law at all.
+ * runs into them constantly, and they are neither lög nor gerðir.
  *
- * WHY A REGISTRY AND NOT A SWEEP. There are three of them, they change once a
+ * They stand in three different relations to Icelandic law, and the difference is
+ * the point of `icelandicStatus`: the main part of the EEA Agreement was enacted
+ * here and is not foreign law at all; the Surveillance and Court Agreement binds
+ * Iceland as a party without having been enacted, which is where the EFTA Court's
+ * jurisdiction comes from; the EU treaties bind Iceland not at all and are held
+ * because the two courts read EEA provisions against them.
+ *
+ * WHY A REGISTRY AND NOT A SWEEP. There are four of them, they change once a
  * decade, and everything about how each is named, cited and declined is a fact
  * about that treaty rather than something derivable from its text. The EU act
  * corpus is 33,000 rows and has to be swept; this is a list, in the spirit of
@@ -24,16 +29,71 @@
  * consolidation the stored text came from is `Act.textCelex`, as it is for a
  * consolidated EU act.
  *
- * WHAT "ICELANDIC" MEANS HERE, TWICE OVER. `titleIs` is what to call the
+ * WHAT "ICELANDIC" MEANS HERE, THREE TIMES OVER. `titleIs` is what to call the
  * instrument in an Icelandic interface, and every treaty has one.
- * `icelandicText` is where an *authentic Icelandic text* comes from, and only
- * the EEA Agreement has one — Article 129 of the Agreement makes every language
- * version equally authentic, and Alþingi prints the Icelandic one. Iceland is
- * not a party to the TEU or the TFEU, so any Icelandic version of those is
- * somebody's translation and this app does not hold one. The distinction is the
- * whole of the language question: the reader offers ÍSL/ENG where there are two
- * authentic texts, and English alone where there is one.
+ * `icelandicStatus` is how it binds Iceland. `icelandicText` is where an
+ * authentic Icelandic text comes from, and only the EEA Agreement has one here —
+ * Article 129 of the Agreement makes every language version equally authentic,
+ * and Alþingi prints the Icelandic one because 2. gr. laga nr. 2/1993 enacted it.
+ *
+ * The three are genuinely independent, which is why they are three fields rather
+ * than one enum: the Surveillance and Court Agreement binds Iceland *and* is held
+ * in English only, and the TEU has an Icelandic name and neither of the other
+ * two. The last of them is the whole of the language question — the reader offers
+ * ÍSL/ENG where two authentic texts are stored, and English alone where one is.
  */
+
+/**
+ * Where the English text comes from.
+ *
+ * Two kinds, because the EU publishes its treaties and EFTA publishes its own:
+ *
+ *   "cellar"   — the Publications Office's content API, by CELEX, the way every
+ *     EU act in this library arrives.
+ *   "efta-pdf" — a PDF on efta.int. EFTA is not the Publications Office and has
+ *     no equivalent API: the consolidated Surveillance and Court Agreement is a
+ *     thirteen-page PDF and that is the whole of what is on offer. It is a real
+ *     digital PDF rather than a scan, so `pdfText()` reads it, and the parse is
+ *     then a text parse rather than an HTML one — see src/lib/treaty-text.ts.
+ */
+export type EnglishTextSource =
+  | { kind: "cellar"; celex: string }
+  | { kind: "efta-pdf"; url: string };
+
+/**
+ * How the treaty reaches Icelandic law.
+ *
+ * A different question from which texts this app holds, and the one an Icelandic
+ * reader actually has about an international agreement in a library of Icelandic
+ * law. Three answers, and the difference between the second and the third is the
+ * kind of thing a legal research tool has no business getting wrong:
+ *
+ *   "force-of-law" — the text itself was enacted here. Only the main part of the
+ *     EEA Agreement, by 2. gr. laga nr. 2/1993, which is why it is the one treaty
+ *     whose Icelandic text Alþingi maintains.
+ *   "ratified"     — Iceland is a party and the agreement binds the State in
+ *     international law, but its text has not been given the force of law here.
+ *     The Surveillance and Court Agreement: 1. gr. laga nr. 2/1993 authorised
+ *     ratification, and 2. gr. deliberately did not extend lagagildi to it.
+ *   "not-a-party"  — the EU treaties. They bind Iceland not at all, and are held
+ *     because EFTA Court and CJEU reasoning reads EEA provisions against them.
+ */
+export type IcelandicStatus =
+  | {
+      kind: "force-of-law";
+      actNumber: number;
+      year: number;
+      /** The article that enacted it: "2. gr." */
+      article: string;
+    }
+  | {
+      kind: "ratified";
+      actNumber: number;
+      year: number;
+      /** The article that authorised ratification: "1. gr." */
+      article: string;
+    }
+  | { kind: "not-a-party" };
 
 /** Where an authentic Icelandic text of a treaty is published. */
 export type IcelandicTextSource = {
@@ -100,9 +160,22 @@ export interface TreatyDef {
    * "EES-samningurinn" and an EFTA Court judgment writes "the EEA Agreement".
    */
   aliases: string[];
-  /** CELEX of the English text, as Cellar serves it. */
-  celexEn: string;
-  /** Where the authentic Icelandic text comes from, or null if there is none. */
+  /** Where the English text comes from. */
+  englishText: EnglishTextSource;
+  /** How the treaty binds Iceland, if at all. */
+  icelandicStatus: IcelandicStatus;
+  /**
+   * Where the authentic Icelandic text comes from, or null if this app holds
+   * none.
+   *
+   * Not the same as `icelandicStatus`, and the Surveillance and Court Agreement
+   * is why the two are separate fields: Article 53(1) of it says the Agreement
+   * was authenticated in Icelandic as well as English, and Iceland is a party —
+   * but nobody publishes that Icelandic text where this app can reach it, and
+   * Alþingi has no reason to maintain it because it was never enacted here. So
+   * the treaty binds Iceland and is nonetheless held in English only, which is a
+   * state the EU treaties do not have and the EEA Agreement does not either.
+   */
   icelandicText: IcelandicTextSource | null;
   /**
    * The instrument as a citation names it, after an article number. Regex
@@ -154,9 +227,10 @@ export const TREATIES: TreatyDef[] = [
       "EEA",
       "Samningur um Evrópska efnahagssvæðið",
     ],
-    celexEn: "21994A0103(01)",
+    englishText: { kind: "cellar", celex: "21994A0103(01)" },
     // 2. gr. laga nr. 2/1993: "Meginmál EES-samningsins skal hafa lagagildi hér
     // á landi. […] eru prentuð sem fylgiskjöl I–IV með lögum þessum."
+    icelandicStatus: { kind: "force-of-law", actNumber: 2, year: 1993, article: "2. gr." },
     icelandicText: {
       kind: "lagasafn-annex",
       actNumber: 2,
@@ -205,7 +279,8 @@ export const TREATIES: TreatyDef[] = [
       "Sáttmálinn um Evrópusambandið",
       "Maastricht",
     ],
-    celexEn: "12016M/TXT",
+    englishText: { kind: "cellar", celex: "12016M/TXT" },
+    icelandicStatus: { kind: "not-a-party" },
     icelandicText: null,
     citedAs: {
       is: ["sáttmálans um Evrópusambandið", "Evrópusambandssáttmálans"],
@@ -240,7 +315,8 @@ export const TREATIES: TreatyDef[] = [
       "TEC",
       "EC Treaty",
     ],
-    celexEn: "12016E/TXT",
+    englishText: { kind: "cellar", celex: "12016E/TXT" },
+    icelandicStatus: { kind: "not-a-party" },
     icelandicText: null,
     citedAs: {
       is: [
@@ -261,6 +337,69 @@ export const TREATIES: TreatyDef[] = [
       "sáttmálinn um starfshætti Evrópusambandsins",
       "sáttmálans um starfshætti Evrópusambandsins",
       "sáttmálanum um starfshætti Evrópusambandsins",
+    ],
+  },
+  {
+    slug: "sca",
+    ordinal: 4,
+    // Porto, 2 May 1992, alongside the EEA Agreement itself. The text held is
+    // EFTA's consolidated version, which carries the Adjusting Protocol and the
+    // twenty-odd later amendments in its own footnotes.
+    year: 1992,
+    titleIs: "Samningur milli EFTA-ríkjanna um stofnun eftirlitsstofnunar og dómstóls",
+    titleEn:
+      "Agreement between the EFTA States on the establishment of a Surveillance Authority and a Court of Justice",
+    citationIs: "samningurinn um stofnun eftirlitsstofnunar og dómstóls",
+    citationEn: "SCA",
+    articleSuffixEn: "SCA",
+    genitiveIs: "samningsins um stofnun eftirlitsstofnunar og dómstóls",
+    aliases: [
+      "SCA",
+      "Surveillance and Court Agreement",
+      "ESA/Court Agreement",
+      "eftirlits- og dómstólasamningurinn",
+      "Samningur um stofnun eftirlitsstofnunar og dómstóls",
+    ],
+    // EFTA publishes it, not the Publications Office, and publishes it as a PDF.
+    englishText: {
+      kind: "efta-pdf",
+      url:
+        "https://www.efta.int/sites/default/files/documents/legal-texts/" +
+        "the-surveillance-and-court-agreement/Surveillance-and-Court-Agreement-consolidated.pdf",
+    },
+    // Iceland is a party — 1. gr. laga nr. 2/1993 authorised ratification — and
+    // 2. gr. of the same act deliberately did not give it lagagildi: only the EEA
+    // main text, bókun 1 and two annex points were enacted. So the EFTA Court's
+    // jurisdiction over Iceland comes from an agreement that is binding on the
+    // State without being part of Icelandic law, and the reader says exactly
+    // that rather than reaching for either of the other two stories.
+    icelandicStatus: { kind: "ratified", actNumber: 2, year: 1993, article: "1. gr." },
+    // Article 53(1) says the Agreement was authenticated in Icelandic too, but
+    // nobody publishes that text where this app can reach it. See the field.
+    icelandicText: null,
+    citedAs: {
+      is: [
+        "samningsins um stofnun eftirlitsstofnunar og dómstóls",
+        "samningnum um stofnun eftirlitsstofnunar og dómstóls",
+        "eftirlits- og dómstólasamningsins",
+      ],
+      en: [
+        "SCA",
+        "of the SCA",
+        "of the Surveillance and Court Agreement",
+        "Surveillance and Court Agreement",
+        "of the ESA/Court Agreement",
+      ],
+    },
+    mentionedAs: [
+      "SCA",
+      "Surveillance and Court Agreement",
+      "ESA/Court Agreement",
+      "eftirlits- og dómstólasamningurinn",
+      "eftirlits- og dómstólasamningsins",
+      "samningurinn um stofnun eftirlitsstofnunar og dómstóls",
+      "samningsins um stofnun eftirlitsstofnunar og dómstóls",
+      "samningnum um stofnun eftirlitsstofnunar og dómstóls",
     ],
   },
 ];

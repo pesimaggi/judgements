@@ -92,31 +92,41 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
       }))
     : [];
 
-  // A treaty whose text has lagagildi here, and the act that gave it: the one
-  // line that explains why an international agreement is in a library of
-  // Icelandic law. Null for the TEU and the TFEU, which have no such act.
+  // How the treaty reaches Icelandic law: the line that explains why an
+  // international agreement is in a library of Icelandic law, and it is a
+  // different line for each of the three. The main part of the EEA Agreement was
+  // enacted here; Iceland is a party to the Surveillance and Court Agreement
+  // without its text having been enacted, which is where the EFTA Court's
+  // jurisdiction over Iceland comes from; the EU treaties bind Iceland not at
+  // all. Saying any of the three where another is true would be a statement
+  // about Icelandic law that is simply wrong.
   const treaty = actTreaty(act);
-  const forceOfLaw =
-    treaty?.icelandicText && act.language === "is"
+  const status = treaty?.icelandicStatus;
+  const icelandicLaw =
+    status && status.kind !== "not-a-party"
       ? {
-          article: treaty.icelandicText.forceOfLawArticle,
+          kind: status.kind,
+          article: status.article,
           citation: actCitation({
             jurisdiction: "is",
             docType: "act",
             citation: null,
-            actNumber: treaty.icelandicText.actNumber,
-            year: treaty.icelandicText.year,
+            actNumber: status.actNumber,
+            year: status.year,
           }),
           path: actPath({
             jurisdiction: "is",
             docType: "act",
             celex: null,
-            actNumber: treaty.icelandicText.actNumber,
-            year: treaty.icelandicText.year,
+            actNumber: status.actNumber,
+            year: status.year,
           }),
-          annex: treaty.icelandicText.annex,
+          // Which fylgiskjal prints the text, where one does.
+          annex: treaty?.icelandicText?.annex ?? null,
         }
-      : null;
+      : status
+        ? { kind: status.kind, article: null, citation: null, path: null, annex: null }
+        : null;
 
   // The other direction: an act that prints a treaty as a fylgiskjal. The
   // reader shows the annexed text where it is printed — some readers get to the
@@ -290,8 +300,8 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
       textGroup: act.textGroup,
       /** Its other stored texts, for the reader's language control. */
       otherTexts,
-      /** The Icelandic act that gave this treaty the force of law, if any. */
-      forceOfLaw,
+      /** How this treaty reaches Icelandic law, and under which act. */
+      icelandicLaw,
       /** The treaty this act prints as a fylgiskjal, if any. */
       annexedTreaty: annexedTreaty
         ? {

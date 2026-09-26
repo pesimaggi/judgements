@@ -20,10 +20,10 @@ import {
 import { actCitation, actPath, parseActRef, provisionFullLabel } from "@/lib/acts";
 
 describe("the registry", () => {
-  test("holds the three instruments, keyed by slug", () => {
+  test("holds the four instruments, keyed by slug", () => {
     assert.deepEqual(
       TREATIES.map((t) => t.slug),
-      ["ees", "teu", "tfeu"]
+      ["ees", "teu", "tfeu", "sca"]
     );
     for (const treaty of TREATIES) {
       assert.equal(treatyBySlug(treaty.slug), treaty);
@@ -56,18 +56,56 @@ describe("the registry", () => {
     }
   });
 
-  test("only the EEA Agreement has an authentic Icelandic text", () => {
-    // Iceland is a party to the Agreement and not to the EU treaties, so any
-    // Icelandic TEU or TFEU would be somebody's translation. This is what the
-    // reader's language control is switched on by.
+  test("only the EEA Agreement has an authentic Icelandic text here", () => {
+    // What the reader's language control is switched on by — and not the same
+    // question as whether Iceland is a party: the Surveillance and Court
+    // Agreement was authenticated in Icelandic too (Article 53(1)), and nobody
+    // publishes that text where this app can reach it.
     assert.ok(treatyBySlug("ees")!.icelandicText);
-    assert.equal(treatyBySlug("teu")!.icelandicText, null);
-    assert.equal(treatyBySlug("tfeu")!.icelandicText, null);
+    for (const slug of ["teu", "tfeu", "sca"]) {
+      assert.equal(treatyBySlug(slug)!.icelandicText, null, slug);
+    }
   });
 
-  test("the governing text is the one that governs here", () => {
+  test("each treaty says how it reaches Icelandic law, and they differ", () => {
+    // The distinction the registry exists to keep straight. Collapsing "ratified"
+    // into either of the others would have the reader tell an Icelandic lawyer
+    // either that the SCA is part of Icelandic law or that it does not bind
+    // Iceland, and both are wrong.
+    assert.equal(treatyBySlug("ees")!.icelandicStatus.kind, "force-of-law");
+    assert.equal(treatyBySlug("sca")!.icelandicStatus.kind, "ratified");
+    assert.equal(treatyBySlug("teu")!.icelandicStatus.kind, "not-a-party");
+    assert.equal(treatyBySlug("tfeu")!.icelandicStatus.kind, "not-a-party");
+
+    // Both Icelandic-law states name the act and the article they rest on.
+    for (const slug of ["ees", "sca"]) {
+      const status = treatyBySlug(slug)!.icelandicStatus;
+      assert.notEqual(status.kind, "not-a-party");
+      if (status.kind === "not-a-party") return;
+      assert.equal(status.actNumber, 2);
+      assert.equal(status.year, 1993);
+      assert.match(status.article, /^\d+\. gr\.$/);
+    }
+  });
+
+  test("the English text comes from wherever its author publishes it", () => {
+    // Three from Cellar by CELEX, and the EFTA agreement from a PDF on efta.int,
+    // because EFTA has no content API and that PDF is the whole of what is
+    // published.
+    assert.deepEqual(
+      TREATIES.map((t) => `${t.slug}:${t.englishText.kind}`),
+      ["ees:cellar", "teu:cellar", "tfeu:cellar", "sca:efta-pdf"]
+    );
+    const sca = treatyBySlug("sca")!.englishText;
+    assert.equal(sca.kind === "efta-pdf" && sca.url.endsWith(".pdf"), true);
+  });
+
+  test("the governing text is the one this app can serve", () => {
     assert.equal(canonicalLanguage(treatyBySlug("ees")!), "is");
     assert.equal(canonicalLanguage(treatyBySlug("tfeu")!), "en");
+    // English even though Iceland is a party: canonical follows the text we
+    // hold, not the treaty's standing.
+    assert.equal(canonicalLanguage(treatyBySlug("sca")!), "en");
   });
 
   test("the Agreement's Icelandic text is found from the act that prints it", () => {

@@ -25,7 +25,7 @@ The three Icelandic courts published at [island.is/domar](https://island.is/doma
 - **Provision-level case linking** — each provision shows how many decisions cite it ("12 úrlausnir vísa til þessa ákvæðis"), expanding to the citing cases with the sentence the citation was found in, so you can see *why* a case matched before opening it.
 - **EU acts (ESB-gerðir)** — the regulations and directives in force, from EUR-Lex, parsed into the same chapter / article / paragraph structure and read in the same act reader at `/log/{CELEX}` — `/log/32016R0679` is the GDPR. Each act carries whether EUR-Lex marks it *"(Text with EEA relevance)"* and which decisions of the EEA Joint Committee this database holds that name it. See *EU acts (EUR-Lex)* below.
 - **EES / ESB scope toggle** — one control, in the act catalogue, deciding how much of the EU library an act lookup there sees. (It used to sit beside the specific-search act box too, where it was set on one screen and silently applied on another; the search screen now always uses the default scope.) **EES** (the default) is Icelandic law plus the EU acts that may be part of EEA law — the marked ones and the ones a Joint Committee decision names. **ESB** lifts the limit, which is what you want precisely when an act has *not* been incorporated and you need to establish that. Icelandic law is in both: the toggle never hides lög nr. 91/1991.
-- **The founding treaties (Alþjóðasamningar)** — the EEA Agreement, the TEU and the TFEU, in the same act reader at `/log/ees`, `/log/teu` and `/log/tfeu`. The Agreement is held in **both authentic texts**: the Icelandic one, which has lagagildi here under 2. gr. laga nr. 2/1993 and which Alþingi prints as fylgiskjal I of that act, and the English one the EFTA Court and the CJEU quote — with an ÍSL / ENG / Samhliða control to read either or both. The EU treaties have no authentic Icelandic text and are held in English. See *The founding treaties* below.
+- **The founding treaties (Alþjóðasamningar)** — the EEA Agreement, the TEU, the TFEU and the EFTA Surveillance and Court Agreement, in the same act reader at `/log/ees`, `/log/teu`, `/log/tfeu` and `/log/sca`. The EEA Agreement is held in **both authentic texts**: the Icelandic one, which has lagagildi here under 2. gr. laga nr. 2/1993 and which Alþingi prints as fylgiskjal I of that act, and the English one the EFTA Court and the CJEU quote — with an ÍSL / ENG / Samhliða control to read either or both. Each page says which of three relations to Icelandic law its treaty stands in, because "binds Iceland" and "is Icelandic law" are not the same claim. See *The founding treaties* below.
 - **Act catalogue** — `/log` lists every ingested act with its provision count and how many judgments cite it, searchable by title, short name or number, and sortable by most-cited. Four tabs: Icelandic acts, reglugerðir, EU acts — which carries the scope toggle — and the treaties.
 - **The law itself, above the judgments** — the main search box searches the act library as well as the case law. Type `vaxtalög`, `38/2001`, `gdpr` or `2016/679` and the act heads the results, with the judgments below it; type `130. gr. laga nr. 91/1991` and the article heads them, with its text. Each card offers the two things worth doing next — read the text, or narrow the judgments below to the ones citing it. An act is only ever shown when the query genuinely *names* one, so a search for a subject (`gæsluvarðhald`) looks exactly as it did before. See *Searching for a law* below.
 - **Specific search** — alongside the keyword search, two live lookups that narrow the results, each accepting several selections that combine as AND: an act/provision box that takes the citation as it is written ("lög um aðbúnað og hollustuhætti" finds the cases about the act; "57. gr. a. laga um aðbúnað og hollustuhætti" narrows to the cases citing that article), and a subject-tag box. Acts match on title, citation number, or the short names judgments actually use — "vaxtalög" finds lög nr. 38/2001.
@@ -705,25 +705,39 @@ and one catalogue sweep — the acts come back on their own.
 
 ### The founding treaties
 
-The EEA Agreement, the Treaty on European Union and the Treaty on the
-Functioning of the European Union — **the EEA Agreement in both authentic
-texts**, Icelandic and English, and the two EU treaties in English.
+The EEA Agreement, the Treaty on European Union, the Treaty on the Functioning of
+the European Union and the **Surveillance and Court Agreement** — the EEA
+Agreement in both authentic texts, Icelandic and English, and the other three in
+English.
 
 They are `Act` rows with `jurisdiction = "treaty"`, in the act library beside
 lög nr. 38/2001 and Regulation (EU) 2016/679, because a treaty is the same shape
 as both: a titled instrument with numbered articles whose paragraphs are cited
 by number. They get a tab of their own in `/log` (*Alþjóðasamningar*) and a slug
-of their own — `/log/ees`, `/log/teu`, `/log/tfeu`.
+of their own — `/log/ees`, `/log/teu`, `/log/tfeu`, `/log/sca`.
 
-Everything about which three they are, what each is called and how its articles
+Everything about which four they are, what each is called and how its articles
 are cited in each language is a hand-written registry: `src/lib/treaties.ts`.
-Three instruments that change once a decade are a list, not a sweep.
+Four instruments that change once a decade are a list, not a sweep.
 
-**Why the EEA Agreement is not foreign law.** Its main text has lagagildi in
-Iceland — 2. gr. laga nr. 2/1993 says so — and Article 129 of the Agreement
-makes every language version equally authentic. So the Icelandic text is not a
-translation of the English one; they are two statements of the same rule, and
-the reader says so rather than offering a "translate" button.
+#### Three different relations to Icelandic law
+
+The distinction `icelandicStatus` exists to keep straight, and the reader says
+which one applies on every treaty page. Getting it wrong would not be a
+formatting slip — it would be a false statement about Icelandic law.
+
+| | | |
+|---|---|---|
+| **EEA Agreement** | *enacted here* | Its main text has lagagildi — 2. gr. laga nr. 2/1993 — so it is not foreign law at all. Article 129 of the Agreement makes every language version equally authentic, so the Icelandic text is not a translation of the English one: they are two statements of the same rule, and the reader says so rather than offering a "translate" button. |
+| **Surveillance and Court Agreement** | *binding, not enacted* | Iceland is a party: 1. gr. laga nr. 2/1993 authorised ratification, and 2. gr. of the same act deliberately extended lagagildi only to the EEA main text, bókun 1 and two annex points. So the EFTA Court's jurisdiction over Iceland rests on an agreement that binds the State in international law without being part of Icelandic law. |
+| **TEU and TFEU** | *not a party* | They bind Iceland not at all. They are here because EFTA Court and CJEU reasoning reads EEA provisions against them — Article 28 EEA against Article 45 TFEU, and so on. |
+
+Whether an *authentic Icelandic text* exists is a third question again, and only
+the EEA Agreement has one here. Article 53(1) of the SCA says that agreement was
+authenticated in Icelandic as well as English — but nobody publishes that text
+where this app can reach it, and Alþingi has no reason to maintain it because it
+was never enacted. So the SCA binds Iceland and is nonetheless held in English
+only, which is a state neither of the other two has.
 
 #### Where each text comes from
 
@@ -733,6 +747,7 @@ the reader says so rather than offering a "translate" button.
 | EEA Agreement, English | Cellar, CELEX `21994A0103(01)` | The authentic English text, and the wording the EFTA Court and the CJEU quote |
 | TEU | Cellar, CELEX `12016M/TXT` | The consolidated version (OJ C 202, 2016); there has been no re-consolidation since |
 | TFEU | Cellar, CELEX `12016E/TXT` | Same |
+| Surveillance and Court Agreement | **A PDF on efta.int** | EFTA is not the Publications Office and has no content API: the consolidated agreement is a thirteen-page PDF and that is the whole of what is published. It is a real digital PDF rather than a scan, so `pdfText()` reads it — and the parse is then a *text* parse rather than an HTML one |
 
 The ministry also publishes the Icelandic main text as a PDF
 (`stjornarradid.is/library/?itemid=7321c093…`). It reads cleanly and it is the
@@ -743,7 +758,35 @@ nobody attaches a codex version to it.
 and it is deliberately not used: it is both treaties in one document, where
 "Article 3" means two different things.
 
-#### Two things the parsers had to learn
+#### A treaty published as text
+
+`src/lib/treaty-text.ts` reads the SCA, and it exists because `pdfText()` returns
+one line per *visual* line of the page. Four things the page does that the text
+does not say, each of which had to be handled:
+
+- **Lines are not paragraphs.** A paragraph arrives as five or six lines broken
+  where the column ended, and they are rejoined on the only signal available: a
+  line that does not finish a sentence continues into the next one.
+- **Every page carries furniture.** "SURVEILLANCE AND COURT AGREEMENT p. 4" and
+  "Main text" appear twelve times each, mid-sentence as far as the text is
+  concerned. They go first, so a paragraph broken across a page rejoins cleanly.
+- **Footnotes arrive inline, in three lines.** A marker in the body is `(`, the
+  number, `)`. A definition is `(`, the number, `)  Words "Protocols 1 to 4 and 6
+  and 7" replaced by…`. Both interrupt the text they belong to. The markers are
+  dropped; the definitions are kept as the provision's footnotes, which is where
+  Lagasafn's amendment notes go too, and for the same reason — they are the
+  thread from an article back to the instrument that last changed it.
+- **Part titles are printed below their number.** "PART II" and "THE EFTA
+  SURVEILLANCE AUTHORITY" are separate blocks, the second wrapped over three
+  lines of capitals. Before that was handled the title was not merely missing
+  from the division: it was dropped from the document, because a block read
+  before the first article of a part belongs to no provision.
+
+It recovers 53 articles (including Article 44a, added in 2020), five parts with
+their titles, and 14 amendment footnotes, leaving nothing behind but the
+preamble's own two footnotes.
+
+#### Two things the EUR-Lex parser had to learn
 
 **The treaties are a fourth EUR-Lex layout.** Close enough to the `oj` layout to
 be confusing: an article's container is `div id="001"` rather than
@@ -850,7 +893,7 @@ mean the Agreement.
 npm run ingest -- --adapter=treaties
 ```
 
-Four fetches, seconds, no cursor and nothing to bound — by a wide margin the
+Five fetches, seconds, no cursor and nothing to bound — by a wide margin the
 cheapest adapter here. It runs in the scheduled chain right after `lagasafn`
 (whose page it reads for the Icelandic text) and before `citations` (which
 resolves treaty citations against the articles it writes). `Act.parseVersion`
@@ -865,14 +908,19 @@ the column.
 
 #### What is deliberately not here
 
-The protocols and the annexes, to any of the three. The EEA annexes are the
-lists of EU acts taken into the Agreement, which this database already
-approaches from the other end — `eea_incorporated_by` and the Joint Committee's
-decisions — and the protocols are worth nothing until something cites them. The
-Charter of Fundamental Rights and the EFTA Surveillance and Court Agreement are
-the same shape as this work and are the obvious next entries in the registry;
-the SCA especially, since the EFTA Court's own jurisdiction comes from it and
-this corpus cites it more often than it cites the TEU.
+The protocols and the annexes, to any of the four. The EEA annexes are the lists
+of EU acts taken into the Agreement, which this database already approaches from
+the other end — `eea_incorporated_by` and the Joint Committee's decisions — and
+the protocols are worth nothing until something cites them. That goes for the
+SCA's Protocol 4 as well, which is the competition procedure and the one most
+likely to be asked for next.
+
+The Charter of Fundamental Rights (`12016P/TXT`) is the same shape as this work
+and is the obvious next entry in the registry. The European Convention on Human
+Rights is a different and more interesting case: lög nr. 62/1994 annexes it the
+way lög nr. 2/1993 annexes the EEA Agreement, so its Icelandic text is already
+reachable by the same route — and the annex fix above has already given that act
+its text back.
 
 ### CJEU case law (EUR-Lex)
 
@@ -2822,8 +2870,12 @@ rather than a look.
 `manifest.json` with their URL and capture date — three Lagasafn acts (38/2001
 and 81/2004, chosen between them to carry chapters, lettered articles,
 temporary provisions, an annex and repealed articles; and 2/1993, which prints
-the whole EEA Agreement as a fylgiskjal) and five EUR-Lex documents, one per
-layout including the two the treaties needed. Assertions are structural rather
+the whole EEA Agreement as a fylgiskjal), five EUR-Lex documents, one per layout
+including the two the treaties needed, and one PDF — EFTA's consolidated
+Surveillance and Court Agreement, the only fixture here that is not markup. It is
+frozen as the PDF rather than as extracted text so the test covers the extraction
+too: the failure worth catching is EFTA re-typesetting the document, and
+extracted text would hide exactly that. Assertions are structural rather
 than exact: Alþingi amends these acts, and a test pinning
 `provisions.length === 53` fails on the next amendment and trains everyone to
 ignore it. What must not change is the shape the parser recovers, and that

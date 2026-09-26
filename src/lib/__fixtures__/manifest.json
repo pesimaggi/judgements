@@ -101,6 +101,12 @@
       "captured": "2026-09-26",
       "codexVersion": "157c",
       "describes": "Lög um Evrópska efnahagssvæðið nr. 2/1993 — five articles of its own, and the whole Icelandic main text of the EEA Agreement printed as fylgiskjal I, which 2. gr. gives lagagildi. The annex is the shape this fixture exists for: Lagasafn prints the paragraph marker inside a fylgiskjal with no id, so all 129 of the Agreement's articles were stored as labels with no text — and, because an empty body is how Lagasafn writes a repealed provision, shown to readers as repealed. It also divides itself in words an act does not use: \"I. hluti.\" and an arabic \"1. kafli.\"."
+    },
+    {
+      "file": "efta/sca-consolidated.pdf.gz",
+      "url": "https://www.efta.int/sites/default/files/documents/legal-texts/the-surveillance-and-court-agreement/Surveillance-and-Court-Agreement-consolidated.pdf",
+      "captured": "2026-09-26",
+      "describes": "The consolidated Surveillance and Court Agreement, as EFTA publishes it: thirteen pages of PDF, which is the whole of what is on offer — EFTA is not the Publications Office and has no content API. A real digital PDF rather than a scan, so pdfText() reads it, and the parse is then a text parse (src/lib/treaty-text.ts) rather than an HTML one. It is the only fixture here that is not markup, and it is frozen as the PDF rather than as extracted text so that the test covers the extraction too: the failure worth catching is EFTA re-typesetting the document, and extracted text would hide exactly that. Its page furniture ('SURVEILLANCE AND COURT AGREEMENT p. 4', 'Main text') appears twelve times each mid-sentence, its footnotes arrive inline as three lines, and its PART titles are printed as separate blocks of wrapped capitals."
     }
   ]
 }
