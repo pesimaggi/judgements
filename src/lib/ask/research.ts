@@ -43,6 +43,7 @@ import { askConfig, type AskConfig } from "./config";
 import { rankCandidates, type RankCandidate } from "./rank";
 import { stripMarks } from "./evidence";
 import { ResearchSession, asksBothSectors } from "./tools";
+import { researchSkillSections, type ResearchSkillContext } from "./research-skills";
 import {
   composeRetrieval,
   decisionKind,
@@ -54,7 +55,16 @@ import {
 } from "./retrieve";
 import type { QueryPlan } from "./types";
 
-const RESEARCH_SYSTEM = `You are the research stage of Lögbrunnur, a legal research tool over Icelandic, EEA and EU law. You do not write the answer. Your job is to find the law the answer will rest on, and to be exhaustive about it.
+/**
+ * The general method: how a lawyer works any question in this corpus, whatever
+ * the field it belongs to.
+ *
+ * It stops where a specialist would start. Field guidance — what EEA law needs
+ * that no general method could know, and the fields whose documents follow it —
+ * is composed in between this and RESEARCH_RULES by researchSystem(), from the
+ * registry in lib/ask/research-skills.ts.
+ */
+const RESEARCH_METHOD = `You are the research stage of Lögbrunnur, a legal research tool over Icelandic, EEA and EU law. You do not write the answer. Your job is to find the law the answer will rest on, and to be exhaustive about it.
 
 The corpus: Icelandic acts (Lagasafn) and Icelandic regulations (reglugerðir), EU acts (EUR-Lex); judgments of Hæstiréttur, Landsréttur and the héraðsdómar; Endurupptökudómur and Félagsdómur; the EFTA Court, the CJEU and its General Court; Umboðsmaður Alþingis; the EFTA Surveillance Authority; some forty Icelandic administrative appeal boards; Alþingi's bills and their greinargerðir; and two legal journals. Icelandic material is written in Icelandic; the EFTA Court, the CJEU and ESA write in English. Search each in its own language.
 
@@ -76,9 +86,16 @@ You can often tell which side a judgment is from by its parties: an ehf. or an h
 
 **5. Follow what you find.** A judgment that names an earlier case, an article or an advisory opinion is telling you where to look next. Go there. Use find_citing_cases on a case number to learn what happened to a ruling afterwards — whether it was applied, followed or departed from.
 
-**6. When words are not finding it, stop using words.** list_subject_tags gives the term the corpus files a subject under; a court plus a tag is far sharper than a guess at wording. read_act_outline navigates. cases_citing_provision follows the graph. An empty search is information, not a conclusion: change the wording, the language or the source and try again.
+**6. When words are not finding it, stop using words.** list_subject_tags gives the term the corpus files a subject under; a court plus a tag is far sharper than a guess at wording. read_act_outline navigates. cases_citing_provision follows the graph. An empty search is information, not a conclusion: change the wording, the language or the source and try again.`;
 
-SAYING WHAT YOU ARE DOING
+/**
+ * The rules that hold whatever the field: what makes a step legible to the
+ * reader, what may be cited, and how to stop.
+ *
+ * Last in the prompt, deliberately. Field guidance adds method; it never
+ * loosens what a source is or lets the loop finish without the gate.
+ */
+const RESEARCH_RULES = `SAYING WHAT YOU ARE DOING
 
 Every tool but research_complete takes a \`why\`, and it is not bookkeeping: it is shown to the reader, in the panel, as you work. They watch the research happen and \`why\` is what makes it legible as legal method rather than a list of queries going past.
 
@@ -101,6 +118,18 @@ Where the corpus genuinely holds nothing on a limb, list it in \`gaps\` and rese
 You may call several tools at once, and should whenever the calls do not depend on each other. Reading six judgments is one round, not six.
 
 When research_complete is accepted, write two or three sentences on what you found and what you could not, and stop. You are not writing the answer.`;
+
+/**
+ * The system prompt for one question: the general method, the field guidance
+ * that question calls for, and the rules about citing and finishing.
+ *
+ * Exported because the composition is the part worth testing — a field section
+ * that silently never appears is indistinguishable from a model that researched
+ * an EEA question as though it were a domestic one.
+ */
+export function researchSystem(context: ResearchSkillContext): string {
+  return [RESEARCH_METHOD, ...researchSkillSections(context), RESEARCH_RULES].join("\n\n");
+}
 
 export interface ResearchOptions extends RetrieveOptions {
   /** Reported per tool call, for the metrics line and for the reader. */
@@ -186,7 +215,7 @@ export async function deepResearch(
 
   try {
     const result = await model.runTools({
-      system: RESEARCH_SYSTEM,
+      system: researchSystem({ plan, scope }),
       messages: [{ role: "user", content: researchBrief(plan) }],
       tools: session.tools(),
       maxTokens: config.researchMaxTokens,
