@@ -297,3 +297,136 @@ describe("a document in no layout at all", () => {
     assert.equal(act.layout, "legacy");
   });
 });
+
+describe("the treaty layout (12016M/TXT, the consolidated TEU)", () => {
+  const act = fixture("12016M_TXT.html.gz");
+
+  test("is recognised as a treaty and not as the legacy layout", () => {
+    // It has no `div id="art_N"`, so before the treaty branch existed it fell
+    // through to the legacy walk — which reads every "Article N" it can see,
+    // including the protocols' and the cross-references'.
+    assert.equal(act.layout, "treaty");
+  });
+
+  test("stops where the treaty stops, and before its protocols", () => {
+    const articles = act.provisions.filter((p) => p.kind === "article");
+    // The TEU has 55 articles. The document carries all 37 protocols after
+    // them, numbered from 1 again, so this count is the assertion: it is not
+    // fragile the way an act's article count is — a treaty is amended about
+    // once a decade, and when it is, a changed count is a real signal.
+    assert.equal(articles.length, 55);
+    assert.equal(articles[0].displayLabel.replace(/\s+/g, " "), "Article 1");
+    assert.equal(articles.at(-1)?.displayLabel.replace(/\s+/g, " "), "Article 55");
+
+    // Belt and braces on the same point, in a form that survives a renumbering:
+    // nothing from a protocol may appear at all.
+    assert.equal(
+      articles.some((p) => /\bPROTOCOL\b/.test(p.fullText)),
+      false
+    );
+    const numbers = articles.map((p) => p.articleNumber);
+    assert.deepEqual(
+      numbers.filter((n, i) => numbers.indexOf(n) !== i),
+      [],
+      "an article number appearing twice means a protocol's articles were kept"
+    );
+  });
+
+  test("keeps the numbered paragraphs apart", () => {
+    const article4 = act.provisions.find((p) => p.articleNumber === 4);
+    assert.ok((article4?.paragraphs.length ?? 0) >= 3);
+    assert.match(article4!.paragraphs[0].text, /^1\./);
+  });
+
+  test("nests the divisions the markup prints flat", () => {
+    // PART / TITLE / CHAPTER / SECTION are sibling paragraphs in a treaty, so
+    // the hierarchy is inferred from the words — see TREATY_DIVISION_LEVELS.
+    assert.ok(act.chapters.length >= 6);
+    assert.ok(
+      act.chapters.some((c) => /^TITLE [IVX]+ — CHAPTER \d/.test(c.label)),
+      `no nested division found in ${act.chapters.map((c) => c.label).join(", ")}`
+    );
+    assert.ok(act.chapters.every((c) => c.label.length > 0));
+    // Every article belongs to a division that exists.
+    for (const p of act.provisions) {
+      if (p.chapterIndex === null) continue;
+      assert.ok(act.chapters[p.chapterIndex], `article ${p.displayLabel} points at no division`);
+    }
+  });
+
+  test("keeps the pre-Lisbon numbering, which is what its headings hold", () => {
+    // "(ex Article 86 TEC)" is not a heading in any ordinary sense, and it is
+    // worth storing: a judgment of 2005 cites the old number and a reader
+    // looking it up has to land on the new one.
+    assert.ok(
+      act.provisions.some((p) => /^\(ex Article/.test(p.heading ?? "")),
+      "no article carried its pre-Lisbon number"
+    );
+  });
+
+  test("drops the Official Journal's inline footnote calls", () => {
+    // They are rendered as part of the sentence: "…between men and women.(2)".
+    assert.equal(
+      act.provisions.some((p) => /\.\(\d\)/.test(p.fullText)),
+      false
+    );
+  });
+});
+
+describe("the EEA Agreement (21994A0103(01)), a treaty in the legacy layout", () => {
+  const act = fixture("21994A0103_01.html.gz");
+
+  test("finds the Agreement's articles at all", () => {
+    // It parsed to nothing until ADOPTION_FORMULA learned what a treaty says:
+    // "HAVE DECIDED to conclude the following Agreement", where an act says
+    // "HAVE ADOPTED THIS DIRECTIVE".
+    const articles = act.provisions.filter((p) => p.kind === "article");
+    assert.equal(articles.length, 129);
+    assert.equal(articles[0].displayLabel, "Article 1");
+    assert.equal(articles.at(-1)?.displayLabel, "Article 129");
+  });
+
+  test("no article comes back empty", () => {
+    // Articles 63, 72 and 77 did. Each is one sentence beginning "Annex XV
+    // contains specific provisions on…", and a case-insensitive annex-heading
+    // rule read the sentence as a heading and left the article blank.
+    const empty = act.provisions
+      .filter((p) => p.kind === "article")
+      .filter((p) => p.fullText.trim().length === 0);
+    assert.deepEqual(empty.map((p) => p.displayLabel), []);
+  });
+
+  test("ends at the testimonium, not at the end of the document", () => {
+    // What follows Article 129 is the closing formula in thirteen languages,
+    // the Final Act, the joint declarations and the list of annexes. Without
+    // CLOSING_FORMULA all of it belonged to Article 129, which came out with 83
+    // paragraphs — the article has three.
+    const last = act.provisions.find((p) => p.articleNumber === 129);
+    assert.ok(last);
+    assert.equal(last!.paragraphs.length, 3);
+    assert.ok(last!.fullText.length < 3000, `Article 129 is ${last!.fullText.length} characters`);
+    assert.equal(/FINAL ACT|In witness whereof/i.test(last!.fullText), false);
+  });
+
+  test("reads the divisions it prints on one line", () => {
+    // "PART I OBJECTIVES AND PRINCIPLES", "Chapter 1 Basic principles" — the
+    // old rule wanted a line reading exactly "CHAPTER I", so the Agreement had
+    // no divisions and each heading was appended to the article above it.
+    assert.ok(act.chapters.length >= 20);
+    assert.ok(act.chapters.some((c) => c.label === "PART I" && /OBJECTIVES/i.test(c.title ?? "")));
+    assert.equal(
+      act.provisions.some((p) => /^(PART|CHAPTER) [IVX0-9]/m.test(p.fullText)),
+      false,
+      "a division heading was swallowed into an article"
+    );
+  });
+
+  test("the free movement of workers is where it should be", () => {
+    // Article 28 EEA, the provision the EFTA Court reads against Article 45
+    // TFEU. Read for its content rather than counted, so the test says what
+    // the parse is *for*.
+    const article28 = act.provisions.find((p) => p.articleNumber === 28);
+    assert.match(article28!.fullText, /Freedom of movement for workers/i);
+    assert.equal(article28!.paragraphs.length, 5);
+  });
+});

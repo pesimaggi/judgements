@@ -158,11 +158,12 @@ export async function saveAct(
     // a number and a year with an Icelandic act. Lagasafn writes the
     // Icelandic half of that key on every row.
     where: {
-      jurisdiction_docType_actNumber_year: {
+      jurisdiction_docType_actNumber_year_language: {
         jurisdiction: "is",
         docType: "act",
         actNumber,
         year,
+        language: "is",
       },
     },
     create: {
@@ -398,11 +399,12 @@ export const lagasafnAdapter: IngestionAdapter = {
           // cheap skip above applies next time.
           await prisma.act.update({
             where: {
-              jurisdiction_docType_actNumber_year: {
+              jurisdiction_docType_actNumber_year_language: {
                 jurisdiction: "is",
                 docType: "act",
                 actNumber: entry.actNumber,
                 year: entry.year,
+                language: "is",
               },
             },
             data: { codexVersion: parsed.codexVersion ?? entry.codexVersion, fetchedAt: new Date() },

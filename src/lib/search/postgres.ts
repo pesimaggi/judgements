@@ -371,6 +371,7 @@ export async function searchActsPostgres(req: ActSearchRequest): Promise<ActHit[
   const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
     SELECT a.id, a.jurisdiction, a.doc_type, a.act_number, a.year, a.title, a.citation, a.celex,
            a.eea_relevant, a.eea_incorporated_by, a.aliases, a.natural_number,
+           a.language, a.text_group,
            (SELECT count(*)::int FROM provisions p WHERE p.act_id = a.id AND p.kind = 'article') AS provision_count,
            CASE
              WHEN ${celex}::text IS NOT NULL AND a.celex = ${celex}::text THEN 0
@@ -386,6 +387,9 @@ export async function searchActsPostgres(req: ActSearchRequest): Promise<ActHit[
            ) AS sim
       FROM acts a
      WHERE ${scopeFilter(req.scope ?? "eea")}
+       -- One instrument, one suggestion: the English EEA Agreement is reached
+       -- from the Icelandic row, never offered beside it. See corpusFilter().
+       AND a.is_canonical
        AND (
             (${celex}::text IS NOT NULL AND a.celex = ${celex}::text)
          OR ${numberMatch}
@@ -412,6 +416,8 @@ export async function searchActsPostgres(req: ActSearchRequest): Promise<ActHit[
       citation: r.citation,
       actNumber: r.act_number,
       year: r.year,
+      textGroup: r.text_group ?? null,
+      language: r.language ?? "is",
     }),
     path: actPath({
       jurisdiction: r.jurisdiction,
@@ -419,6 +425,7 @@ export async function searchActsPostgres(req: ActSearchRequest): Promise<ActHit[
       celex: r.celex,
       actNumber: r.act_number,
       year: r.year,
+      textGroup: r.text_group ?? null,
     }),
     provisionCount: Number(r.provision_count ?? 0),
     // Carried on the hit because the search page has to judge *how well* an
@@ -450,13 +457,19 @@ export async function searchProvisionsPostgres(
   const pageSize = Math.min(50, Math.max(1, req.pageSize ?? 20));
   const offset = (page - 1) * pageSize;
 
+  // `kind = 'article'` is also what keeps an annexed treaty out of provision
+  // search. lög nr. 2/1993 prints the whole EEA Agreement as fylgiskjal I and
+  // the act reader shows it, but the Agreement's own row is where the article
+  // lives: without this condition every article of it would be found twice, and
+  // the judgments citing it split between the two copies.
   const filters: Prisma.Sql[] = [Prisma.sql`p.kind = 'article'`];
   if (req.actId) filters.push(Prisma.sql`p.act_id = ${req.actId}`);
   // Outside a chosen act, a provision search is a search of the whole corpus
   // and takes the same EEA/EU scope the act lookup does. Inside one, the act
   // has already been chosen and its scope with it.
   else filters.push(Prisma.sql`EXISTS (
-    SELECT 1 FROM acts a WHERE a.id = p.act_id AND ${scopeFilter(req.scope ?? "eea")}
+    SELECT 1 FROM acts a
+     WHERE a.id = p.act_id AND a.is_canonical AND ${scopeFilter(req.scope ?? "eea")}
   )`);
 
   const q = req.query.trim();
@@ -520,6 +533,7 @@ export async function searchProvisionsPostgres(
       SELECT p.id, p.act_id, p.display_label, p.heading, p.anchor,
              a.act_number, a.year, a.title AS act_title,
              a.jurisdiction, a.citation AS act_citation, a.celex,
+             a.language, a.text_group,
              left(p.full_text, 400) AS snippet,
              -- Distinct judgments, not link rows: one link is one citing
              -- passage, and a judgment often cites the same provision twice.
@@ -550,6 +564,8 @@ export async function searchProvisionsPostgres(
         citation: r.act_citation,
         actNumber: r.act_number,
         year: r.year,
+        textGroup: r.text_group ?? null,
+        language: r.language ?? "is",
       }),
       displayLabel: r.display_label,
       heading: r.heading,
@@ -561,6 +577,7 @@ export async function searchProvisionsPostgres(
         celex: r.celex,
         actNumber: r.act_number,
         year: r.year,
+        textGroup: r.text_group ?? null,
       })}#${r.anchor}`,
     })),
   };

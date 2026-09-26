@@ -32,6 +32,7 @@
 #   INGEST_ADAPTERS="bin-dictionary"          # only load/top up the BÍN dictionary
 #   INGEST_ADAPTERS="reglugerd lagastod"      # the regulations, and their lagastoð
 #   INGEST_ADAPTERS="lagastod"                # only re-link regulations to acts
+#   INGEST_ADAPTERS="treaties"                # only the EEA Agreement, TEU, TFEU
 #   INGEST_ADAPTERS="eur-lex-catalogue"       # only the EU act catalogue
 #   INGEST_ADAPTERS="eur-lex"                 # only the EU acts' text
 #   INGEST_ADAPTERS="cjeu-listing"            # only find which CJEU judgments exist
@@ -162,8 +163,15 @@ set -u
 # act, and this adapter fetches what is behind it. It has no listing of its own
 # to walk, so an act with no bill link is simply not work.
 #
+# `treaties` follows lagasafn for the same reason `frumvorp` does: it reads a
+# Lagasafn page. The Icelandic text of the EEA Agreement is fylgiskjal I of lög
+# nr. 2/1993, so running it after lagasafn means it takes that page at the codex
+# version this firing has just confirmed. Four fetches in total, and it precedes
+# citations because the treaty articles it writes are what the citation job then
+# resolves "28. gr. EES-samningsins" against.
+#
 # `lagastod` touches no network at all — it reads regulations already stored.
-DEFAULT_ADAPTERS="bin-dictionary stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal yfirskattanefnd yfirskattanefnd-retry stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-joint-committee eftasurv eftasurv-retry lagasafn eur-lex-catalogue eur-lex eur-lex-retry eur-lex-eea cjeu-listing cjeu reglugerd frumvorp citations lagastod"
+DEFAULT_ADAPTERS="bin-dictionary stjornarradid-priority icelandic-courts icelandic-retry icelandic-gaps felagsdomur felagsdomur-retry efta-court umbodsmadur uua uua-retry obyggdanefnd neytendamal yfirskattanefnd yfirskattanefnd-retry stjornarradid stjornarradid-retry stjornarradid-backfill logretta ulfljotur eea-joint-committee eftasurv eftasurv-retry lagasafn treaties eur-lex-catalogue eur-lex eur-lex-retry eur-lex-eea cjeu-listing cjeu reglugerd frumvorp citations lagastod"
 ADAPTERS=${*:-${INGEST_ADAPTERS:-$DEFAULT_ADAPTERS}}
 
 echo "Running adapters: $ADAPTERS"
@@ -409,6 +417,13 @@ for adapter in $ADAPTERS; do
       # dashboard can set it — the default is off, deliberately.
       LOGRETTA_FETCH_PDFS="${LOGRETTA_FETCH_PDFS:-}" \
         npm run ingest -- --adapter=logretta
+      ;;
+    treaties)
+      # The founding treaties, as acts: three instruments, four documents,
+      # seconds. Everything about which they are and where each text comes from
+      # is in src/lib/treaties.ts; there is nothing to bound and no cursor to
+      # carry, so it simply runs.
+      npm run ingest -- --adapter=treaties
       ;;
     eur-lex-catalogue)
       # What exists: two SPARQL queries per calendar year against the

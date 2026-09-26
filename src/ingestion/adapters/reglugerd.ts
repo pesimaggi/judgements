@@ -255,11 +255,12 @@ export async function saveRegulation(
 
   const act = await prisma.act.upsert({
     where: {
-      jurisdiction_docType_actNumber_year: {
+      jurisdiction_docType_actNumber_year_language: {
         jurisdiction: "is",
         docType: "regulation",
         actNumber: record.number,
         year: record.year,
+        language: "is",
       },
     },
     create: {

@@ -212,7 +212,7 @@ export function celexTextFromHtml(html: string): string {
 // The parse
 // ---------------------------------------------------------------------------
 
-export type EuLayout = "oj" | "consolidated" | "legacy";
+export type EuLayout = "oj" | "consolidated" | "legacy" | "treaty";
 
 export interface ParsedEuParagraph {
   /** Synthetic: EUR-Lex anchors articles but not their paragraphs. */
@@ -236,6 +236,16 @@ export interface ParsedEuProvision {
   chapterIndex: number | null;
   paragraphs: ParsedEuParagraph[];
   fullText: string;
+  /**
+   * Notes the source prints under the provision, as printed.
+   *
+   * Empty for everything EUR-Lex serves: an EU act's amendments are recorded in
+   * its consolidation, not in footnotes. EFTA's consolidated treaties do use
+   * them, and they hold what a reader of an amended article most wants — which
+   * instrument last changed it and when — so they go in the same column
+   * Lagasafn's footnotes go in. See src/lib/treaty-text.ts.
+   */
+  footnotes?: string[];
 }
 
 export interface ParsedEuChapter {
@@ -514,9 +524,102 @@ function parseTitle($: CheerioAPI): string | null {
   return subject.join(" ").trim() || null;
 }
 
-/** The formula that closes an act's recitals and opens its enacting terms. */
+/**
+ * The formula that closes an act's recitals and opens its enacting terms.
+ *
+ * The last alternative is a treaty's, and it is why the EEA Agreement parsed to
+ * nothing before it was added: an act says "HAVE ADOPTED THIS DIRECTIVE:",
+ * while the Agreement says "HAVE DECIDED to conclude the following Agreement:".
+ * The recitals above that line are 40 paragraphs of RECOGNISING and WHEREAS,
+ * several of which cite articles of the EEC Treaty, so starting the parse in
+ * the wrong place does not produce slightly wrong articles — it produces the
+ * Treaty of Rome's.
+ */
 const ADOPTION_FORMULA =
-  /(HAVE|HAS)\s+(ADOPTED|AGREED)[^.:]{0,80}[:.]|HAVE\s+DECIDED\s+AS\s+FOLLOWS[:.]/i;
+  /(HAVE|HAS)\s+(ADOPTED|AGREED)[^.:]{0,80}[:.]|HAVE\s+DECIDED\s+AS\s+FOLLOWS[:.]|HAVE\s+DECIDED\s+TO\s+CONCLUDE[^.:]{0,80}[:.]/i;
+
+/**
+ * The formula that closes the enacting terms, where the adoption formula opened
+ * them: the testimonium, the place and date of signature, and — in a treaty —
+ * whatever the Official Journal printed next.
+ *
+ * Without it the legacy walk runs to the end of the document and everything it
+ * finds belongs to the last article. On an act that is the signature block, a
+ * few lines. On the EEA Agreement it was 95,000 characters: Article 129 came
+ * out holding the testimonium in all thirteen authentic languages, the Final
+ * Act, the joint declarations and the list of annexes — 83 paragraphs, where
+ * the article has three.
+ *
+ * A treaty prints the testimonium once per authentic language and the languages
+ * are ordered by their own names, so which one comes first depends on the
+ * document. Only the first matters, so all of them are listed; the Icelandic
+ * and Greek lines are matched loosely because the Journal's 1994 HTML is
+ * mis-encoded and they do not arrive as their own letters.
+ */
+const CLOSING_FORMULA = new RegExp(
+  [
+    "Done at\\b",
+    "FINAL ACT$",
+    "In witness whereof\\b",
+    "En fe de lo cual\\b",
+    "Til bekr\\S*ftelse heraf\\b",
+    "Zu Urkund dessen\\b",
+    "En foi de quoi\\b",
+    "In fede di che\\b",
+    "Ten blijke waarvan\\b",
+    "Som bevitnelse\\b",
+    "Em f\\S* do que\\b",
+    "Till be\\S*ftelse h\\S*rav\\b",
+    "T\\S*m\\S*n vakuudeksi\\b",
+    "\\S*essu til sta\\S*festingar\\b",
+  ]
+    .map((alternative) => `^${alternative}`)
+    .join("|"),
+  "i"
+);
+
+/**
+ * The division headings a legacy paragraph carries, or null if it carries none.
+ *
+ * There is no markup here to tell a heading from a sentence, so the shape has to.
+ * Three things are true of every real heading and of almost no sentence: it
+ * begins with PART, TITLE, CHAPTER or SECTION followed by a numeral, it does not
+ * end in punctuation — a sentence does — and the name after the numeral begins
+ * with a capital. "Chapter 4 shall apply mutatis mutandis" fails the third and
+ * "…as provided for in Chapter 2." fails the first two.
+ *
+ * Getting it wrong is not cosmetic: the caller flushes the article it is reading
+ * when a heading appears, so a false positive loses the rest of that article's
+ * text. Hence rules that are dull rather than clever.
+ *
+ * It returns a list because the Official Journal prints a run of divisions as one
+ * paragraph — "PART III FREE MOVEMENT OF PERSONS, SERVICES AND CAPITAL CHAPTER 1
+ * WORKERS AND SELF-EMPLOYED PERSONS" is one line in the EEA Agreement, and there
+ * are five more like it. Under a one-heading-per-line rule those lines were too
+ * long to be a heading and too heading-shaped to be text, so they ended up
+ * inside Articles 27, 52, 65, 88 and 104.
+ */
+function legacyDivisions(text: string): ParsedEuChapter[] | null {
+  const keyword = /(PART|TITLE|CHAPTER|SECTION)\s+([IVXLC]+|\d+)(?![\p{L}\d])/giu;
+  if (text.length >= 200 || /[.;:,]$/.test(text)) return null;
+
+  const marks = [...text.matchAll(keyword)];
+  // It has to *open* with a division, not merely mention one.
+  if (marks.length === 0 || marks[0].index !== 0) return null;
+
+  const divisions: ParsedEuChapter[] = [];
+  for (const [i, mark] of marks.entries()) {
+    const from = mark.index + mark[0].length;
+    const to = i + 1 < marks.length ? marks[i + 1].index : text.length;
+    const title = text.slice(from, to).trim();
+    if (title && !/^[A-Z(]/.test(title)) return null;
+    divisions.push({
+      label: `${mark[1].toUpperCase()} ${mark[2].toUpperCase()}`,
+      title: title || null,
+    });
+  }
+  return divisions;
+}
 
 /**
  * The pre-2004 layout, which has no structure to read — only paragraphs.
@@ -582,20 +685,48 @@ function parseLegacy($: CheerioAPI): ParsedEuAct {
     current = null;
   };
 
+  /**
+   * Past the closing formula, where only annexes can still follow.
+   *
+   * Not a `break`, because an act prints its annexes *after* it is signed —
+   * stopping outright dropped the e-Commerce Directive's annex, which is the
+   * list of contracts Article 9 does not apply to. So the formula ends the
+   * articles and nothing else: an ANNEX heading still opens a provision, and
+   * everything between the two (the signatures, "For the Commission — The
+   * President", a treaty's declarations) belongs to no provision and is
+   * dropped, which is what it was before this loop ever saw it.
+   */
+  let closed = false;
+
   for (const text of body) {
+    if (!closed && CLOSING_FORMULA.test(text)) {
+      flush();
+      closed = true;
+      continue;
+    }
     if (/^Article\s+\d+[a-z]?$/i.test(text)) {
+      if (closed) continue;
       flush();
       current = { label: text, blocks: [], chapterIndex };
       continue;
     }
-    if (/^ANNEX\b/i.test(text) && text.length < 60) {
+    // An annex heading, which the Journal prints in capitals. Matched
+    // case-sensitively and with the sentence test, because "Annex XV contains
+    // specific provisions on State aid." is not a heading — it is the whole body
+    // of Article 63 of the EEA Agreement, and under the looser rule it opened an
+    // annex and left the article empty. Articles 63, 72 and 77 of the Agreement
+    // all read that way, and all three came out blank.
+    if (/^ANNEX\b/.test(text) && text.length < 60 && !/[.:;,]$/.test(text)) {
       flush();
       current = { label: text, blocks: [], chapterIndex: null };
       continue;
     }
-    if (/^(CHAPTER|SECTION|TITLE)\s+[IVXLC0-9]+$/i.test(text)) {
+    if (closed && !current) continue;
+    const divisions = legacyDivisions(text);
+    if (divisions) {
       flush();
-      chapters.push({ label: text, title: null });
+      // The innermost of a run is the one the articles below it belong to.
+      chapters.push(...divisions);
       chapterIndex = chapters.length - 1;
       continue;
     }
@@ -617,8 +748,191 @@ function parseLegacy($: CheerioAPI): ParsedEuAct {
   };
 }
 
+// ---------------------------------------------------------------------------
+// The treaties
+// ---------------------------------------------------------------------------
+
 /**
- * Parses one act's published text, in whichever of the three layouts Cellar
+ * Where a treaty's own text stops and the protocols begin.
+ *
+ * `12016M/TXT` and `12016E/TXT` are not the TEU and the TFEU: each is the
+ * treaty *followed by all 37 protocols and their annexes*, which between them
+ * hold several hundred more articles numbered from 1. Parsed whole, the TFEU
+ * comes out with over a thousand articles instead of 358, and "Article 3" means
+ * four different things.
+ *
+ * The protocols open with a `doc-ti` heading reading exactly "PROTOCOLS", and
+ * cutting the document there gives 55 articles for the TEU and 358 for the
+ * TFEU — both exactly right. So the cut is the whole of the parse's
+ * correctness, and if EUR-Lex ever renames that heading the article count
+ * quadruples rather than falling to zero: see the treaty tests, which assert no
+ * provision comes from a protocol.
+ */
+const PROTOCOLS_HEADING = /^PROTOCOLS$/i;
+
+/**
+ * Discards everything after the PROTOCOLS heading, and the heading itself.
+ *
+ * Everything that follows a node in document order is either a later sibling of
+ * that node or a later sibling of one of its ancestors, so walking up and
+ * dropping `nextAll()` at each level is the whole cut.
+ */
+function cutAtProtocols($: CheerioAPI): void {
+  const marker = $("p.doc-ti")
+    .toArray()
+    .find((el) => PROTOCOLS_HEADING.test(squish($(el).text())));
+  if (!marker) return;
+  let node = $(marker);
+  while (node.length > 0 && !node.is("body") && !node.is("html")) {
+    node.nextAll().remove();
+    node = node.parent();
+  }
+  $(marker).remove();
+}
+
+/**
+ * The nesting of a treaty's divisions, which the markup does not state.
+ *
+ * The OJ layout puts an act's articles *inside* a `div id="cpt_III"`, so
+ * membership can be read off the tree. A treaty prints PART ONE, TITLE I,
+ * CHAPTER 1 and SECTION 1 as flat sibling paragraphs and leaves the reader to
+ * infer the hierarchy from the words — so this table is the hierarchy, and a
+ * division is nested under whichever open divisions outrank it.
+ */
+const TREATY_DIVISION_LEVELS: [RegExp, number][] = [
+  [/^PART\b/i, 1],
+  [/^TITLE\b/i, 2],
+  [/^CHAPTER\b/i, 3],
+  [/^SECTION\b/i, 4],
+];
+
+function treatyDivisionLevel(label: string, openLevels: number): number {
+  for (const [pattern, level] of TREATY_DIVISION_LEVELS) {
+    if (pattern.test(label)) return level;
+  }
+  // An unrecognised heading replaces the deepest open division rather than
+  // nesting under it: guessing that it is deeper would put every article after
+  // it under a division that does not contain them.
+  return Math.max(1, openLevels);
+}
+
+/**
+ * The founding treaties: the TEU, the TFEU, and anything else Cellar serves in
+ * the same markup.
+ *
+ * Close enough to the `oj` layout to be confusing, and different in the three
+ * ways that matter:
+ *
+ *   - an article's container is `div id="001"`, not `div id="art_1"`;
+ *   - its number is in `p.ti-art`, where the OJ layout writes `p.oj-ti-art`;
+ *   - divisions are flat sibling paragraphs rather than nesting the articles
+ *     they contain (see TREATY_DIVISION_LEVELS).
+ *
+ * `p.sti-art`, the line under the article number, is kept as the provision's
+ * heading, though a treaty rarely uses it as one: what it almost always holds
+ * is the pre-Lisbon numbering, "(ex Article 86 TEC)". That is worth storing
+ * rather than dropping — a 2005 judgment cites Article 86 TEC and a reader
+ * looking it up needs to land on Article 106 TFEU — and the search index is
+ * what turns it into that lookup.
+ */
+function parseTreaty($: CheerioAPI): ParsedEuAct {
+  cutAtProtocols($);
+
+  // The OJ's footnote calls, which are rendered inline and would otherwise
+  // read as part of the sentence they hang off: "…between men and women.(2)".
+  // Only the call is removed; the note's own text is a paragraph of its own and
+  // is left where it is.
+  $("span.note-tag").each((_, el) => {
+    const $call = $(el).closest("a");
+    ($call.length > 0 ? $call : $(el)).remove();
+  });
+
+  const chapters: ParsedEuChapter[] = [];
+  const provisions: ParsedEuProvision[] = [];
+
+  /** The open division at each level, deepest last. See treatyDivisionLevel. */
+  const openLabels: (string | undefined)[] = [];
+  let chapterIndex: number | null = null;
+
+  $("p.ti-section-1, p.ti-section-2, div[id]").each((_, el) => {
+    const $el = $(el);
+
+    if ($el.is("p.ti-section-1")) {
+      const own = squish($el.text());
+      if (!own) return;
+      const level = treatyDivisionLevel(own, openLabels.length);
+      openLabels.length = level - 1;
+      openLabels[level - 1] = own;
+      chapters.push({
+        label: openLabels.filter(Boolean).join(" — "),
+        title: null,
+      });
+      chapterIndex = chapters.length - 1;
+      return;
+    }
+
+    // The division's name, in bold under its number. It belongs to the division
+    // opened immediately above it and to nothing else, so a second one is the
+    // body text of something and is left alone.
+    if ($el.is("p.ti-section-2")) {
+      const title = squish($el.text());
+      const division = chapterIndex !== null ? chapters[chapterIndex] : null;
+      if (division && division.title === null && title) division.title = title;
+      return;
+    }
+
+    // An article. Its container's id is the article's ordinal, zero-padded and
+    // useless as an anchor ("001"), so the anchor is built from the number the
+    // article actually carries.
+    const id = $el.attr("id") ?? "";
+    if (!/^\d+$/.test(id)) return;
+    const $label = $el.children("p.ti-art").first();
+    const label = squish($label.text());
+    if (!/^Article\b/i.test(label)) return;
+
+    const $heading = $el.children("p.sti-art").first();
+    const heading = squish($heading.text()) || null;
+
+    const blocks: string[] = [];
+    $el.children().each((_, child) => {
+      const $child = $(child);
+      if ($child.is($label) || $child.is($heading)) return;
+      const text = textOf($, $child);
+      if (text) blocks.push(text);
+    });
+
+    const { articleNumber, articleLetter } = parseArticleLabel(label);
+    const anchor =
+      articleNumber !== null ? `art_${articleNumber}${articleLetter ?? ""}` : `art_${id}`;
+    const paragraphs = toParagraphs(anchor, blocks);
+    provisions.push({
+      kind: "article",
+      anchor,
+      articleNumber,
+      articleLetter,
+      displayLabel: label,
+      heading,
+      chapterIndex,
+      paragraphs,
+      fullText: paragraphs.map((par) => par.text).join("\n\n"),
+    });
+  });
+
+  return {
+    // The document's own title is the consolidation's ("CONSOLIDATED VERSION OF
+    // THE TREATY ON EUROPEAN UNION"), which is a fact about the text rather
+    // than the name of the instrument. The registry in src/lib/treaties.ts
+    // holds the name; this is the cross-check that the right document arrived.
+    title: squish($("p.doc-ti").first().text()) || parseTitle($),
+    chapters,
+    provisions,
+    eeaRelevanceStated: false,
+    layout: "treaty",
+  };
+}
+
+/**
+ * Parses one act's published text, in whichever of the four layouts Cellar
  * returned it in.
  *
  * Never throws on a document it does not recognise: it returns no provisions,
@@ -634,5 +948,14 @@ export function parseEuActHtml(html: string): ParsedEuAct {
     const layout: EuLayout = $("p.title-article-norm").length > 0 ? "consolidated" : "oj";
     return parseStructured($, layout);
   }
+  // A treaty, recognised by the one thing only a treaty has here: an article
+  // container whose id is its ordinal. Deliberately narrow — a document with
+  // `ti-art` paragraphs and no such container is something else, and is better
+  // served by the legacy walk than by a treaty parse that would find nothing
+  // in it.
+  const treatyArticles = $("div[id]").filter(
+    (_, el) => /^\d+$/.test($(el).attr("id") ?? "") && $(el).children("p.ti-art").length > 0
+  );
+  if (treatyArticles.length > 0) return parseTreaty($);
   return parseLegacy($);
 }

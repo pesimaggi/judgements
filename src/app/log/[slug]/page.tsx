@@ -2,6 +2,11 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ProvisionCases } from "@/components/ProvisionCases";
+import {
+  TextLanguageToggle,
+  useTextLanguage,
+  type TextLanguage,
+} from "@/components/TextLanguageToggle";
 import { eeaTag } from "@/lib/eea-tag";
 
 interface Paragraph {
@@ -54,9 +59,46 @@ interface Chapter {
   title: string | null;
   ordering: number;
 }
+/** Another stored text of the same instrument. */
+interface OtherText {
+  language: string;
+  isCanonical: boolean;
+  path: string;
+}
+
+/**
+ * How a treaty reaches Icelandic law.
+ *
+ * Three states, and they are three different sentences to a reader:
+ * "force-of-law" — the text was enacted here (the EEA main text, 2. gr. laga nr.
+ * 2/1993); "ratified" — Iceland is a party but the text was not enacted (the
+ * Surveillance and Court Agreement); "not-a-party" — the EU treaties.
+ */
+interface IcelandicLaw {
+  kind: "force-of-law" | "ratified" | "not-a-party";
+  /** "2. gr." / "1. gr." — the article of the act, where there is one. */
+  article: string | null;
+  citation: string | null;
+  path: string | null;
+  /** Which fylgiskjal of that act prints the text, where one does. */
+  annex: string | null;
+}
+
+/** A treaty this act prints as a fylgiskjal. */
+interface AnnexedTreaty {
+  slug: string;
+  title: string;
+  citation: string;
+  annex: string | null;
+  path: string;
+}
+
 interface Act {
   id: string;
-  /** "is" — an Icelandic act; "eu" — an EU regulation, directive or decision. */
+  /**
+   * "is" — an Icelandic act; "eu" — an EU regulation, directive or decision;
+   * "treaty" — the EEA Agreement, the TEU or the TFEU.
+   */
   jurisdiction: string;
   actNumber: number;
   year: number;
@@ -90,6 +132,14 @@ interface Act {
   originalDocUrl: string | null;
   /** "structured" | "heuristic" — how much the article divisions can be trusted. */
   structureSource: string | null;
+  // One instrument, more than one text. Only a treaty has these.
+  /** Language of the text below (ISO 639-1). */
+  language: string;
+  /** The instrument this is a text of: the treaty registry's slug. */
+  textGroup: string | null;
+  otherTexts: OtherText[];
+  icelandicLaw: IcelandicLaw | null;
+  annexedTreaty: AnnexedTreaty | null;
 }
 
 /**
@@ -123,9 +173,22 @@ export default function ActPage({ params }: { params: { slug: string } }) {
   const [filter, setFilter] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  /**
+   * Which text of the instrument to read, and whether to read both.
+   *
+   * The language is a remembered preference rather than part of the URL's
+   * identity: `/log/ees` is the Agreement, and the text you read it in is how
+   * you are reading it. The API takes `?lang=` and falls back to the governing
+   * text, so a remembered "en" on an instrument that has no English text is
+   * harmless.
+   */
+  const [language, setLanguage] = useTextLanguage();
+  const [parallel, setParallel] = useState(false);
+  /** The other text, fetched only for the side-by-side view. */
+  const [sibling, setSibling] = useState<{ language: string; provisions: Provision[] } | null>(null);
 
   useEffect(() => {
-    fetch(`/api/acts/${params.slug}`)
+    fetch(`/api/acts/${params.slug}${language ? `?lang=${language}` : ""}`)
       .then((r) => r.json())
       .then((d) => {
         if (d.error) throw new Error(d.error);
@@ -137,7 +200,29 @@ export default function ActPage({ params }: { params: { slug: string } }) {
       })
       .catch(() => setError("Could not load this act."))
       .finally(() => setLoading(false));
-  }, [params.slug]);
+  }, [params.slug, language]);
+
+  // The side-by-side view's second text. Fetched on demand rather than always,
+  // because it doubles the payload of a page most readers read in one language —
+  // and the two texts of the EEA Agreement are 80 KB each.
+  useEffect(() => {
+    const other = act?.otherTexts?.[0];
+    if (!parallel || !other) {
+      setSibling(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/acts/${params.slug}?lang=${other.language}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled || d.error) return;
+        setSibling({ language: other.language, provisions: d.provisions });
+      })
+      .catch(() => setSibling(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [parallel, params.slug, act?.otherTexts, act?.language]);
 
   // Opening the page on a provision anchor (from a search result or a
   // citation link) should land on that provision with its cases already open.
@@ -178,6 +263,27 @@ export default function ActPage({ params }: { params: { slug: string } }) {
 
   const isEu = act?.jurisdiction === "eu";
   const isRegulation = act?.jurisdiction === "is" && act?.docType === "regulation";
+  const isTreaty = act?.jurisdiction === "treaty";
+
+  /**
+   * The texts this instrument has, Icelandic first.
+   *
+   * Built from what is stored rather than from the registry: offering a language
+   * before its text has been ingested is a control that leads to an empty page.
+   */
+  const availableLanguages = useMemo<TextLanguage[]>(() => {
+    if (!act?.textGroup) return [];
+    const all = [act.language, ...act.otherTexts.map((t) => t.language)];
+    return (["is", "en"] as TextLanguage[]).filter((l) => all.includes(l));
+  }, [act?.textGroup, act?.language, act?.otherTexts]);
+
+  /** The sibling's articles by anchor — shared across languages by design. */
+  const siblingByAnchor = useMemo(() => {
+    const map = new Map<string, Provision>();
+    for (const p of sibling?.provisions ?? []) map.set(p.anchor, p);
+    return map;
+  }, [sibling]);
+  const showParallel = parallel && siblingByAnchor.size > 0;
 
   // Deliberately not the sum of the per-provision counts: those are distinct
   // judgments *per provision*, so a judgment citing three provisions of this
@@ -205,12 +311,28 @@ export default function ActPage({ params }: { params: { slug: string } }) {
         </Link>
         <span aria-hidden="true">·</span>
         <Link href="/log" className="hover:underline">
-          {isEu ? "Allar gerðir" : "Öll lög"}
+          {isEu ? "Allar gerðir" : isTreaty ? "Alþjóðasamningar" : "Öll lög"}
         </Link>
       </nav>
 
       <header className="mt-2 rounded-lg border border-line bg-white p-5">
-        <p className="font-mono text-xs text-inkSoft">{act.citation}</p>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <p className="font-mono text-xs text-inkSoft">{act.citation}</p>
+          {/*
+            Two authentic texts, not an original and a translation — so this is a
+            choice between two statements of the same rule rather than a
+            "translate" button. Shown only where a second text exists, which is
+            the EEA Agreement and nothing else: Iceland is not a party to the TEU
+            or the TFEU and there is no authentic Icelandic text of either.
+          */}
+          <TextLanguageToggle
+            available={availableLanguages}
+            current={(act.language === "en" ? "en" : "is") as TextLanguage}
+            onChange={setLanguage}
+            parallel={parallel}
+            onParallelChange={setParallel}
+          />
+        </div>
         <h1 className="mt-1 font-serif text-2xl font-semibold leading-tight">{act.title}</h1>
         {act.aliases.length > 0 && (
           <p className="mt-1 text-xs text-inkSoft">
@@ -344,6 +466,70 @@ export default function ActPage({ params }: { params: { slug: string } }) {
           </div>
         )}
 
+        {/*
+          ---- Why a treaty is in a library of Icelandic law ----------------
+          The one thing an Icelandic reader most needs to know about the EEA
+          Agreement, and it is not obvious from the fact that we hold it: its
+          main text has lagagildi here. The EES badges the EU acts carry are
+          deliberately absent — "tekin upp í EES-samninginn" said of the
+          Agreement itself would be nonsense, and said of the TFEU would be
+          wrong.
+        */}
+        {isTreaty && (
+          <div className="mt-3 rounded border border-line bg-paper px-3 py-2 text-xs text-inkSoft">
+            {act.icelandicLaw?.kind === "force-of-law" ? (
+              <p>
+                <span className="font-medium text-ink">Hefur lagagildi á Íslandi</span> — meginmál
+                samningsins var lögfest með {act.icelandicLaw.article}{" "}
+                <Link href={act.icelandicLaw.path ?? "#"} className="text-accent hover:underline">
+                  {act.icelandicLaw.citation}
+                </Link>
+                {act.icelandicLaw.annex
+                  ? `, og textinn hér er fylgiskjal ${act.icelandicLaw.annex} þeirra laga eins og Alþingi birtir það.`
+                  : "."}
+              </p>
+            ) : act.icelandicLaw?.kind === "ratified" ? (
+              /*
+                The state that is neither of the other two, and the one worth
+                getting right: Iceland is a party, so the agreement binds the
+                State — the EFTA Court's jurisdiction over Iceland comes from it —
+                but its text was never given the force of law here, so it is not
+                Icelandic law and must not be shown as though it were.
+              */
+              <p>
+                <span className="font-medium text-ink">Ísland er aðili — en samningurinn hefur ekki lagagildi</span>{" "}
+                — heimild til að fullgilda hann er í {act.icelandicLaw.article}{" "}
+                <Link href={act.icelandicLaw.path ?? "#"} className="text-accent hover:underline">
+                  {act.icelandicLaw.citation}
+                </Link>
+                , en þau lög lögfestu aðeins meginmál EES-samningsins, bókun 1 og tvö atriði í
+                viðaukum. Samningurinn bindur íslenska ríkið að þjóðarétti og er grundvöllur
+                lögsögu EFTA-dómstólsins hér, en hann er ekki hluti af íslenskum lögum.
+              </p>
+            ) : (
+              <p>
+                <span className="font-medium text-ink">Ísland er ekki aðili</span> — sáttmálinn
+                bindur Ísland ekki, en hann er sá texti sem EFTA-dómstóllinn og Evrópudómstóllinn
+                túlka ákvæði EES-samningsins til samræmis við. Hann er birtur hér á ensku, sem er
+                eini textinn sem er fullgildur að þessu leyti.
+              </p>
+            )}
+            {act.language === "en" && act.otherTexts.length === 0 && (
+              <p className="mt-1">
+                {act.icelandicLaw?.kind === "ratified"
+                  ? "Samningurinn var einnig staðfestur á íslensku, sbr. 1. mgr. 53. gr. hans, en sá texti er ekki birtur þar sem safnið nær til hans."
+                  : "Enginn íslenskur fullgildur texti er til."}
+              </p>
+            )}
+            {showParallel && (
+              <p className="mt-1">
+                Textarnir eru hlið við hlið, grein fyrir grein. Greinatalning er sú sama í báðum —
+                sami gerningur, talinn einu sinni.
+              </p>
+            )}
+          </div>
+        )}
+
         {/* ---- Where this act stands in EEA law ---------------------- */}
         {isEu && (
           <div className="mt-3 rounded border border-line bg-paper px-3 py-2 text-xs text-inkSoft">
@@ -375,7 +561,25 @@ export default function ActPage({ params }: { params: { slug: string } }) {
         )}
 
         <p className="mt-3 text-[11px] text-inkSoft">
-          {isEu ? (
+          {isTreaty ? (
+            act.language === "is" ? (
+              <>
+                Unofficial reproduction of the Icelandic text as Alþingi publishes it
+                {act.codexVersion ? ` (Lagasafn ${act.codexVersion})` : ""}. Always verify against
+                the official source.
+              </>
+            ) : act.celex ? (
+              <>
+                Unofficial reproduction of the text EUR-Lex publishes ({act.celex}). The protocols
+                and annexes are not held here. Always verify against the official source.
+              </>
+            ) : (
+              <>
+                Unofficial reproduction of the consolidated text EFTA publishes. The protocols are
+                not held here. Always verify against the official source.
+              </>
+            )
+          ) : isEu ? (
             <>
               Unofficial reproduction of the text EUR-Lex publishes
               {act.textCelex && act.textCelex !== act.celex
@@ -400,6 +604,35 @@ export default function ActPage({ params }: { params: { slug: string } }) {
           )}
         </p>
       </header>
+
+      {/*
+        ---- The treaty this act enacted -----------------------------------
+        Some readers come to the EEA Agreement through the act that gave it the
+        force of law, and the fylgiskjal below is the text they came for — so it
+        is shown in full, here, where it is printed. The Agreement's own page is
+        where its articles are searchable and where the judgments citing each one
+        are counted, which is what this link is for.
+      */}
+      {act.annexedTreaty && (
+        <section className="mt-4 rounded-lg border border-line bg-white p-5">
+          <h2 className="font-serif text-base font-semibold">
+            {act.annexedTreaty.citation}
+          </h2>
+          <p className="mt-1 text-xs text-inkSoft">
+            {act.annexedTreaty.annex
+              ? `Meginmál samningsins er birt sem fylgiskjal ${act.annexedTreaty.annex} með þessum lögum, og er hér að neðan.`
+              : "Meginmál samningsins er birt sem fylgiskjal með þessum lögum, og er hér að neðan."}{" "}
+            Á eigin síðu samningsins er hægt að fletta upp greinum hans, sjá úrlausnir sem vísa til
+            þeirra og lesa enska textann samhliða.
+          </p>
+          <Link
+            href={act.annexedTreaty.path}
+            className="mt-2 inline-block text-sm text-accent hover:underline"
+          >
+            Lesa {act.annexedTreaty.title} →
+          </Link>
+        </section>
+      )}
 
       {/*
         ---- Regulations made under this act -------------------------------
@@ -483,7 +716,11 @@ export default function ActPage({ params }: { params: { slug: string } }) {
               placeholder={
                 isEu
                   ? "Leita innan gerðarinnar — t.d. „Article 6“ eða „consent“"
-                  : "Leita innan laganna — t.d. „130. gr.“ eða „málskostnaður“"
+                  : isTreaty
+                    ? act.language === "en"
+                      ? "Leita innan samningsins — t.d. „Article 28“ eða „workers“"
+                      : "Leita innan samningsins — t.d. „28. gr.“ eða „launþega“"
+                    : "Leita innan laganna — t.d. „130. gr.“ eða „málskostnaður“"
               }
               className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none focus:border-ink"
             />
@@ -520,21 +757,56 @@ export default function ActPage({ params }: { params: { slug: string } }) {
                           )}
                         </h3>
                         <a
-                          href={`${act.currentVersionUrl}#${p.anchor}`}
+                          // A treaty article's anchor is ours, not the source's
+                          // (see treatyAnchor), so it cannot be appended to the
+                          // official URL: the link goes to the document.
+                          href={isTreaty ? act.currentVersionUrl : `${act.currentVersionUrl}#${p.anchor}`}
                           target="_blank"
                           rel="noreferrer"
                           className="text-[11px] text-inkSoft hover:underline"
                         >
-                          {isEu
+                          {isEu || (isTreaty && act.celex)
                             ? "eur-lex.europa.eu ↗"
-                            : isRegulation
-                              ? "reglugerd.is ↗"
-                              : "althingi.is ↗"}
+                            : isTreaty && act.language === "en"
+                              ? "efta.int ↗"
+                              : isRegulation
+                                ? "reglugerd.is ↗"
+                                : "althingi.is ↗"}
                         </a>
                       </div>
 
                       {p.isRepealed ? (
                         <p className="mt-2 text-sm italic text-inkSoft">Fellt brott.</p>
+                      ) : showParallel ? (
+                        /*
+                          The two authentic texts, article for article. The
+                          articles line up because both are keyed on the treaty's
+                          own numbering — one instrument, numbered once — so this
+                          is a lookup and not an alignment guess. Stacked on a
+                          phone, where two columns of legal prose are neither.
+                        */
+                        <div className="mt-2 grid gap-4 md:grid-cols-2">
+                          <div className="space-y-2 font-serif text-[15px] leading-relaxed text-ink">
+                            {p.paragraphs.map((par) => (
+                              <p key={par.anchor} id={par.anchor} className="scroll-mt-4">
+                                {par.text}
+                              </p>
+                            ))}
+                          </div>
+                          <div
+                            className="space-y-2 border-t border-line pt-4 font-serif text-[15px] leading-relaxed text-ink md:border-l md:border-t-0 md:pl-4 md:pt-0"
+                            lang={sibling?.language}
+                          >
+                            {(siblingByAnchor.get(p.anchor)?.paragraphs ?? []).map((par) => (
+                              <p key={par.anchor}>{par.text}</p>
+                            ))}
+                            {!siblingByAnchor.has(p.anchor) && (
+                              <p className="font-sans text-xs italic text-inkSoft">
+                                Þessi grein er ekki í hinum textanum.
+                              </p>
+                            )}
+                          </div>
+                        </div>
                       ) : (
                         <div className="mt-2 space-y-2 font-serif text-[15px] leading-relaxed text-ink">
                           {p.paragraphs.map((par) => (

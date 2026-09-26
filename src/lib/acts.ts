@@ -26,6 +26,14 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { euActPath, euSubjectTitle, parseCelex } from "./eur-lex";
+import {
+  TREATY_DOC_TYPE,
+  TREATY_JURISDICTION,
+  treatyByIdentity,
+  treatyBySlug,
+  treatyPath,
+  type TreatyDef,
+} from "./treaties";
 
 export type ActSort = "title" | "number" | "cases" | "provisions";
 
@@ -44,9 +52,10 @@ export type ActScope = "eea" | "eu";
  *   "is"     — lög. jurisdiction "is", docType "act".
  *   "is-reg" — reglugerðir. jurisdiction "is", docType "regulation".
  *   "eu"     — the EU library, whatever the instrument.
+ *   "treaty" — the founding treaties. See src/lib/treaties.ts.
  *   "all"    — no filter.
  */
-export type ActCorpus = "is" | "is-reg" | "eu" | "all";
+export type ActCorpus = "is" | "is-reg" | "eu" | "treaty" | "all";
 
 
 export function parseActScope(value: string | null | undefined): ActScope {
@@ -54,7 +63,9 @@ export function parseActScope(value: string | null | undefined): ActScope {
 }
 
 export function parseActCorpus(value: string | null | undefined): ActCorpus {
-  return value === "eu" || value === "all" || value === "is-reg" ? value : "is";
+  return value === "eu" || value === "all" || value === "is-reg" || value === "treaty"
+    ? value
+    : "is";
 }
 
 
@@ -70,10 +81,24 @@ export function parseActCorpus(value: string | null | undefined): ActCorpus {
 export function scopeFilter(scope: ActScope, alias = "a"): Prisma.Sql {
   if (scope === "eu") return Prisma.sql`TRUE`;
   const table = Prisma.raw(alias);
+  // The treaties are in both scopes, and this line is load-bearing in a way
+  // nothing else here is: every act lookup, the act type-ahead, provision
+  // search and the well's retrieval all reach acts through this function, so a
+  // treaty that does not satisfy it is not merely absent from the EES setting —
+  // it is invisible to the whole application, which looks exactly like an
+  // ingest that silently stored nothing.
+  //
+  // They belong here even though the TEU and the TFEU are not EEA law: they are
+  // the text EFTA Court and CJEU reasoning reads EEA provisions against, so
+  // hiding them behind the wide setting would hide them from precisely the
+  // people who need them. The EEA Agreement is not even a close call — its main
+  // text has lagagildi in Iceland.
+  //
   // coalesce, because a scalar list is NULL rather than empty for any row
   // written before the column existed — and `cardinality(NULL) > 0` is NULL,
   // which drops the row from the filter instead of failing the one test.
   return Prisma.sql`(${table}.jurisdiction = 'is'
+     OR ${table}.jurisdiction = 'treaty'
      OR ${table}.eea_relevant
      OR coalesce(cardinality(${table}.eea_incorporated_by), 0) > 0)`;
 }
@@ -90,19 +115,53 @@ export function scopeFilter(scope: ActScope, alias = "a"): Prisma.Sql {
  */
 export function corpusFilter(corpus: ActCorpus, alias = "a"): Prisma.Sql {
   const table = Prisma.raw(alias);
+  // One instrument, one row. `is_canonical` is false only on a secondary-
+  // language text — today the English EEA Agreement — and it is excluded here,
+  // in the one function every listing goes through, rather than at each of
+  // them. Without it the Agreement's Article 28 appears twice in the catalogue
+  // under two labels, with the judgments that cite it split between the copies.
+  // The other text is never *listed*; it is reached from the row that owns the
+  // instrument, by following `text_group`.
+  const canonical = Prisma.sql`${table}.is_canonical`;
   switch (corpus) {
     case "all":
-      return Prisma.sql`TRUE`;
+      return canonical;
     case "eu":
-      return Prisma.sql`${table}.jurisdiction = 'eu'`;
+      return Prisma.sql`${table}.jurisdiction = 'eu' AND ${canonical}`;
     case "is-reg":
-      return Prisma.sql`${table}.jurisdiction = 'is' AND ${table}.doc_type = 'regulation'`;
+      return Prisma.sql`${table}.jurisdiction = 'is' AND ${table}.doc_type = 'regulation' AND ${canonical}`;
+    case "treaty":
+      return Prisma.sql`${table}.jurisdiction = 'treaty' AND ${canonical}`;
     case "is":
     default:
-      return Prisma.sql`${table}.jurisdiction = 'is' AND ${table}.doc_type = 'act'`;
+      return Prisma.sql`${table}.jurisdiction = 'is' AND ${table}.doc_type = 'act' AND ${canonical}`;
   }
 }
 
+
+/**
+ * A row's treaty, where it is one: the registry entry its `textGroup` names.
+ *
+ * Every treaty-specific display rule goes through this rather than through the
+ * stored columns, because what a treaty is called, and how its articles are
+ * cited in each language, is a fact about the instrument and not about the row.
+ */
+export function actTreaty(act: {
+  jurisdiction: string;
+  textGroup?: string | null;
+  actNumber?: number;
+  year?: number;
+}): TreatyDef | null {
+  if (act.jurisdiction !== TREATY_JURISDICTION) return null;
+  if (act.textGroup) return treatyBySlug(act.textGroup);
+  // Callers that select a narrow act identity and no `text_group` — the well's
+  // tools, the lookup route, the Meilisearch sync — still get the right
+  // instrument. See treatyByIdentity.
+  if (act.actNumber !== undefined && act.year !== undefined) {
+    return treatyByIdentity(act.actNumber, act.year);
+  }
+  return null;
+}
 
 /** How an act is cited, given what the row holds. */
 export function actCitation(act: {
@@ -111,7 +170,17 @@ export function actCitation(act: {
   citation: string | null;
   actNumber: number;
   year: number;
+  textGroup?: string | null;
+  language?: string;
 }): string {
+  // A treaty has no number, and `actNumber` holds a registry ordinal that must
+  // never reach a reader: "lög nr. 3/1957" is not the TFEU. The stored citation
+  // is the instrument's own, in the row's language.
+  if (act.jurisdiction === TREATY_JURISDICTION) {
+    const treaty = actTreaty(act);
+    if (treaty) return act.language === "en" ? treaty.citationEn : treaty.citationIs;
+    return act.citation ?? "";
+  }
   if (act.jurisdiction === "eu") return act.citation ?? `${act.actNumber}/${act.year}`;
   // An Icelandic regulation is cited by the same number-and-year form as an
   // act and is not one; calling it "lög nr. 300/2020" would be a statement
@@ -125,6 +194,9 @@ export function actCitation(act: {
  * official title opens with the citation shown beside it. See euSubjectTitle.
  */
 export function actDisplayTitle(act: { jurisdiction: string; title: string }): string {
+  // A treaty's stored title is already the instrument's name in the row's
+  // language ("Samningur um Evrópska efnahagssvæðið"), with no citation glued to
+  // the front of it to strip.
   return act.jurisdiction === "eu" ? euSubjectTitle(act.title) : act.title;
 }
 
@@ -142,7 +214,13 @@ export function actFullLabel(act: {
   citation: string | null;
   actNumber: number;
   year: number;
+  textGroup?: string | null;
+  language?: string;
 }): string {
+  // The Agreement's name and its citation are the same fact twice
+  // ("Samningur um Evrópska efnahagssvæðið (EES-samningurinn)" is a mouthful
+  // that tells a reader nothing), so a treaty is labelled by its title alone.
+  if (act.jurisdiction === TREATY_JURISDICTION) return actDisplayTitle(act);
   if (act.jurisdiction === "eu") return `${actDisplayTitle(act)} (${actCitation(act)})`;
   return `${act.title} nr. ${act.actNumber}/${act.year}`;
 }
@@ -165,8 +243,19 @@ export function provisionFullLabel(
     citation: string | null;
     actNumber: number;
     year: number;
+    textGroup?: string | null;
+    language?: string;
   }
 ): string {
+  // "28. gr. EES-samningsins" and "Article 28 EEA" — each language's own
+  // convention, which is also how a judgment in that language writes it, and
+  // therefore what the citation patterns in legal-citations.ts look for.
+  const treaty = actTreaty(act);
+  if (treaty) {
+    return act.language === "en"
+      ? `${displayLabel} ${treaty.articleSuffixEn}`
+      : `${displayLabel} ${treaty.genitiveIs}`;
+  }
   if (act.jurisdiction === "eu") return `${displayLabel} ${actCitation(act)}`;
   const kind = act.docType === "regulation" ? "reglugerðar" : "laga";
   return `${displayLabel} ${kind} nr. ${act.actNumber}/${act.year}`;
@@ -186,7 +275,16 @@ export function actPath(act: {
   celex: string | null;
   actNumber: number;
   year: number;
+  textGroup?: string | null;
 }): string {
+  // A treaty is served at its slug — "/log/ees" — and the slug is the same for
+  // both of its texts: a URL identifies the instrument, and the language is a
+  // way of reading it rather than a different thing to read. Letters cannot
+  // collide with "38-2001", "rg-300-2020" or a CELEX.
+  if (act.jurisdiction === TREATY_JURISDICTION) {
+    const treaty = actTreaty(act);
+    if (treaty) return treatyPath(treaty.slug);
+  }
   if (act.jurisdiction === "eu" && act.celex) return euActPath(act.celex);
   // Regulations are prefixed because "300-2020" cannot say whether it means
   // lög nr. 300/2020 or reglugerð nr. 300/2020, and both can exist. The route
@@ -201,7 +299,8 @@ export function actPath(act: {
 /** An act reference as it arrives in a URL, resolved to what to look up. */
 export type ActRef =
   | { jurisdiction: "is"; docType: "act" | "regulation"; actNumber: number; year: number }
-  | { jurisdiction: "eu"; celex: string };
+  | { jurisdiction: "eu"; celex: string }
+  | { jurisdiction: "treaty"; treaty: TreatyDef };
 
 /**
  * Parses the three forms /log/{slug} takes: "38-2001" for an act,
@@ -212,6 +311,12 @@ export type ActRef =
  * discriminator and could not be made into one.
  */
 export function parseActRef(slug: string): ActRef | null {
+  // A treaty first, and by exact match against the registry rather than by
+  // shape: the set is three entries long and closed, so there is nothing to
+  // pattern-match and no chance of claiming a slug that means something else.
+  const treaty = treatyBySlug(slug);
+  if (treaty) return { jurisdiction: "treaty", treaty };
+
   const regulation = /^rg-(\d{1,4})-(\d{4})$/.exec(slug);
   if (regulation) {
     return {
@@ -238,8 +343,12 @@ export function parseActRef(slug: string): ActRef | null {
 export interface ActListItem {
   id: string;
   jurisdiction: string;
-  /** "act" | "regulation" | "directive" | "decision". */
+  /** "act" | "regulation" | "directive" | "decision" | "treaty". */
   docType: string;
+  /** Language of this text (ISO 639-1). */
+  language: string;
+  /** The treaty this is a text of, where it is one: the registry slug. */
+  textGroup: string | null;
   actNumber: number;
   year: number;
   title: string;
@@ -272,13 +381,15 @@ export interface ActListResult {
     provisions: number;
     linkedProvisions: number;
     /**
-     * Icelandic acts, Icelandic regulations, EU acts, and the EEA-scoped
-     * subset of the EU ones.
+     * Icelandic acts, Icelandic regulations, EU acts, the EEA-scoped subset of
+     * the EU ones, and the treaties. The treaty figure counts instruments, not
+     * texts: the Agreement is one treaty in two languages.
      */
     icelandic: number;
     regulations: number;
     eu: number;
     euEea: number;
+    treaties: number;
   };
 }
 
@@ -358,6 +469,7 @@ export async function listActs(opts: {
       SELECT a.id, a.jurisdiction, a.doc_type, a.act_number, a.year, a.title, a.aliases,
              a.current_version_url, a.citation, a.celex, a.eea_relevant,
              a.eea_incorporated_by, a.status, a.text_status,
+             a.language, a.text_group,
              (SELECT count(*)::int FROM provisions p
                WHERE p.act_id = a.id AND p.kind = 'article') AS provision_count,
              (SELECT count(DISTINCT d)::int FROM (
@@ -400,6 +512,7 @@ export async function listActs(opts: {
       regulations: number;
       eu: number;
       eu_eea: number;
+      treaties: number;
     }[]
   >(Prisma.sql`
     SELECT (SELECT count(*)::int FROM acts) AS acts,
@@ -413,7 +526,9 @@ export async function listActs(opts: {
            (SELECT count(*)::int FROM acts a
              WHERE a.jurisdiction = 'eu'
                AND (a.eea_relevant
-                    OR coalesce(cardinality(a.eea_incorporated_by), 0) > 0)) AS eu_eea
+                    OR coalesce(cardinality(a.eea_incorporated_by), 0) > 0)) AS eu_eea,
+           (SELECT count(*)::int FROM acts
+             WHERE jurisdiction = 'treaty' AND is_canonical) AS treaties
   `);
 
   return {
@@ -421,6 +536,8 @@ export async function listActs(opts: {
       id: r.id,
       jurisdiction: r.jurisdiction,
       docType: r.doc_type,
+      language: r.language ?? "is",
+      textGroup: r.text_group ?? null,
       actNumber: r.act_number,
       year: r.year,
       title: actDisplayTitle({ jurisdiction: r.jurisdiction, title: r.title }),
@@ -430,6 +547,8 @@ export async function listActs(opts: {
         citation: r.citation,
         actNumber: r.act_number,
         year: r.year,
+        textGroup: r.text_group ?? null,
+        language: r.language ?? "is",
       }),
       path: actPath({
         jurisdiction: r.jurisdiction,
@@ -437,6 +556,7 @@ export async function listActs(opts: {
         celex: r.celex,
         actNumber: r.act_number,
         year: r.year,
+        textGroup: r.text_group ?? null,
       }),
       aliases: r.aliases ?? [],
       provisionCount: Number(r.provision_count ?? 0),
@@ -459,6 +579,7 @@ export async function listActs(opts: {
       regulations: Number(totals?.regulations ?? 0),
       eu: Number(totals?.eu ?? 0),
       euEea: Number(totals?.eu_eea ?? 0),
+      treaties: Number(totals?.treaties ?? 0),
     },
   };
 }

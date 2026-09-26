@@ -21,9 +21,13 @@
  *
  * Incremental and resumable, like the other pipelines here: a judgment is
  * rescanned only when its text has changed since the last scan, which is one
- * comparison of Document.citationScanHash against Document.textHash. A run
+ * comparison of Document.citationScanHash against Document.textHash and the
+ * pattern release that read it (see SCAN_VERSION). A run
  * that dies partway loses nothing — every document it finished is already
- * marked. To force a full rebuild (after new acts land, say):
+ * marked. New *patterns* need no intervention: bumping SCAN_VERSION invalidates
+ * every watermark, and the next run re-reads the corpus. To force a rebuild for
+ * any other reason — new acts have landed, say, and the judgments citing them
+ * have not changed since:
  *
  *   UPDATE "Document" SET citation_scan_hash = NULL;
  *
@@ -35,6 +39,8 @@ import { NON_DECISION_SOURCE_KEYS } from "@/lib/sources";
 import {
   extractActCitations,
   extractProvisionCitations,
+  extractTreatyCitations,
+  extractTreatyMentions,
   normalizeSpacesPreservingOffsets,
   sentenceAround,
   extractRegulationCitations,
@@ -45,6 +51,31 @@ import type { IngestionAdapter, IngestContext, IngestStats } from "./adapter";
 const BATCH_SIZE = Number(process.env.CITATION_BATCH_SIZE ?? 50);
 
 const MATCH_EXPLICIT = "explicit_citation";
+
+/**
+ * Which release of the citation patterns produced the stored links.
+ *
+ * Folded into the watermark, so that adding a pattern is a backfill rather than
+ * a note in a doc nobody reads. The scan is incremental on
+ * `Document.citationScanHash`, which asks "has this judgment's text changed
+ * since we read it" — and the answer is no for the entire corpus when what
+ * changed is us. The treaty patterns are the case that forced this: added
+ * without it they would have linked only the judgments ingested afterwards, and
+ * "28. gr. EES-samningsins" would have looked like a pattern that does not work.
+ *
+ * Bump it whenever the extractors in lib/legal-citations.ts learn something new.
+ * One run then re-reads the corpus, which costs no network at all.
+ *
+ *   1 — acts, provisions and regulations.
+ *   2 — the founding treaties, by article and by name.
+ */
+const SCAN_VERSION = 2;
+
+/**
+ * The value `citationScanHash` carries: the text's hash, and the pattern release
+ * that read it. A mismatch on either half is work.
+ */
+const scanWatermark = (textHash: string) => `${SCAN_VERSION}:${textHash}`;
 
 /** actNumber/year → act id. */
 type ActIndex = Map<string, string>;
@@ -69,6 +100,16 @@ export interface CitationIndexes {
   provisions: ProvisionIndex;
   regulations: ActIndex;
   regulationProvisions: ProvisionIndex;
+  /**
+   * The treaties, keyed by registry slug rather than by number and year: a
+   * treaty has neither, and what a citation gives is the instrument's name.
+   * Only the canonical text of each — the row that owns the instrument — so a
+   * judgment citing Article 28 EEA links to the Icelandic Agreement whether it
+   * wrote the citation in Icelandic or in English, and the count on that article
+   * is the count of everything that cites it.
+   */
+  treaties: ActIndex;
+  treatyProvisions: ProvisionIndex;
 }
 
 async function loadIndexes(ctx: IngestContext): Promise<CitationIndexes> {
@@ -147,11 +188,44 @@ async function loadIndexes(ctx: IngestContext): Promise<CitationIndexes> {
     byArticle.set(articleKey(p.articleNumber!, p.articleLetter), p.id);
   }
 
+  // The treaties. One row per instrument — `isCanonical` — because both texts of
+  // the Agreement hold Article 28 and linking to the one the judgment happened
+  // to be written in would split the article's citations between two copies of
+  // itself. Keyed by slug; the articles are keyed like every other article.
+  const treatyRows = await prisma.act.findMany({
+    where: { jurisdiction: "treaty", isCanonical: true },
+    select: { id: true, textGroup: true },
+  });
+  const treaties: ActIndex = new Map(
+    treatyRows.flatMap((t) => (t.textGroup ? [[t.textGroup, t.id] as [string, string]] : []))
+  );
+
+  const treatyProvisionRows = treaties.size
+    ? await prisma.provision.findMany({
+        where: {
+          kind: "article",
+          articleNumber: { not: null },
+          act: { jurisdiction: "treaty", isCanonical: true },
+        },
+        select: { id: true, actId: true, articleNumber: true, articleLetter: true },
+      })
+    : [];
+  const treatyProvisions: ProvisionIndex = new Map();
+  for (const p of treatyProvisionRows) {
+    let byArticle = treatyProvisions.get(p.actId);
+    if (!byArticle) {
+      byArticle = new Map();
+      treatyProvisions.set(p.actId, byArticle);
+    }
+    byArticle.set(articleKey(p.articleNumber!, p.articleLetter), p.id);
+  }
+
   ctx.log(
     `Indexed ${acts.size} acts and ${provisionRows.length} provisions; ` +
-      `${regulations.size} regulations and ${regulationProvisionRows.length} of their articles`
+      `${regulations.size} regulations and ${regulationProvisionRows.length} of their articles; ` +
+      `${treaties.size} treaties and ${treatyProvisionRows.length} of their articles`
   );
-  return { acts, provisions, regulations, regulationProvisions };
+  return { acts, provisions, regulations, regulationProvisions, treaties, treatyProvisions };
 }
 
 interface ScanResult {
@@ -183,7 +257,8 @@ interface ScanResult {
  * index — see CitationIndexes.
  */
 export function scanDocument(rawText: string, indexes: CitationIndexes): ScanResult {
-  const { acts, provisions, regulations, regulationProvisions } = indexes;
+  const { acts, provisions, regulations, regulationProvisions, treaties, treatyProvisions } =
+    indexes;
   // Length-preserving, so every offset below indexes into the caller's own
   // text and the UI can jump straight to the passage.
   const text = normalizeSpacesPreservingOffsets(rawText);
@@ -321,6 +396,63 @@ export function scanDocument(rawText: string, indexes: CitationIndexes): ScanRes
     });
   }
 
+  // ---- The treaties -----------------------------------------------------
+  //
+  // Two languages of citation, one instrument. An Icelandic judgment writes "28.
+  // gr. EES-samningsins" and an EFTA Court judgment writes "Article 28 EEA";
+  // both resolve to the same article of the same row, which is the point of
+  // keying the index by instrument rather than by text.
+  //
+  // Deliberately last: a treaty citation cannot overlap an act or regulation
+  // citation — no treaty is cited by number and year — so there is nothing to
+  // reconcile, and the `covered` spans above are left alone.
+  for (const c of extractTreatyCitations(text)) {
+    const treatyId = treaties.get(c.slug);
+    // No row yet: the treaties adapter has not run, or its text could not be
+    // read. Not an unknown citation to report — the instrument certainly
+    // exists — so the citation is simply not resolvable this run, and the next
+    // run over this judgment will make the link.
+    if (!treatyId) continue;
+    const provisionId = treatyProvisions
+      .get(treatyId)
+      ?.get(articleKey(c.articleNumber, c.articleLetter));
+    if (!provisionId) continue;
+
+    const key = `${provisionId}|${c.index}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    result.provisionLinks.push({
+      provisionId,
+      matchType: MATCH_EXPLICIT,
+      paragraphNumber: c.paragraphNumber,
+      pointNumber: c.pointNumber,
+      citationText: c.text,
+      excerpt: sentenceAround(text, c.index),
+      charOffset: c.index,
+    });
+    covered.push([c.index, c.index + c.length]);
+  }
+
+  // The instrument named with no article: "samkvæmt EES-samningnum". One row
+  // against the treaty, as a bare act reference gets one against the act — and
+  // not where the name is part of an article citation already linked above,
+  // which is what `covered` is now carrying the treaty spans for.
+  for (const mention of extractTreatyMentions(text)) {
+    const treatyId = treaties.get(mention.slug);
+    if (!treatyId) continue;
+    if (covered.some(([start, end]) => mention.index >= start && mention.index < end)) continue;
+    const key = `${treatyId}|${mention.index}`;
+    if (seenActLinks.has(key)) continue;
+    seenActLinks.add(key);
+    result.actLinks.push({
+      actId: treatyId,
+      matchType: MATCH_EXPLICIT,
+      excerpt: sentenceAround(text, mention.index),
+      charOffset: mention.index,
+    });
+  }
+
   return result;
 }
 
@@ -359,7 +491,11 @@ export const citationsAdapter: IngestionAdapter = {
       >`
         SELECT id, full_text, text_hash
           FROM "Document"
-         WHERE (citation_scan_hash IS NULL OR citation_scan_hash <> text_hash)
+         WHERE (citation_scan_hash IS NULL
+                -- Concatenation binds tighter than the comparison, so this
+                -- compares against the whole watermark. Cast, because an untyped
+                -- parameter left of a concatenation is not always read as text.
+                OR citation_scan_hash <> ${`${SCAN_VERSION}:`}::text || text_hash)
            ${excludeScholarship}
          LIMIT ${Math.min(BATCH_SIZE, maxDocs - processed)}
       `;
@@ -400,7 +536,7 @@ export const citationsAdapter: IngestionAdapter = {
             }),
             prisma.document.update({
               where: { id: doc.id },
-              data: { citationScanHash: doc.text_hash },
+              data: { citationScanHash: scanWatermark(doc.text_hash) },
             }),
           ]);
 
