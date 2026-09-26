@@ -735,3 +735,52 @@ registry row, and what it needed is the useful part:
 
 The Icelandic short forms for it — and for the TEU and TFEU — are still the
 author's to confirm; open question 2 stands.
+
+---
+
+## §11 What the deploy taught, afterwards
+
+§1.1 decided the schema and §9 called the migration "one `prisma db push`;
+`db:deploy` does it". Both were about whether the *shape* was right. Neither asked
+whether the change was one push would **apply**, and it was not: widening the
+uniqueness key on `acts` to include `language` is, to Prisma, possible data loss,
+and the pre-deploy command refused it —
+
+```
+• A unique constraint covering the columns [jurisdiction,doc_type,act_number,
+  year,language] on the table `acts` will be added.
+Error: Use the --accept-data-loss flag to ignore the data loss warnings
+```
+
+— so the deploy stopped and the merged code never ran. Three things came out of
+it, and the third is the one worth keeping.
+
+**The flag was the wrong fix.** `--accept-data-loss` in `db:deploy` would have
+bought this constraint at the price of every future destructive change applying
+unattended on every deploy. The change now happens in `prisma/sql/pre-push.sql`,
+which runs before push; push then has nothing to warn about. Both directions were
+checked by hand against a local Postgres 16 first — from the 4-column key that was
+deployed, and from the 5-column key the merged schema carries — because the fix is
+worthless if it only works from one of them.
+
+**Not widening the key would also have worked, and was rejected.** Each *text*
+could have taken its own `actNumber`, leaving the key at four columns and every
+schema change additive. That is tempting, and the reason against it is that main
+already carries the 5-column key: reverting it is *itself* a change push will not
+make unattended, so a database that had applied it could not be brought back. A
+migration that works from one starting point and not the other is not a migration.
+
+**The check that should have caught it was structurally incapable of doing so.**
+`scripts/test-db-deploy.ts` built its baseline by stripping known things out of
+the schema under test — so every *other* change was already in the baseline, and
+the diff it exercised was empty for precisely the change under review. It went
+green on the widened key and the deploy then failed. It now also pushes the schema
+as the base branch has it and upgrades from there, which is the migration
+production will actually perform, and it fails rather than skips when it cannot
+read that baseline. Verified both ways: with the pre-push step the phase passes
+from the deployed schema, and with the step removed it reproduces the Railway
+error exactly.
+
+The general lesson for this repo, now in CLAUDE.md: a schema change is not done
+when the shape is right, it is done when `prisma db push` will apply it to the
+database that is running.

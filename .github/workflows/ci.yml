@@ -62,12 +62,20 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/logbrunnur_deploy_test
     steps:
+      # Full history, because the last phase of the test below pushes the schema
+      # as the *base branch* has it and then upgrades to this one — which is the
+      # only phase that exercises the migration production will actually perform.
+      # Without the history it cannot read that schema, and it fails rather than
+      # skipping: see baselineSchema().
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
       - run: npm ci
       # Recreate the legacy SQL-managed dictionary and populated search vectors,
-      # then run the real Railway pre-deploy command twice without data loss.
+      # then run the real Railway pre-deploy command twice without data loss —
+      # and once more as an upgrade from the deployed schema.
       - run: node --import tsx scripts/test-db-deploy.ts
