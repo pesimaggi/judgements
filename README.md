@@ -853,6 +853,16 @@ forgot it would show Article 28 twice under two labels with the judgments citing
 it split between the copies — and for the well, two rows of one article are two
 sources for one proposition.
 
+Paragraph anchors are `A28M1`, `A28M2` … **by position**, not by the number the
+source printed. Those are the same thing until an article opens with an
+unnumbered sentence and *then* numbers its paragraphs from 1 — which Articles
+199, 314 and 355 of the TFEU all do, so the lead-in and the paragraph printed
+"1." both came out numbered 1. `ProvisionParagraph` is keyed (provisionId,
+anchor), so that collision did not produce a cosmetic duplicate: the entire
+treaty failed to store, on a constraint violation, because of three of its 358
+articles. The printed number is kept in `number`, which is what a reader sees and
+what "1. mgr." is cited from.
+
 The reader carries an **ÍSL / ENG / Samhliða** control, shown only where a
 second text exists. `Samhliða` puts the two texts side by side, article for
 article; they line up because both are keyed on the treaty's own numbering, so
@@ -897,9 +907,15 @@ Five fetches, seconds, no cursor and nothing to bound — by a wide margin the
 cheapest adapter here. It runs in the scheduled chain right after `lagasafn`
 (whose page it reads for the Icelandic text) and before `citations` (which
 resolves treaty citations against the articles it writes). `Act.parseVersion`
-carries a `PARSE_VERSION`, so improving either parser re-reads the four
-documents on the next scheduled run rather than waiting for a treaty to be
-amended.
+carries a `PARSE_VERSION`, so improving either parser re-reads the documents on
+the next scheduled run rather than waiting for a treaty to be amended.
+
+A text's `sourceHash` is written by `saveEuActText` as its *last* act, together
+with `textStatus: "stored"` — never when the row is created. That ordering is
+load-bearing: the hash is what the skip check compares, so a row created with the
+hash already in it and then left half-written, because storing its provisions
+threw, is indistinguishable from a complete one and every later run skips it. An
+empty hash matches nothing, so the next run tries again.
 
 Requires the three new `Act` columns and the widened uniqueness key, which
 `db:deploy` applies — the key through `prisma/sql/pre-push.sql` rather than

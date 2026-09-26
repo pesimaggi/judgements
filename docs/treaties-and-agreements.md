@@ -784,3 +784,51 @@ error exactly.
 The general lesson for this repo, now in CLAUDE.md: a schema change is not done
 when the shape is right, it is done when `prisma db push` will apply it to the
 database that is running.
+
+
+---
+
+## §12 What the first production run taught
+
+The deploy cleared and the adapter ran from Railway at 17:16 UTC. Four of the five
+texts stored — `ees is` 129 articles, `ees en` 129, `teu en` 55, `sca en` 53, and
+the EU corpus relabelled `language = "en"` in one statement across 17,486 rows.
+The TFEU failed:
+
+```
+  tfeu en:
+Invalid `prisma.provisionParagraph.createMany()` invocation:
+Unique constraint failed on the fields: (`provision_id`,`anchor`)
+```
+
+Neither of the risks §9 worried about — Cellar or efta.int refusing a datacenter
+IP — materialised. The failure was mine, and it had been in the code since the
+first commit.
+
+**Two paragraphs of one article carried the same anchor.** §1.3 decided that
+paragraph anchors would be `A28M1`, `A28M2` … built from the paragraph's number,
+and that is safe right up until an article opens with an unnumbered sentence and
+*then* numbers its paragraphs from 1. The parse gives the lead-in a sequence
+number of 1, the paragraph printed "1." also gets 1, and the two collide.
+Articles 199, 314 and 355 of the TFEU all read that way; the EEA Agreement, the
+TEU and the SCA have no such article, which is why only one of the four broke.
+Anchors are now built from position, and the printed number is kept in `number`,
+which is what a reader sees and what "1. mgr." cites.
+
+**The tests could not have caught it, and that is the more useful finding.** They
+asserted article-anchor uniqueness on three texts and paragraph-count alignment on
+one — while the constraint that actually failed, (provisionId, anchor) on a
+paragraph, was asserted for the Lagasafn side and nowhere on the EU side. The
+TEU was chosen as the treaty-layout fixture on the grounds that it "is half the
+size and tests the same thing", and this bug is the refutation: the TFEU has a
+shape the TEU does not. It is now a fixture too, and the invariants run over
+every stored text rather than over whichever one a test happened to open.
+
+**A half-written text would have stayed half-written for ever.** `storeText` wrote
+the source hash when it created the row, and the hash is what the skip check
+compares — so the TFEU, having thrown partway through writing its 358 articles,
+would have looked complete to every later run. The hash is now written by
+`saveEuActText` as its last act, with `textStatus: "stored"`; a row created with an
+empty hash matches nothing and is retried. That is a trap any adapter here could
+have fallen into, and the only reason it surfaced is that something else threw
+first.

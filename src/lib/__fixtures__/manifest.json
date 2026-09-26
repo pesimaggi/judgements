@@ -107,6 +107,12 @@
       "url": "https://www.efta.int/sites/default/files/documents/legal-texts/the-surveillance-and-court-agreement/Surveillance-and-Court-Agreement-consolidated.pdf",
       "captured": "2026-09-26",
       "describes": "The consolidated Surveillance and Court Agreement, as EFTA publishes it: thirteen pages of PDF, which is the whole of what is on offer — EFTA is not the Publications Office and has no content API. A real digital PDF rather than a scan, so pdfText() reads it, and the parse is then a text parse (src/lib/treaty-text.ts) rather than an HTML one. It is the only fixture here that is not markup, and it is frozen as the PDF rather than as extracted text so that the test covers the extraction too: the failure worth catching is EFTA re-typesetting the document, and extracted text would hide exactly that. Its page furniture ('SURVEILLANCE AND COURT AGREEMENT p. 4', 'Main text') appears twelve times each mid-sentence, its footnotes arrive inline as three lines, and its PART titles are printed as separate blocks of wrapped capitals."
+    },
+    {
+      "file": "eur-lex/12016E_TXT.html.gz",
+      "url": "https://publications.europa.eu/resource/celex/12016E%2FTXT",
+      "captured": "2026-09-26",
+      "describes": "Consolidated Treaty on the Functioning of the European Union (OJ C 202, 2016). The TEU fixture was chosen first on the grounds that it is half the size and tests the same layout; this document proves that reasoning wrong. Articles 199, 314 and 355 open with an unnumbered sentence and then number their paragraphs from 1, so the lead-in and the paragraph printed \"1.\" both come out of the parse numbered 1 — and anchoring a paragraph on that number put two identical anchors in one provision, which ProvisionParagraph's (provisionId, anchor) key rejects. The whole treaty failed to store in production because of three of its 358 articles. It is also the treaty this corpus cites most: Articles 34, 45, 101, 102 and 267 are in everything the EFTA Court and the CJEU write."
     }
   ]
 }
