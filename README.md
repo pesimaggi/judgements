@@ -2362,6 +2362,43 @@ It is bounded, because a loop is a bill: `ASK_RESEARCH_MAX_ROUNDS` (24) and
 whatever was gathered is composed and answered from. If it read nothing at all,
 the ordinary retrieval runs instead, so deep mode is never *worse* than quick.
 
+#### Field guidance, where a general method is not enough
+
+The prompt above is how a lawyer works *any* question in this corpus. It is not
+how one works an EEA question, and the difference is not emphasis: whether an EU
+directive is part of EEA law at all is decided by a decision of the EEA Joint
+Committee; the Agreement sits here as three rows that are one instrument; a
+question about the Icelandic State's liability for breach of EEA law is not
+researched without E-9/97 and Hrd. 236/1999. None of that follows from a general
+method, and a model that does not know it produces research that looks complete.
+
+So the method is written down where it can be argued for properly — in
+`docs/research-skills/`, one document per field, in prose, by a lawyer — and
+`src/lib/ask/research-skills.ts` holds a distillation of each as a section the
+system prompt composes in between the general method and the rules about citing
+and finishing. `docs/research-skills/eu-eea-law.md` is the first of them;
+competition law and State aid are named in it as belonging to specialist skills
+of their own, and the documents already written will be revised as the corpus
+grows into the legislative history it does not yet hold.
+
+**A distillation keeps only what the general method does not already say.** The
+document runs to twenty-five thousand characters and argues its case; the section
+is seven and a half thousand and states the rules. Opening a source, following
+what a judgment cites, the weight of the three courts, what may be cited, how to
+finish — all of that is in the general prompt already, and repeating it costs
+tokens on every round of a loop that runs a dozen while reading, to a model, as
+emphasis moved *off* the specialist point.
+
+**Sections are gated, and gated generously.** One field could simply always be
+in the prompt; six cannot be, and a competition-law digression on a
+fæðingarorlof question is noise the loop pays for. So a field says when it is in
+play — for EU/EEA: the planner asking for EU material, the ESB scope, an EFTA
+Court or CJEU case number in the plan, or a word anywhere from EES through
+tilskipun to fjórfrelsi — and it says so on the trade `scopeFilter()` makes for
+acts. A section wrongly included costs tokens; a section wrongly left out
+switches the specialist method off with no error anywhere, and looks exactly like
+a model that researched the question badly.
+
 #### The deep tier gets budgets of its own
 
 For a long time it did not, and that was the whole of why deep answers read like
@@ -2890,6 +2927,7 @@ What is covered, and why those:
 | `search-eval/metrics.ts` | the ranking metrics themselves |
 | `lib/ask/llm.ts` | which provider answers and on which model — configuration flipped on a dashboard, whose failure modes (a silent fallback to the other provider, a launcher with no key behind it) are quiet ones |
 | `lib/ask/plan.ts` | that a plan is sanitised before it reaches the search, and that a planning failure degrades to keywords instead of failing the question |
+| `lib/ask/research-skills.ts` | that the EEA section actually appears — on a question that says "fjórfrelsið" rather than "EES", on an E-5/21 the planner extracted, on the ESB scope — and that it carries the authorities the document makes mandatory without restating the general prompt |
 | `lib/ask/answer.ts` | that a question with no retrieved law, and a question that is not a legal one, never reach the model at all |
 | `lib/ask/render.ts` | that `[3]` becomes the link to source 3 and not four characters of prose |
 | `lib/ask/evidence.ts` | that a window opens at a sentence boundary and not mid-clause, that a provision is cut between málsgreinar and never inside one, and that source text cannot pass itself off as an instruction |
