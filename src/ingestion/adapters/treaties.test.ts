@@ -22,6 +22,7 @@ import {
   parseIcelandicTreaty,
 } from "@/ingestion/adapters/treaties";
 import { treatyBySlug } from "@/lib/treaties";
+import type { ParsedEuAct } from "@/lib/eur-lex";
 
 const FIXTURES = join(process.cwd(), "src/lib/__fixtures__");
 
@@ -31,7 +32,27 @@ function html(name: string): string {
 
 const ees = treatyBySlug("ees")!;
 const teu = treatyBySlug("teu")!;
+const tfeu = treatyBySlug("tfeu")!;
 const sca = treatyBySlug("sca")!;
+
+/**
+ * Every text this app stores, so the invariants below are checked on all of them
+ * rather than on whichever one a test happened to open.
+ *
+ * That is the lesson of the TFEU: the anchoring bug it hit existed from the
+ * first commit, and the tests asserted uniqueness of *article* anchors on three
+ * texts and paragraph-count alignment on one — while the constraint that
+ * actually failed in production, (provisionId, anchor) on a paragraph, was
+ * asserted for the Lagasafn side and nowhere here.
+ */
+function everyText(): { what: string; parsed: ParsedEuAct }[] {
+  return [
+    { what: "ees is", parsed: parseIcelandicTreaty(html("lagasafn/1993002.html.gz"), ees) },
+    { what: "ees en", parsed: parseEnglishTreaty(html("eur-lex/21994A0103_01.html.gz"), ees) },
+    { what: "teu en", parsed: parseEnglishTreaty(html("eur-lex/12016M_TXT.html.gz"), teu) },
+    { what: "tfeu en", parsed: parseEnglishTreaty(html("eur-lex/12016E_TXT.html.gz"), tfeu) },
+  ];
+}
 
 describe("the Icelandic text, out of the fylgiskjal it is printed in", () => {
   const parsed = parseIcelandicTreaty(html("lagasafn/1993002.html.gz"), ees);
@@ -168,3 +189,74 @@ function parsePdfFixture() {
     sca
   );
 }
+
+describe("what every stored text has to satisfy", () => {
+  test("no two paragraphs of one provision share an anchor", () => {
+    // ProvisionParagraph is keyed (provisionId, anchor), so a collision is not a
+    // cosmetic problem: createMany throws and the *whole treaty* fails to store.
+    // The TFEU did exactly that in production — Articles 199, 314 and 355 open
+    // with an unnumbered sentence and then number their paragraphs from 1, so the
+    // lead-in and the paragraph printed "1." both carried the number 1.
+    for (const { what, parsed } of everyText()) {
+      for (const provision of parsed.provisions) {
+        const anchors = provision.paragraphs.map((p) => p.anchor);
+        assert.equal(
+          new Set(anchors).size,
+          anchors.length,
+          `${what} ${provision.displayLabel}: repeated anchor in ${anchors.join(", ")}`
+        );
+      }
+    }
+  });
+
+  test("an article that opens with an unnumbered lead-in keeps both blocks", () => {
+    // The lead-in is text of the article and must not be dropped or merged away
+    // in the course of making the anchors unique. Article 314 TFEU — the budget
+    // procedure — is the clearest case: a sentence, then ten numbered paragraphs.
+    const { parsed } = everyText().find((t) => t.what === "tfeu en")!;
+    const article314 = parsed.provisions.find((p) => p.articleNumber === 314)!;
+    assert.equal(article314.paragraphs.length, 11);
+    assert.match(article314.paragraphs[0].text, /^The European Parliament and the Council/);
+    assert.match(article314.paragraphs[1].text, /^1\./);
+    // The printed numbers are kept as printed, which is what "1. mgr." cites.
+    assert.deepEqual(
+      article314.paragraphs.map((p) => p.number),
+      [1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    );
+  });
+
+  test("no two provisions of one text share an anchor either", () => {
+    for (const { what, parsed } of everyText()) {
+      const anchors = parsed.provisions.map((p) => p.anchor);
+      assert.equal(new Set(anchors).size, anchors.length, `${what}: repeated provision anchor`);
+    }
+  });
+
+  test("every provision has an article number and some text", () => {
+    for (const { what, parsed } of everyText()) {
+      assert.ok(parsed.provisions.length > 0, what);
+      for (const provision of parsed.provisions) {
+        assert.notEqual(provision.articleNumber, null, `${what} ${provision.displayLabel}`);
+        assert.ok(provision.fullText.trim().length > 0, `${what} ${provision.displayLabel} is empty`);
+      }
+    }
+  });
+});
+
+describe("the TFEU, the treaty this corpus cites most", () => {
+  const parsed = parseEnglishTreaty(html("eur-lex/12016E_TXT.html.gz"), tfeu);
+
+  test("stops at the protocols, with all 358 articles", () => {
+    assert.equal(parsed.provisions.length, 358);
+    assert.equal(parsed.provisions[0].anchor, "A1");
+    assert.equal(parsed.provisions.at(-1)?.anchor, "A358");
+  });
+
+  test("the articles everything cites are readable", () => {
+    const byNumber = new Map(parsed.provisions.map((p) => [p.articleNumber, p]));
+    assert.match(byNumber.get(34)!.fullText, /Quantitative restrictions on imports/i);
+    assert.match(byNumber.get(45)!.fullText, /Freedom of movement for workers/i);
+    assert.match(byNumber.get(101)!.fullText, /prevention, restriction or distortion of competition/i);
+    assert.match(byNumber.get(267)!.fullText, /preliminary ruling/i);
+  });
+});

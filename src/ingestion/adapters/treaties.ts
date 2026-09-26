@@ -73,8 +73,13 @@ import type { IngestContext, IngestStats, IngestionAdapter } from "../adapter";
  * older version, and without it an improvement to the treaty layout or the
  * annex walk would only reach a treaty that changed upstream — which, for a
  * treaty, is roughly once a decade.
+ *
+ *   1 — the first release.
+ *   2 — paragraph anchors by position rather than by the printed number, which
+ *       is what let the TFEU store at all. Every text stored by version 1 is
+ *       re-read once so that all four carry the same anchoring.
  */
-const PARSE_VERSION = 1;
+const PARSE_VERSION = 2;
 
 /** "28. gr.", "[28. gr. a]" — the way the annexed Icelandic text labels one. */
 const ICELANDIC_ARTICLE = /^\[?(\d+)\.\s*gr\.\s*([a-záðéíóúýþæö])?\.?\]?$/i;
@@ -116,9 +121,23 @@ function reanchor(provision: ParsedEuProvision): ParsedEuProvision | null {
   return {
     ...provision,
     anchor,
-    paragraphs: provision.paragraphs.map((paragraph) => ({
+    // By position, not by the number the source printed.
+    //
+    // Those are the same thing right up until an article opens with an
+    // unnumbered sentence and *then* numbers its paragraphs from 1 — which
+    // Articles 199, 314 and 355 of the TFEU all do. The parse gives the lead-in
+    // a sequence number of 1 (it has none of its own) and the paragraph printed
+    // "1." also gets 1, so anchoring on the number produced two A314M1s in one
+    // provision. ProvisionParagraph is keyed (provisionId, anchor), so that is
+    // not a cosmetic collision: the whole treaty failed to store, on a
+    // constraint violation, after three of its 358 articles.
+    //
+    // The printed number is kept in `number`, which is what a reader sees and
+    // what "1. mgr." is cited from. The anchor is a link target and only has to
+    // be unique and stable.
+    paragraphs: provision.paragraphs.map((paragraph, i) => ({
       ...paragraph,
-      anchor: treatyParagraphAnchor(anchor, paragraph.number),
+      anchor: treatyParagraphAnchor(anchor, i + 1),
     })),
   };
 }
@@ -327,7 +346,18 @@ async function storeText(
 
   const act = await prisma.act.upsert({
     where: { jurisdiction_docType_actNumber_year_language: identity },
-    create: { ...identity, ...shared, sourceHash },
+    // The row is created with *no* source hash, and saveEuActText writes the
+    // real one as its last act, together with textStatus "stored".
+    //
+    // That ordering is the difference between an error and a permanent one. The
+    // hash is what the skip above compares, so a row created with the hash
+    // already in it — and then left half-written because storing its provisions
+    // threw — is indistinguishable from a complete one, and every later run
+    // skips it. That is exactly what happened to the TFEU: 358 articles parsed,
+    // a constraint violation partway through writing them, and a row that would
+    // have looked done for ever. An empty hash matches nothing, so the next run
+    // tries again.
+    create: { ...identity, ...shared, sourceHash: "" },
     update: shared,
   });
   await saveEuActText(act.id, parsed, sourceHash);
@@ -354,7 +384,7 @@ async function backfillEuLanguage(ctx: IngestContext): Promise<number> {
 
 export const treatiesAdapter: IngestionAdapter = {
   key: "treaties",
-  name: "Founding treaties (EEA Agreement, TEU, TFEU)",
+  name: "Founding treaties (EEA Agreement, TEU, TFEU, SCA)",
   // These are acts, not documents: they belong in the act library beside lög
   // nr. 38/2001, not among the sources in the search panel. Same reason the
   // Lagasafn and EUR-Lex adapters declare none.
