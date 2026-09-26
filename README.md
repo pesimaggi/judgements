@@ -901,10 +901,11 @@ carries a `PARSE_VERSION`, so improving either parser re-reads the four
 documents on the next scheduled run rather than waiting for a treaty to be
 amended.
 
-Requires `prisma db push` for the three new columns and the widened uniqueness
-constraint — `db:deploy` does it. The run's first statement marks the EU corpus
-`language = "en"`, which is idempotent and is there because that corpus predates
-the column.
+Requires the three new `Act` columns and the widened uniqueness key, which
+`db:deploy` applies — the key through `prisma/sql/pre-push.sql` rather than
+through push itself, for the reason in *Schema changes push will not make* below.
+The run's first statement marks the EU corpus `language = "en"`, which is
+idempotent and is there because that corpus predates the column.
 
 #### What is deliberately not here
 
@@ -2807,6 +2808,52 @@ Two kinds stay undeclared, and both are deliberate:
 Because the trigram indexes are now part of the schema, `pg_trgm` has to exist before push builds them. `schema.prisma`'s datasource therefore declares `extensions = [pg_trgm, unaccent]` (behind the `postgresqlExtensions` preview feature), so push installs them itself; without that, a push against a brand-new database fails with `operator class "gin_trgm_ops" does not exist`. Extensions installed but not named there are left alone.
 
 `scripts/test-db-deploy.ts` holds all of this down against a real Postgres in CI: it builds a database the way production was built — schema push, then the setup SQL — then runs the real `db:deploy` twice and asserts every one of these indexes has the same `pg_class` OID afterwards. Comparing OIDs rather than names is the point: a drop followed by `setup-search.sql` putting the same name back looks identical from the outside.
+
+### Schema changes push will not make
+
+`prisma db push` refuses anything it reads as possible data loss, and *adding a
+column to an existing unique constraint* is on that list. The treaties needed
+exactly that — `acts` was unique on `(jurisdiction, doc_type, act_number, year)`
+and one instrument can arrive in two authentic texts — and the pre-deploy command
+stopped dead:
+
+```
+⚠️  There might be data loss when applying the changes:
+  • A unique constraint covering the columns [jurisdiction,doc_type,act_number,
+    year,language] on the table `acts` will be added. If there are existing
+    duplicate values, this will fail.
+Error: Use the --accept-data-loss flag to ignore the data loss warnings
+```
+
+Passing that flag in `db:deploy` is the tempting fix and the wrong one: it buys
+one constraint at the price of waving every future destructive change through, on
+every deploy, unattended — a dropped column included. The warning is worth
+keeping.
+
+So `db:deploy` runs **`prisma/sql/pre-push.sql` before push**. It makes such a
+change itself, in SQL that says what it is doing, and push then finds the database
+already matching the schema and has nothing to warn about. Four rules for
+anything added to that file: idempotent, safe on a fresh database where the tables
+do not exist yet, character-for-character what Prisma would have created, and
+never destructive except to drop something its own replacement has superseded.
+
+The third rule is the fragile one, so it is asserted rather than trusted: the
+index name the SQL hardcodes is compared against what a fresh push actually
+creates (`PRE_PUSH_ACTS_UNIQUE_INDEX` in `scripts/test-db-deploy.ts`). If Prisma
+ever renames it, push would drop the SQL's index and create its own — the very
+operation the file exists to avoid — and that check fails first.
+
+**The check that should have caught this in the first place.** The deploy test's
+second phase derives its baseline by *stripping* known things out of the schema
+under test, so every other change is already present in the baseline it pushes
+against — which made the diff it exercised empty for exactly the change under
+review. It went green, and the deploy then failed. The third phase pushes the
+schema as the **base branch** has it, then runs `db:deploy` against it: the
+upgrade production will actually perform. That needs history, so the
+`database-deploy` job checks out with `fetch-depth: 0`, and when the baseline
+cannot be read the phase fails rather than skipping — a check that silently skips
+the only phase exercising the upgrade reads as green, which is worse than no check
+at all.
 
 ## Tests
 

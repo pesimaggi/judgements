@@ -71,6 +71,18 @@ does not exist is removed and the rest are *not* renumbered (`citations.ts`). In
 the research loop, only a document actually opened with `read_decision` or
 `read_provision` can be cited — searching adds nothing to the source list.
 
+**A schema change has to be one `prisma db push` will make unattended.** Push
+refuses possible data loss, and *adding a column to an existing unique
+constraint* counts — which stopped a Railway deploy dead, because `db:deploy` is
+the pre-deploy command and nothing gets past it. Do not reach for
+`--accept-data-loss`: that would wave every future destructive change through on
+every deploy. Put the change in `prisma/sql/pre-push.sql`, which `db:deploy` runs
+*before* push, and read the four rules at the top of that file first — idempotent,
+safe on a fresh database, exactly what Prisma would have created, never
+destructive beyond dropping what it has just replaced. `scripts/test-db-deploy.ts`
+pushes the base branch's schema and then upgrades to yours, so a change Prisma
+will not apply fails in CI rather than on Railway.
+
 **`scopeFilter()` is the gate for the whole act library.** Every act lookup, the
 act type-ahead, provision search and the well's retrieval reach acts through it,
 so a `jurisdiction` value it does not admit is invisible to the entire
